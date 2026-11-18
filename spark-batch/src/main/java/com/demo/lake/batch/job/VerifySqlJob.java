@@ -59,5 +59,8 @@ public class VerifySqlJob implements LakeJob {
             }
         }
         System.out.printf("[verify-sql] 执行 %d 条，跳过 %d 条，失败 %d 条%n", ran, skipped, failed);
+        if (failed > 0) {
+            throw new IllegalStateException("verify-sql 有 " + failed + " 条失败");
+        }
     }
 }

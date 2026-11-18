@@ -39,6 +39,9 @@ public final class TransformSql {
      * DWD -&gt; ADS：按天/商户/品类重算汇总。
      * INSERT OVERWRITE 在 Iceberg 里是动态分区覆盖，只替换出现的分区；
      * 若要按天增量，在 WHERE 里加 dt 条件即可，例如 dt = current_date - 1。
+     *
+     * <p>注意：buyer_cnt 是 (dt, 商户, 品类) 粒度下的去重用户数，跨行相加得到的是“人次”，
+     * 不是全站去重买家数。</p>
      */
     public static String rebuildGold(PlatformConfig cfg) {
         TableRef silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);

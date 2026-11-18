@@ -7,6 +7,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PlatformConfigTest {
@@ -55,6 +56,16 @@ class PlatformConfigTest {
         } finally {
             System.clearProperty("platform.database");
         }
+    }
+
+    @Test
+    void envKeyMapsToPropertyIncludingHyphens() {
+        assertEquals("platform.catalog.type", PlatformConfig.envKeyToProperty("LAKE_CATALOG_TYPE"));
+        assertEquals("platform.s3.access-key", PlatformConfig.envKeyToProperty("LAKE_S3_ACCESS__KEY"));
+        assertEquals("platform.spark.shuffle.partitions",
+                PlatformConfig.envKeyToProperty("LAKE_SPARK_SHUFFLE_PARTITIONS"));
+        assertNull(PlatformConfig.envKeyToProperty("PATH"));
+        assertNull(PlatformConfig.envKeyToProperty("LAKE_"));
     }
 
     @Test

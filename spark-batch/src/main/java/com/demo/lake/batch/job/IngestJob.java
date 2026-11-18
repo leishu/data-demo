@@ -14,12 +14,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * ODS 入湖：
  * 1) 先在 data/raw/orders/dt=YYYY-MM-DD/ 生成"上游落地文件"（Parquet），模拟数据到达；
- * 2) 读取落地目录，按 event_time 写入 Iceberg bronze 表 —— 分区由 Iceberg 自己路由，
- *    上游文件目录和 Iceberg 分区不一致也没关系（这正是表格式层带来的解耦）。
+ * 2) 只读取本次生成的那些 dt 目录，按 event_time 写入 Iceberg bronze 表 —— 分区由 Iceberg
+ *    自己路由，上游文件目录和 Iceberg 分区不一致也没关系（这正是表格式层带来的解耦）。
+ *
+ * <p>order_id 里带业务日期、随机种子也按日期取，保证同一批落地数据重跑时 ID 和数据稳定。</p>
  *
  * 故意注入两类脏数据：
  * - 约 3% 订单有"重复记录"（先 PAID 后 REFUNDED），交给 DWD 的 MERGE 去重；
@@ -42,17 +46,20 @@ public class IngestJob implements LakeJob {
         System.out.println("[ingest] 落地目录: " + rawRoot);
         System.out.println("[ingest] 生成 " + days + " 天 x " + perDay + " 单的模拟落地文件");
 
+        List<String> generated = new ArrayList<>();
         for (int offset = days - 1; offset >= 0; offset--) {
             LocalDate dt = LocalDate.now().minusDays(offset);
-            Dataset<Row> df = buildDay(spark, offset, perDay);
+            Dataset<Row> df = buildDay(spark, dt, perDay);
             Path dir = rawRoot.resolve("dt=" + dt);
             df.write().mode("overwrite").option("compression", "snappy").parquet(dir.toString());
+            generated.add(dir.toString());
             System.out.printf("  dt=%s  行数=%d  -> %s%n", dt, df.count(), dir);
         }
 
-        System.out.println("[ingest] 读取落地文件并写入 Iceberg（按 event_time 重新分区）");
+        System.out.println("[ingest] 读取本次落地文件并写入 Iceberg（按 event_time 重新分区）");
         TableRef bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
-        Dataset<Row> raw = spark.read().option("mergeSchema", "true").parquet(rawRoot.toString());
+        Dataset<Row> raw = spark.read().option("mergeSchema", "true")
+                .parquet(generated.toArray(new String[0]));
         raw.createOrReplaceTempView("raw_orders");
 
         spark.sql("INSERT INTO " + bronze.fqn() + " "
@@ -65,10 +72,10 @@ public class IngestJob implements LakeJob {
                 + "FROM " + bronze.fqn() + " GROUP BY 1 ORDER BY 1").show(false);
     }
 
-    /** 生成单天落地数据（含重复与迟到记录） */
-    private Dataset<Row> buildDay(SparkSession spark, int dayOffset, int rows) {
-        // 种子按天偏移，保证不同天金额分布不同、同一天可复现
-        int seed = 100 + dayOffset * 10;
+    /** 生成单天落地数据（含重复与迟到记录）；同一天重跑必须得到同一份数据 */
+    private Dataset<Row> buildDay(SparkSession spark, LocalDate dt, int rows) {
+        // 种子按业务日期取，保证不同天分布不同、同一天（哪怕隔天重跑）可复现
+        int seed = 100 + (int) (Math.floorMod(dt.toEpochDay(), 100_000L) * 10);
         Dataset<Row> base = spark.range(rows).selectExpr(
                 "id",
                 "rand(" + seed + ") AS r_user",
@@ -81,11 +88,11 @@ public class IngestJob implements LakeJob {
                 "rand(" + (seed + 7) + ") AS r_dup");
 
         // 10% 的记录 event_time 落在前一天（迟到数据）
-        String dayExpr = "date_sub(current_date(), " + dayOffset
-                + " + CASE WHEN r_late < 0.10 THEN 1 ELSE 0 END)";
+        String dayExpr = "date_sub(date'" + dt + "', "
+                + "CASE WHEN r_late < 0.10 THEN 1 ELSE 0 END)";
 
         Dataset<Row> clean = base.selectExpr(
-                "concat('ORD-', '" + dayOffset + "-', lpad(cast(id AS string), 7, '0')) AS order_id",
+                "concat('ORD-', '" + dt + "-', lpad(cast(id AS string), 7, '0')) AS order_id",
                 "concat('U', lpad(cast(cast(r_user * 5000 AS int) AS string), 5, '0')) AS user_id",
                 "concat('M', lpad(cast(cast(r_merchant * 20 AS int) AS string), 3, '0')) AS merchant_id",
                 "element_at(array('3C','FASHION','GROCERY','HOME','BEAUTY'), "

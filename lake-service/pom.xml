@@ -12,7 +12,7 @@
 
   <artifactId>lake-service</artifactId>
   <name>lake-service</name>
-  <description>Spring Boot 服务层：Presto 即席查询 REST 接口 + Spark 批作业编排（JDK 21 / Boot 4 / logback）</description>
+  <description>Spring Boot 服务层：WebFlux 查询接口（含 SSE 流）+ Spark 批作业编排（JDK 21 / Boot 4 / logback）</description>
 
   <properties>
     <!-- 本模块是唯一要求 JDK 21 的模块；其余模块仍是 release 11（Spark 3.5.1 官方只支持到 17） -->
@@ -28,10 +28,11 @@
       <artifactId>platform-common</artifactId>
     </dependency>
 
-    <!-- Web 层：Boot 4 把 starter-web 拆成了 webmvc（starter-web 仅作为兼容别名保留） -->
+    <!-- Web 层：WebFlux + Reactor Netty。Boot 4 把 starter-web 拆成了 webmvc / webflux 两个 starter，
+         这里用 webflux：事件循环 + 背压，长连接（SSE）比 Servlet 那套自然 -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-webmvc</artifactId>
+      <artifactId>spring-boot-starter-webflux</artifactId>
     </dependency>
     <!-- 健康检查 / 指标 -->
     <dependency>

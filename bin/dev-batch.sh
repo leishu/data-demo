@@ -2,7 +2,7 @@
 # 本地跑批处理（免 Docker，Hadoop catalog + 本地文件仓库）
 #   bin/dev-batch.sh --job all
 #   bin/dev-batch.sh --job ingest --days 3 --orders-per-day 1000
-#   bin/dev-batch.sh --job transform --evolve
+#   bin/dev-batch.sh --job all --evolve
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -20,7 +20,7 @@ if [[ -n "${MVN_PROFILE:-}" ]]; then
 fi
 
 # 先 package 再 exec：同一个 Maven 会话里 platform-common 才能被解析到
-exec "${MVN_BIN}" -q -pl spark-batch -am package exec:java \
+exec "${MVN_BIN}" -q -pl spark-batch -am -DskipTests package exec:java \
   "${REPO_ARGS[@]}" "${PROFILE_ARGS[@]}" \
   -Dexec.mainClass=com.demo.lake.batch.BatchApp \
   -Dexec.args="$*"

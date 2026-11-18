@@ -21,7 +21,7 @@ import java.util.Properties;
  *   <li>classpath:platform-defaults.properties</li>
  *   <li>工作目录下 conf/platform.properties（可选）</li>
  *   <li>调用方显式指定的 properties 文件</li>
- *   <li>环境变量 LAKE_XXX_YYY -&gt; platform.xxx.yyy</li>
+ *   <li>环境变量 LAKE_XXX_YYY -&gt; platform.xxx.yyy（双下划线表示连字符，如 LAKE_S3_ACCESS__KEY）</li>
  *   <li>JVM 参数 -Dplatform.xxx.yyy</li>
  * </ol>
  */
@@ -244,11 +244,26 @@ public final class PlatformConfig {
         }
     }
 
-    /** LAKE_CATALOG_TYPE=xxx -&gt; platform.catalog.type=xxx */
+    /**
+     * 环境变量名转配置 key（不是 LAKE_ 开头返回 null）：
+     * LAKE_CATALOG_TYPE -&gt; platform.catalog.type
+     * LAKE_S3_ACCESS__KEY -&gt; platform.s3.access-key（双下划线表示连字符）
+     */
+    static String envKeyToProperty(String envKey) {
+        if (!envKey.startsWith(ENV_PREFIX) || envKey.length() <= ENV_PREFIX.length()) {
+            return null;
+        }
+        String suffix = envKey.substring(ENV_PREFIX.length()).toLowerCase(Locale.ROOT)
+                .replace("__", "\u0000")
+                .replace('_', '.')
+                .replace('\u0000', '-');
+        return "platform." + suffix;
+    }
+
     private static void applyEnvOverrides(Properties p) {
         System.getenv().forEach((k, v) -> {
-            if (k.startsWith(ENV_PREFIX) && k.length() > ENV_PREFIX.length()) {
-                String key = "platform." + k.substring(ENV_PREFIX.length()).toLowerCase(Locale.ROOT).replace('_', '.');
+            String key = envKeyToProperty(k);
+            if (key != null) {
                 p.setProperty(key, v);
             }
         });

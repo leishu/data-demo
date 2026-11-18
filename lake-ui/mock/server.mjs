@@ -127,6 +127,18 @@ function queryResult(columns, rows, elapsedMs = 42) {
   return { columns, rows, rowCount: rows.length, truncated: false, elapsedMs, stats: null }
 }
 
+/** 开一条 SSE 连接，返回 emit(event, data)；调用方自己负责 res.end() */
+function sse(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-store',
+    Connection: 'keep-alive',
+    // 告诉可能存在的中间层别缓冲，否则事件会攒成一团
+    'X-Accel-Buffering': 'no'
+  })
+  return (event, data) => res.write(`event:${event}\ndata:${JSON.stringify(data)}\n\n`)
+}
+
 function pick(sql) {
   const s = sql.toLowerCase()
   if (s.includes('gold_daily_revenue') && s.includes('merchant_id')) {
@@ -235,6 +247,55 @@ const server = http.createServer((req, res) => {
     return send(res, 200, body)
   }
 
+  if (p === '/api/query/stream' && method === 'POST') {
+    let raw = ''
+    req.on('data', (c) => (raw += c))
+    req.on('end', () => {
+      let sql = ''
+      try {
+        sql = JSON.parse(raw || '{}').sql || ''
+      } catch {
+        return send(res, 400, { status: 400, error: 'Bad Request', message: '请求体不是合法 JSON', hint: null })
+      }
+      if (!sql.trim()) {
+        return send(res, 400, {
+          status: 400,
+          error: 'Bad Request',
+          message: 'SQL 需为单条只读语句（select/with/show/describe/explain）',
+          hint: null
+        })
+      }
+
+      const body = pick(sql)
+      const emit = sse(res)
+      let closed = false
+      res.on('close', () => (closed = true))
+
+      // 和真后端一样：先发列定义，再把行拆成几批发
+      emit('meta', { columns: body.columns })
+      const chunks = []
+      for (let i = 0; i < body.rows.length; i += 4) chunks.push(body.rows.slice(i, i + 4))
+
+      let i = 0
+      const tick = () => {
+        if (closed) return
+        if (i < chunks.length) {
+          emit('rows', { rows: chunks[i++] })
+          return setTimeout(tick, 120)
+        }
+        emit('done', {
+          rowCount: body.rowCount,
+          truncated: body.truncated,
+          elapsedMs: body.elapsedMs,
+          stats: body.stats
+        })
+        res.end()
+      }
+      setTimeout(tick, 160)
+    })
+    return
+  }
+
   if (p === '/api/query' && method === 'POST') {
     let raw = ''
     req.on('data', (c) => (raw += c))
@@ -255,6 +316,35 @@ const server = http.createServer((req, res) => {
       }
       setTimeout(() => send(res, 200, pick(sql)), 260)
     })
+    return
+  }
+
+  if (p.startsWith('/api/batch/runs/') && p.endsWith('/events')) {
+    const id = decodeURIComponent(p.split('/')[4])
+    const run = runs.find((r) => r.id === id)
+    if (!run) {
+      return send(res, 404, { status: 404, error: 'Not Found', message: '没有这个运行记录: ' + id, hint: null })
+    }
+
+    const emit = sse(res)
+    const lines = TAIL(run.job)
+    let sent = 0
+    let closed = false
+    res.on('close', () => (closed = true))
+
+    emit('status', { run })
+    const timer = setInterval(() => {
+      if (closed) return clearInterval(timer)
+      if (sent < lines.length) {
+        emit('log', { lines: [lines[sent++]] })
+        return
+      }
+      // startRun 4s 后把状态改成 SUCCEEDED，这里跟着收尾
+      if (run.status === 'RUNNING') return
+      emit('end', { run })
+      clearInterval(timer)
+      res.end()
+    }, 350)
     return
   }
 

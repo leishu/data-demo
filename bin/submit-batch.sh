@@ -23,7 +23,8 @@ if [[ " $* " == *"--warehouse s3"* ]]; then
   PACKAGES="${PACKAGES},org.apache.hadoop:hadoop-aws:${HADOOP_VERSION}"
 fi
 
-"${MVN_BIN}" -q -DskipTests "${REPO_ARGS[@]}" package
+# 只构建提交需要的 spark-batch（及依赖模块），避免在 JDK 11 环境里连带编译要求 JDK 21 的 lake-service
+"${MVN_BIN}" -q -DskipTests "${REPO_ARGS[@]}" -pl spark-batch -am package
 
 JAR="$(ls -1 spark-batch/target/spark-batch-*.jar | grep -v sources | head -1)"
 echo "jar: ${JAR}"

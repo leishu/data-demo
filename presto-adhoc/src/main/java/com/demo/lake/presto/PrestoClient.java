@@ -32,8 +32,9 @@ public final class PrestoClient implements AutoCloseable {
             throws SQLException {
         Properties props = new Properties();
         props.setProperty("user", user);
-        props.setProperty("source", source);
         Connection conn = DriverManager.getConnection(url, props);
+        // 0.290 驱动不认识 source 连接属性；ApplicationName 会作为查询的 source 上报
+        conn.setClientInfo("ApplicationName", source);
         conn.setReadOnly(true);
         return new PrestoClient(conn, timeoutSeconds);
     }

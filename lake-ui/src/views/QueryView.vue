@@ -4,34 +4,44 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { CaretRight, Loading } from '@element-plus/icons-vue'
 import { api } from '@/api'
-import { store } from '@/store'
+import { loadConfig, store, tableFqn } from '@/store'
 import ResultTable from '@/components/ResultTable.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import ErrorNotice from '@/components/ErrorNotice.vue'
 
 const STORAGE_KEY = 'lake.console.sql'
 
-const DEFAULT_SQL = `select dt,
+/**
+ * catalog / database 以后端 /api/config 为准；配置还没拉到时退回默认目录，
+ * 至少保证示例 SQL 语法完整（真连不上时后端也会给出明确错误）。
+ */
+function qualified(name) {
+  return store.config ? tableFqn(name) : `iceberg.lake.${name}`
+}
+
+function defaultSql() {
+  return `select dt,
        sum(order_cnt)     as orders,
        sum(gmv)           as gmv,
        sum(refund_amount) as refunded,
        sum(net_revenue)   as net_revenue
-from iceberg.lake.gold_daily_revenue
+from ${qualified('gold_daily_revenue')}
 group by dt
 order by dt desc`
+}
 
-const EXAMPLES = [
+const EXAMPLES = computed(() => [
   {
     label: '每日营收',
     sql: `select dt, sum(order_cnt) as orders, sum(gmv) as gmv, sum(net_revenue) as net_revenue
-from iceberg.lake.gold_daily_revenue
+from ${qualified('gold_daily_revenue')}
 group by dt
 order by dt desc`
   },
   {
     label: '商户 Top 10',
     sql: `select merchant_id, sum(gmv) as gmv, sum(order_cnt) as orders
-from iceberg.lake.gold_daily_revenue
+from ${qualified('gold_daily_revenue')}
 group by merchant_id
 order by gmv desc
 limit 10`
@@ -39,11 +49,15 @@ limit 10`
   {
     label: '原始订单采样',
     sql: `select order_id, merchant_id, category, amount, status, event_time
-from iceberg.lake.silver_orders
+from ${qualified('silver_orders')}
 order by event_time desc
 limit 50`
   }
-]
+])
+
+const placeholder = computed(
+  () => `select * from ${qualified('gold_daily_revenue')} limit 20`
+)
 
 const ROW_OPTIONS = [
   { label: '100 行', value: 100 },
@@ -58,7 +72,7 @@ const sql = ref(
   (route.query.sql && String(route.query.sql)) ||
     store.draftSql ||
     localStorage.getItem(STORAGE_KEY) ||
-    DEFAULT_SQL
+    ''
 )
 const maxRows = ref(500)
 const result = ref(null)
@@ -68,9 +82,12 @@ const statsOpen = ref(false)
 
 const statsText = computed(() => (result.value && result.value.stats) || '')
 
-onMounted(() => {
+onMounted(async () => {
   // 从表浏览带过来的 SQL 只用一次，之后以编辑器内容为准
   store.draftSql = ''
+  // 示例和默认 SQL 都要用后端的 catalog / database，所以无论有没有历史 SQL 都先拉配置
+  await loadConfig()
+  if (!sql.value) sql.value = defaultSql()
   if (route.query.run === '1') run()
 })
 
@@ -131,7 +148,7 @@ function onKeydown(e) {
         v-model="sql"
         type="textarea"
         class="sql-input"
-        placeholder="select * from iceberg.lake.gold_daily_revenue limit 20"
+        :placeholder="placeholder"
         :autosize="{ minRows: 9, maxRows: 18 }"
         resize="vertical"
         spellcheck="false"

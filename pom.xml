@@ -23,8 +23,9 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-    <maven.compiler.release>21</maven.compiler.release>
-    <java.version>21</java.version>
+    <!-- 默认产出 Java 11 字节码，供 Spark 集群使用；lake-service 在模块内覆盖成 21 -->
+    <maven.compiler.release>11</maven.compiler.release>
+    <java.version>11</java.version>
 
     <!-- 版本矩阵：Spark 3.5.x(Java11/Scala2.12) + Iceberg 1.5.x + Presto 0.290(JDBC) -->
     <spark.version>3.5.1</spark.version>
@@ -39,8 +40,8 @@
     <junit.version>5.10.2</junit.version>
 
     <!--
-      lake-service 使用 JDK 21 + Spring Boot 4（Spring Framework 7 / Tomcat 11 / Jakarta EE 11）。
-      Spark 模块仍保持 release=11：Spark 3.5.1 官方只支持到 JDK 17，字节码降到 11 才能在各版本集群上跑。
+      lake-service 使用 JDK 21 + Spring Boot 4（Spring Framework 7 / Reactor Netty / Jakarta EE 11），
+      在模块内把 release 覆盖成 21；本文件保持 11 以适配 Spark 集群。
     -->
     <spring.boot.version>4.1.2</spring.boot.version>
     <hikaricp.version>7.0.2</hikaricp.version>
@@ -111,7 +112,7 @@
            starter 的 pom 是 flatten 过的，依赖版本自带，显式写版本即可。 -->
       <dependency>
         <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-webmvc</artifactId>
+        <artifactId>spring-boot-starter-webflux</artifactId>
         <version>${spring.boot.version}</version>
       </dependency>
       <dependency>

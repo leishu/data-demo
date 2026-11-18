@@ -2,6 +2,9 @@ package com.demo.lake.service.query;
 
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.service.config.LakeProperties;
+import com.demo.lake.service.web.ErrorMapper;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -9,12 +12,14 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 即席查询接口：/api/query 为主，另附表清单、采样、配置回显 */
+/** 即席查询接口：/api/query 为主，另附表清单、采样、配置回显；/api/query/stream 是 SSE 版本 */
 @RestController
 @RequestMapping("/api")
 public class QueryController {
@@ -33,18 +38,38 @@ public class QueryController {
     }
 
     @PostMapping("/query")
-    public QueryResult query(@RequestBody QueryRequest request) {
+    public Mono<QueryResult> query(@RequestBody QueryRequest request) {
         return queryService.query(request.sql(), request.maxRows());
     }
 
+    /**
+     * 同一条 SQL 的流式版本：meta → rows(多批) → done，失败则 error。
+     *
+     * <p>用 POST 而不是 GET（EventSource 只支持 GET）：SQL 放 query string 会被访问日志完整记下来，
+     * 也容易被 URL 长度限制卡住；前端用 fetch + ReadableStream 解帧，代价只是几十行解析代码。</p>
+     */
+    @PostMapping(value = "/query/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request) {
+        return queryService.streamQuery(request.sql(), request.maxRows())
+                .map(ev -> ServerSentEvent.builder(ev).event(ev.type()).build())
+                .onErrorResume(e -> {
+                    // 流已经开始了就发不了状态码，只能自己翻成一条 error 事件
+                    ErrorMapper.Mapped mapped = ErrorMapper.map(e);
+                    return Flux.just(ServerSentEvent.<QueryEvent>builder(
+                                    new QueryEvent.Error(mapped.status().value(), mapped.message(), mapped.hint()))
+                            .event("error")
+                            .build());
+                });
+    }
+
     @GetMapping("/tables")
-    public List<Map<String, String>> tables() {
+    public Mono<List<Map<String, String>>> tables() {
         return queryService.listTables();
     }
 
     @GetMapping("/tables/{table}/sample")
-    public QueryResult sample(@PathVariable String table,
-                              @RequestParam(defaultValue = "10") int limit) {
+    public Mono<QueryResult> sample(@PathVariable String table,
+                                    @RequestParam(defaultValue = "10") int limit) {
         return queryService.sample(table, limit);
     }
 

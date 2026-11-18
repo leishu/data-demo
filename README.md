@@ -28,7 +28,7 @@ Spark 做批处理、Iceberg 做存储与表格式层、Presto 做即席查询�
 | Spark | 3.5.1 (Scala 2.12) | 批处理 |
 | Iceberg | 1.5.2 | `iceberg-spark-runtime-3.5_2.12` |
 | Presto | 0.290 | 服务端镜像 + `presto-jdbc` 客户端 |
-| Spring Boot | 4.1.2 | Web + Actuator，Spring Framework 7 / Tomcat 11 / Jakarta EE 11 |
+| Spring Boot | 4.1.2 | WebFlux + Actuator，Spring Framework 7 / Reactor Netty / Jakarta EE 11 |
 | 控制台 | Vue 3.5 + vue-router 4 + Vite 7 | 独立工程 `lake-ui/`，构建产物进 `static/ui/` |
 | 日志 | log4j2（批处理）/ logback（服务层） | Spark 发行版绑死 log4j2；Web 服务用 Boot 默认的 logback |
 | Hadoop | 3.3.4 | 由 Spark 传递依赖，无需单独装 |
@@ -48,7 +48,7 @@ lakehouse-demo/
 │       └── cli/Args.java                 极简参数解析
 ├── spark-batch/              批处理：init / ingest / transform / evolve / maintain / show / verify-sql
 ├── presto-adhoc/             即席查询 CLI：JDBC 客户端 + 表格化输出 + QueryStats
-├── lake-service/             Spring Boot 4 服务层：查询 REST 接口 + 作业编排 + 控制台页面
+├── lake-service/             Spring Boot 4 服务层：查询/作业 REST + SSE 流 + 控制台页面
 ├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 配置
 ├── sql/adhoc/                可以直接丢给 Presto 的查询脚本
 ├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Presto
@@ -76,6 +76,7 @@ bin/dev-batch.sh --job verify-sql --sql-file sql/adhoc/01_daily_revenue.sql
 bin/lake-service.sh build && bin/lake-service.sh start   # http://localhost:8088/
 ```
 
+> `bin/build.sh` 只收到 `-DskipTests` / `-pl ...` 这类参数时会自动补 `package`，不用手写生命周期目标。
 > 只动批处理时 `mvn -pl spark-batch -am package` 用 JDK 11 也能构建；只有 `lake-service`
 > 要求 JDK 21（模块内已挂 enforcer，版本不对会直接给出提示而不是 javac 的晦涩报错）。
 
@@ -117,11 +118,13 @@ open http://localhost:8088/                # 内置查询控制台
 | 接口 | 说明 |
 |---|---|
 | `POST /api/query` | `{"sql":"select ...","maxRows":100}` → 列定义 + 行 + 耗时 + `truncated` |
+| `POST /api/query/stream` | 同上，但走 SSE：`meta` → `rows`… → `done`，出错则发 `error` |
 | `GET /api/tables` | 当前库的表清单（读 Presto 的 `information_schema`） |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码） |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单 |
 | `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部 |
+| `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
 | `GET /actuator/health` | 带 `presto` 组件的健康检查 |
 
 几个刻意的设计：
@@ -134,10 +137,16 @@ open http://localhost:8088/                # 内置查询控制台
   换成 `spark-submit --master yarn ...` 也只改 `lake.batch.command-template`。
 - **服务层不侵入 Spark 代码**。Spring 只在 driver/服务侧；批处理 jar 要进 `spark-submit`、
   要能序列化到 executor，塞一个 `ApplicationContext` 只会让集群问题更难查。
+- **阻塞 IO 一律 offload**。WebFlux 的请求线程就是 Netty 事件循环，Hikari 取连接、`rs.next()`、
+  等子进程都得 `subscribeOn(blocking)` 到虚拟线程上，否则一个慢查询就能让整个服务不响应。
+  JDBC 本身没变成响应式（Presto 没有 r2dbc 驱动），响应式只加在 Web 层与流控上。
+- **长任务用 SSE，不用轮询**。查询结果和作业跟踪都是一条长连接推到底，前端不再定时打接口；
+  客户端断开时服务端 `stmt.cancel()` / 停掉日志游标，不白算也不空转。
 
 遇到过的 Boot 4 坑（都已处理）：
 
-1. `spring-boot-starter-web` 在 4.x 里只是兼容别名，正名是 **`spring-boot-starter-webmvc`**。
+1. `spring-boot-starter-web` 在 4.x 里只是兼容别名，正名是 **`spring-boot-starter-webmvc`**，
+   响应式则是 **`spring-boot-starter-webflux`**——换完之后 WebMvc 那套配置（`WebMvcConfigurer`）全部失效。
 2. actuator 的 health 被抽到独立模块 `spring-boot-health`，包名从 `boot.actuate.health`
    变成 **`boot.health.contributor`**，老代码直接编译不过。
 3. **不要 import `spring-boot-dependencies` BOM**：它会把本项目为 Spark 锁的 slf4j / log4j / junit
@@ -145,6 +154,9 @@ open http://localhost:8088/                # 内置查询控制台
 4. logback 1.5.x 要 slf4j 2.0.2x，而父 pom 给 Spark 锁的是 2.0.7 → 在 `lake-service/pom.xml` 里
    按模块覆盖 `slf4j.version`，别动父 pom。
 5. JDK 21 下 `javax.annotation.PreDestroy` 已不存在，要用 **`jakarta.annotation.PreDestroy`**。
+6. WebFlux 没有 `ViewControllerRegistry`/`ViewResolver`，目录跳转只能写 `RouterFunction`；
+   请求体解析失败是 **`ServerWebInputException`**（不再是 `HttpMessageNotReadableException`），
+   缺资源是 **`org.springframework.web.reactive.resource.NoResourceFoundException`**，异常处理要整个重写。
 
 ## 控制台（Vue 3 + Vite）
 
@@ -153,9 +165,9 @@ open http://localhost:8088/                # 内置查询控制台
 
 | 页面 | 能做什么 |
 |---|---|
-| 查询台 `#/query` | SQL 编辑器（Ctrl/⌘+Enter 执行）、结果表格（类型标注、数值右对齐、NULL 置灰）、耗时/截断提示、QueryStats、复制 TSV |
+| 查询台 `#/query` | SQL 编辑器（Ctrl/⌘+Enter 执行）、结果边到边渲染（SSE）、表格（类型标注、数值右对齐、NULL 置灰）、耗时/截断提示、QueryStats、复制 TSV |
 | 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行），一键「在查询台打开」 |
-| 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时每 2.5s 跟） |
+| 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时用 SSE 实时跟） |
 | 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Presto 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
 
 ```bash
@@ -170,16 +182,22 @@ npm --prefix lake-ui run mock      # 没有 Presto / Docker 时：4173 起个假
 
 - **同源托管，不做 CORS**：前端和接口同一个端口，省掉跨域配置；开发期靠 Vite proxy，而不是给后端开 CORS。
 - **hash 路由**：`#/query`，静态资源托管不需要服务端做 history fallback。
-- **`/ui/` 需要显式 forward**：Spring 只有根路径有 welcome page，目录请求不会自动找 `index.html`。
-- **缺资源返回 404**：`ApiExceptionHandler` 单独处理 `NoResourceFoundException`，否则会被兜底 handler 变成 500（前端加载旧 assets 时就会踩到）。
+- **`/ui/` 需要显式跳转**：Spring 只有根路径有 welcome page，目录请求不会自动找 `index.html`。
+  WebFlux 没有 `ViewControllerRegistry`，所以用一条 `RouterFunction` 把 `/ui`、`/ui/` 307 到 `/ui/index.html`。
+- **缺资源返回 404**：`NoResourceFoundException` 是 `ResponseStatusException` 的子类，`ErrorMapper` 统一按
+  状态码翻译，兜底的 `Exception` handler 就不会把它吞成 500（前端加载旧 assets 时会踩到）。
 - **深链可分享**：`#/query?sql=select...&run=1` 打开即执行，`#/jobs?run=<runId>` 直达某次作业的日志。
 - SQL 存 localStorage，结果只在内存里，不落盘。
 
 ## 接集群（HMS + MinIO + Presto）
 
 ```bash
+# 0. 首次：装 Docker Engine + Compose v2（含镜像加速，约 3 分钟）
+bash bin/install-docker.sh        # 装完 newgrp docker 或重新登录
+
 # 1. 起基础设施（Postgres 存 HMS 元数据，MinIO 存数据，Presto 提供查询）
-bin/infra.sh up
+bin/infra.sh up                   # 首次构建 HMS + 拉镜像，约 5-10 分钟
+bin/infra.sh doctor               # 端口 / HTTP / Presto 端到端自检
 
 # 2. 用集群配置跑批（Hive catalog + s3a 仓库）
 cp conf/platform.properties.example conf/platform.properties
@@ -191,7 +209,12 @@ bin/presto-query.sh --sql-file sql/adhoc/01_daily_revenue.sql
 bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
 ```
 
-> `infra/docker-compose.yml` 是演示用组合，本机没有 Docker 所以未实测；镜像 tag 可按你们内网仓库替换。
+> 安装、镜像加速、端口、扩展新依赖（Kafka/ClickHouse/Redis……）和排错，全部见
+> **[`infra/README.md`](infra/README.md)**。
+>
+> 两点与老版本的差异：MinIO 社区镜像 2026 年已从 Docker Hub / Quay 下线，compose 改用
+> `bitnamilegacy/minio` 归档镜像（仅限本地开发）；HMS 镜像在 `infra/hive/` 里补了 Postgres
+> 驱动和幂等的 `-initOrUpgradeSchema`，不会再出现「第二次启动因表已存在而退出」。
 > 生产上通常换成企业自己的 HMS / 对象存储，配置只改 `platform.catalog.type / hive.uri / warehouse`。
 
 ### S3 依赖：为什么 IDE 会报「找不到依赖项」
@@ -229,7 +252,7 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 | job | 做什么 | 关键点 |
 |---|---|---|
 | `init` | 建库 + 三层表 | 幂等；表属性含 `format-version=2`、CoW 写模式 |
-| `ingest` | 生成落地文件 → 写入 ODS | 故意的重复单(3%)和迟到数据(10%)，验证按事件时间入分区 |
+| `ingest` | 生成落地文件 → 写入 ODS | 只读本次生成的 `dt=` 目录；`order_id` 带业务日期，同一天重跑数据稳定；故意的重复单(3%)和迟到数据(10%)验证按事件时间入分区 |
 | `transform` | ODS→DWD `MERGE`，DWD→ADS `INSERT OVERWRITE` | 只扫近 N 天分区；只更新变化的行 |
 | `evolve` | 加 `channel` 列并回填 | 纯元数据变更 + CoW 重写，用来演示 schema 演进 |
 | `maintain` | `rewrite_data_files` / `rewrite_manifests` / `expire_snapshots` | 建议按天调度 |

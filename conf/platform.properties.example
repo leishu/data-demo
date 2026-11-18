@@ -1,5 +1,9 @@
 # 复制成 conf/platform.properties 生效（已被 .gitignore 忽略）
 # 这里是"接集群"的示例：元数据放 Hive Metastore，数据放 MinIO(S3)
+#
+# 也可以用环境变量覆盖（优先级高于本文件）：
+#   LAKE_CATALOG_TYPE=hive              -> platform.catalog.type
+#   LAKE_S3_ACCESS__KEY=admin           -> platform.s3.access-key（双下划线表示连字符）
 
 platform.catalog.name=iceberg
 platform.catalog.type=hive

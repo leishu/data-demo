@@ -44,7 +44,7 @@ public class TransformJob implements LakeJob {
                 + "FROM " + gold.fqn() + " ORDER BY gmv DESC LIMIT 10").show(false);
 
         System.out.println("[transform] gold 每日大盘：");
-        spark.sql("SELECT dt, sum(order_cnt) AS orders, sum(buyer_cnt) AS buyers, "
+        spark.sql("SELECT dt, sum(order_cnt) AS orders, sum(buyer_cnt) AS buyer_cnt_sum, "
                 + "cast(sum(gmv) AS decimal(18,2)) AS gmv, cast(sum(net_revenue) AS decimal(18,2)) AS net_revenue "
                 + "FROM " + gold.fqn() + " GROUP BY dt ORDER BY dt").show(false);
     }

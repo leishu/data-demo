@@ -8,11 +8,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import javax.sql.DataSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.Executors;
 
 /**
  * 把 platform-common 的配置体系接进 Spring 容器：
@@ -42,6 +45,22 @@ public class LakeConfiguration {
     }
 
     /**
+     * 阻塞操作的执行器。
+     *
+     * <p>WebFlux 的请求都跑在 Reactor Netty 的事件循环上，在那上面调 {@code getConnection()}、
+     * {@code rs.next()}、{@code process.waitFor()} 会把 IO 线程池整个堵死——一个慢查询就能让服务不响应。
+     * 所以这类调用统一包成 Mono/Flux 后 {@code subscribeOn} 到这里。</p>
+     *
+     * <p>用虚拟线程而不是固定大小线程池：阻塞 JDBC 与子进程等待都是「线程在睡等结果」，
+     * 虚拟线程在这种情况下几乎不占平台线程，也不用为并发数去猜池大小。</p>
+     */
+    @Bean(destroyMethod = "dispose")
+    public Scheduler blockingScheduler() {
+        return Schedulers.fromExecutorService(
+                Executors.newVirtualThreadPerTaskExecutor(), "lake-blocking");
+    }
+
+    /**
      * Presto 连接池。初始化失败不阻止应用启动（initializationFailTimeout = -1）：
      * 服务要能在 Presto 没起来时先提供 /actuator/health 和明确的错误信息，而不是起不来。
      */
@@ -56,8 +75,9 @@ public class LakeConfiguration {
         hikari.setMaximumPoolSize(props.getQuery().getPoolSize());
         hikari.setConnectionTimeout(props.getQuery().getConnectionTimeoutMs());
         hikari.setInitializationFailTimeout(-1);
-        // Presto 侧按 source 统计来源，便于在 query 历史里区分服务和 CLI
-        hikari.addDataSourceProperty("source", cfg.prestoSource() + "-service");
+        // Presto 0.290 的 JDBC 驱动没有 source 连接属性（会报 Unrecognized connection property），
+        // 用 applicationNamePrefix 给驱动默认的 "presto-jdbc" 加前缀，效果等价于自定义 source。
+        hikari.addDataSourceProperty("applicationNamePrefix", cfg.prestoSource() + "-service-");
         log.info("Presto 连接池 -> {} (pool={})", cfg.prestoJdbcUrl(), props.getQuery().getPoolSize());
         return new HikariDataSource(hikari);
     }

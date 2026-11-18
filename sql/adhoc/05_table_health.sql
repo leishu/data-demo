@@ -3,7 +3,7 @@
 -- @presto-only
 SELECT count(*)                            AS file_cnt,
        sum(record_count)                   AS total_records,
-       sum(file_size_in_bytes) / 1024 / 1024 AS total_mb,
+       round(cast(sum(file_size_in_bytes) AS double) / 1024 / 1024, 2) AS total_mb,
        cast(avg(file_size_in_bytes) AS bigint) AS avg_file_bytes,
        min(file_size_in_bytes)             AS min_file_bytes
 FROM iceberg.lake."gold_daily_revenue$files";

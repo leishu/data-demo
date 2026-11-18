@@ -99,7 +99,7 @@ public final class LakeTables {
                 + "  merchant_id    STRING      COMMENT '商户号',\n"
                 + "  category       STRING      COMMENT '品类',\n"
                 + "  order_cnt      BIGINT      COMMENT '有效订单数',\n"
-                + "  buyer_cnt      BIGINT      COMMENT '下单用户数',\n"
+                + "  buyer_cnt      BIGINT      COMMENT '本商户+品类下的下单用户数(跨行不可相加)',\n"
                 + "  gmv            DECIMAL(18,2) COMMENT '成交总额',\n"
                 + "  refund_amount  DECIMAL(18,2) COMMENT '退款金额',\n"
                 + "  net_revenue    DECIMAL(18,2) COMMENT '净收入=GMV-退款',\n"
