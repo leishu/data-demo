@@ -3,6 +3,7 @@ package com.demo.lake.batch;
 import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.catalog.TransformSql;
+import com.demo.lake.common.cli.Args;
 import com.demo.lake.common.config.PlatformConfig;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.math.BigDecimal;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -141,5 +143,22 @@ class IcebergLocalRoundTripTest {
 
         assertEquals(1L, spark.sql("SELECT count(*) FROM " + silver.metadata("snapshots")).head().getLong(0));
         assertEquals(3L, spark.table(silver.fqn()).count(), "清理快照不应影响数据");
+    }
+
+    @Test
+    @Order(5)
+    void runRecordLandsInOpsTable() {
+        Args args = Args.parse(new String[]{"--job", "client-test"});
+        RunRecordWriter.record(spark, cfg, args, "run-unit-1", "--job client-test",
+                "SUCCEEDED", 0, Instant.now().minusSeconds(1), "完成");
+
+        TableRef ops = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
+        Row row = spark.sql("SELECT run_id, job, status, exit_code, log_file FROM " + ops.fqn()
+                + " WHERE run_id = 'run-unit-1'").head();
+        assertEquals("run-unit-1", row.getString(0));
+        assertEquals("client-test", row.getString(1));
+        assertEquals("SUCCEEDED", row.getString(2));
+        assertEquals(0, row.getInt(3));
+        assertTrue(row.isNullAt(4), "命令行跑的作业没有日志文件");
     }
 }

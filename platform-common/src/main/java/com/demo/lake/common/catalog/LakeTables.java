@@ -18,6 +18,9 @@ import java.util.List;
  * <p>关键表属性说明：merge/update/delete 全部走 copy-on-write。
  * Presto 0.29x 的 Iceberg connector 读 MoR 表需要处理 delete file，
  * 走 CoW 可以让 Spark 写、Presto 读这条链路零兼容问题（代价是写放大）。</p>
+ *
+ * <p>另有一个 ops 层（独立 namespace {@value #OPS_SCHEMA}）：{@code ops.batch_runs} 记录批作业
+ * 的终态运行历史。放在业务库之外，就不会出现在 lake-service 的表浏览清单里。</p>
  */
 public final class LakeTables {
 
@@ -25,15 +28,22 @@ public final class LakeTables {
     public static final String SILVER_ORDERS = "silver_orders";
     public static final String GOLD_DAILY_REVENUE = "gold_daily_revenue";
 
+    /** 运维元数据 namespace：不进三层业务表清单 */
+    public static final String OPS_SCHEMA = "ops";
+    /** 批作业运行历史：一行一次运行的终态，由 BatchApp 写、lake-service 读 */
+    public static final String BATCH_RUNS = "batch_runs";
+
     private LakeTables() {
     }
 
     public static List<String> all(PlatformConfig cfg) {
         return Arrays.asList(
                 createDatabase(cfg),
+                createOpsDatabase(cfg),
                 createBronzeOrders(cfg),
                 createSilverOrders(cfg),
-                createGoldDailyRevenue(cfg));
+                createGoldDailyRevenue(cfg),
+                createBatchRuns(cfg));
     }
 
     /**
@@ -44,6 +54,36 @@ public final class LakeTables {
      */
     public static String createDatabase(PlatformConfig cfg) {
         return "CREATE DATABASE IF NOT EXISTS " + cfg.catalogName() + "." + cfg.database();
+    }
+
+    public static String createOpsDatabase(PlatformConfig cfg) {
+        return "CREATE DATABASE IF NOT EXISTS " + cfg.catalogName() + "." + OPS_SCHEMA;
+    }
+
+    /**
+     * ops：批作业运行历史。只落终态（SUCCEEDED / FAILED），不写 RUNNING——
+     * 进程被 kill 或超时强杀时没人来收尾，留着 RUNNING 行会变成永久脏数据。
+     *
+     * <p>不分区：单表行数就是「跑过多少次作业」，量级极小，分区只会让 Presto 侧多一层元数据。</p>
+     */
+    public static String createBatchRuns(PlatformConfig cfg) {
+        TableRef t = TableRef.of(cfg.catalogName(), OPS_SCHEMA, BATCH_RUNS);
+        return "CREATE TABLE IF NOT EXISTS " + t.fqn() + " (\n"
+                + "  run_id       STRING      COMMENT '运行 ID（服务端生成，与内存记录对齐）',\n"
+                + "  job          STRING      COMMENT '作业名：init/ingest/.../all',\n"
+                + "  command      STRING      COMMENT '本次进程收到的参数',\n"
+                + "  status       STRING      COMMENT 'SUCCEEDED/FAILED',\n"
+                + "  exit_code    INT         COMMENT '作业语义退出码：0 成功 1 失败',\n"
+                + "  started_at   TIMESTAMP   COMMENT '开始时间(UTC)',\n"
+                + "  finished_at  TIMESTAMP   COMMENT '结束时间(UTC)',\n"
+                + "  duration_ms  BIGINT      COMMENT '耗时(毫秒)',\n"
+                + "  log_file     STRING      COMMENT '服务端日志文件，重启后仍可 tail',\n"
+                + "  message      STRING      COMMENT '结果说明'\n"
+                + ")\n"
+                + "USING iceberg\n"
+                + "TBLPROPERTIES (\n"
+                + tableProperties(cfg, false)
+                + ")";
     }
 
     /** ODS：原始订单落地表，只追加不做更新，保留 source_file 便于回溯 */

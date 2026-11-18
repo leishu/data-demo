@@ -358,7 +358,10 @@ const server = http.createServer((req, res) => {
   }
 
   if (p === '/api/batch/runs') {
-    return send(res, 200, runs.slice(0, Number(url.searchParams.get('limit') || 20)))
+    return send(res, 200, {
+      runs: runs.slice(0, Number(url.searchParams.get('limit') || 20)),
+      history: { status: 'OK', hint: null, table: 'iceberg.ops.batch_runs' }
+    })
   }
 
   if (p.startsWith('/api/batch/') && method === 'POST') {

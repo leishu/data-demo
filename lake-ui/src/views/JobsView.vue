@@ -22,6 +22,8 @@ const JOB_META = {
 const route = useRoute()
 
 const runs = ref([])
+// 湖表历史这份的可用性：OK / NOT_INITIALIZED / UNAVAILABLE / ERROR，读不到只降级提示
+const historyInfo = ref(null)
 const runsError = ref(null)
 const runError = ref(null)
 const submitting = ref(null)
@@ -39,6 +41,14 @@ const batchEnabled = computed(() => store.config?.batch?.enabled !== false)
 const commandTemplate = computed(() => store.config?.batch?.commandTemplate || '—')
 const logText = computed(() => (logTail.value.length ? logTail.value.join('\n') : '暂无日志'))
 const isRunning = computed(() => activeRun.value && activeRun.value.status === 'RUNNING')
+const historyNotice = computed(() => {
+  const info = historyInfo.value
+  if (!info || info.status === 'OK') return null
+  return {
+    type: info.status === 'NOT_INITIALIZED' ? 'info' : 'warning',
+    text: info.hint || `运行历史不可用（${info.status}）`
+  }
+})
 
 async function scrollLogBottom() {
   await nextTick()
@@ -48,7 +58,9 @@ async function scrollLogBottom() {
 
 async function loadRuns() {
   try {
-    runs.value = await api.runs(20)
+    const res = await api.runs(20)
+    runs.value = res?.runs || []
+    historyInfo.value = res?.history || null
     runsError.value = null
   } catch (e) {
     runsError.value = e
@@ -222,39 +234,50 @@ onUnmounted(() => {
         title="读不到运行记录"
         @retry="loadRuns"
       />
-      <el-empty v-else-if="!runs.length" description="还没有运行记录，上面点一个作业就会出现在这里" />
-      <el-table
-        v-else
-        :data="runs"
-        size="small"
-        max-height="330"
-        class="runs"
-        :row-style="{ cursor: 'pointer' }"
-        @row-click="(row) => inspect(row)"
-      >
-        <el-table-column label="作业" width="96">
-          <template #default="{ row }"><span class="mono">{{ row.job }}</span></template>
-        </el-table-column>
-        <el-table-column label="状态" width="84">
-          <template #default="{ row }">
-            <el-tag size="small" effect="light" :type="tagType(statusTone(row.status))">
-              {{ fmtJobStatus(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="开始" min-width="110">
-          <template #default="{ row }"><span class="faint">{{ fmtTime(row.startedAt) }}</span></template>
-        </el-table-column>
-        <el-table-column label="耗时" width="88" align="right">
-          <template #default="{ row }"><span class="mono">{{ fmtDuration(row.durationMs) }}</span></template>
-        </el-table-column>
-        <el-table-column label="退出码" width="76" align="right">
-          <template #default="{ row }">
-            <span v-if="row.exitCode === null || row.exitCode === undefined" class="faint">—</span>
-            <span v-else :class="row.exitCode === 0 ? 'mono ok-text' : 'mono err-text'">{{ row.exitCode }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
+      <template v-else>
+        <!-- 湖表历史读不到只是降级：本进程记录照常显示，不把整块变成错误 -->
+        <el-alert
+          v-if="historyNotice"
+          class="history-hint"
+          :type="historyNotice.type"
+          :closable="false"
+          show-icon
+          :title="historyNotice.text"
+        />
+        <el-empty v-if="!runs.length" description="还没有运行记录，上面点一个作业就会出现在这里" />
+        <el-table
+          v-else
+          :data="runs"
+          size="small"
+          max-height="330"
+          class="runs"
+          :row-style="{ cursor: 'pointer' }"
+          @row-click="(row) => inspect(row)"
+        >
+          <el-table-column label="作业" width="96">
+            <template #default="{ row }"><span class="mono">{{ row.job }}</span></template>
+          </el-table-column>
+          <el-table-column label="状态" width="84">
+            <template #default="{ row }">
+              <el-tag size="small" effect="light" :type="tagType(statusTone(row.status))">
+                {{ fmtJobStatus(row.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="开始" min-width="110">
+            <template #default="{ row }"><span class="faint">{{ fmtTime(row.startedAt) }}</span></template>
+          </el-table-column>
+          <el-table-column label="耗时" width="88" align="right">
+            <template #default="{ row }"><span class="mono">{{ fmtDuration(row.durationMs) }}</span></template>
+          </el-table-column>
+          <el-table-column label="退出码" width="76" align="right">
+            <template #default="{ row }">
+              <span v-if="row.exitCode === null || row.exitCode === undefined" class="faint">—</span>
+              <span v-else :class="row.exitCode === 0 ? 'mono ok-text' : 'mono err-text'">{{ row.exitCode }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
     </el-card>
 
     <el-card>
@@ -340,6 +363,11 @@ onUnmounted(() => {
 .card-title {
   font-size: 13px;
   font-weight: 600;
+}
+
+.history-hint {
+  margin-bottom: 10px;
+  font-size: 11.5px;
 }
 
 .note {

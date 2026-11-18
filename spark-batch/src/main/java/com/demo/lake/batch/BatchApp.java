@@ -7,17 +7,20 @@ import com.demo.lake.batch.job.MaintainJob;
 import com.demo.lake.batch.job.ShowJob;
 import com.demo.lake.batch.job.TransformJob;
 import com.demo.lake.batch.job.VerifySqlJob;
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.common.config.PlatformConfig;
 import org.apache.spark.sql.SparkSession;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * 批处理统一入口。
@@ -29,6 +32,9 @@ import java.util.Map;
  * mvn -pl spark-batch -am exec:java -Dexec.args="--job maintain"
  * mvn -pl spark-batch -am exec:java -Dexec.args="--job show"
  * </pre>
+ *
+ * <p>每次运行结束都会往 {@code ops.batch_runs} 落一行终态记录（可用 {@code --no-record} 关掉）。
+ * 记账失败不会改变退出码：作业结果以真实退出码为准，旁路失败只打提示。</p>
  */
 public final class BatchApp {
 
@@ -70,12 +76,17 @@ public final class BatchApp {
         PlatformConfig cfg = PlatformConfig.load(conf);
 
         List<String> plan = resolvePlan(args);
+        String runId = runId(args);
+        Instant startedAt = Instant.now();
         System.out.println("======================================================");
-        System.out.println(" lakehouse batch | job=" + plan);
+        System.out.println(" lakehouse batch | run=" + runId + " job=" + plan);
         System.out.println(" " + cfg.describe());
         System.out.println("======================================================");
 
         SparkSession spark = SparkSessionFactory.create(cfg, "lakehouse-batch");
+        String status = BatchRunStatus.SUCCEEDED;
+        int exitCode = 0;
+        String message = "完成";
         try {
             for (String name : plan) {
                 LakeJob job = JOBS.get(name);
@@ -85,14 +96,36 @@ public final class BatchApp {
                 System.out.printf("<<< [%s] 完成，耗时 %.1fs%n", name, (System.currentTimeMillis() - start) / 1000.0);
             }
         } catch (Exception e) {
+            status = BatchRunStatus.FAILED;
+            exitCode = 1;
+            message = "作业失败: " + e.getMessage();
             System.err.println("作业失败: " + e.getMessage());
             e.printStackTrace();
             throw new RuntimeException("批处理作业失败: " + plan, e);
         } finally {
+            // 必须在 spark.stop() 之前写：记账要复用同一个 session
+            RunRecordWriter.record(spark, cfg, args, runId, String.join(" ", argv),
+                    status, exitCode, startedAt, message);
             if (!args.flag("keep-session")) {
                 spark.stop();
             }
         }
+    }
+
+    /**
+     * 运行 ID 优先级：--run-id &gt; 环境变量 BATCH_RUN_ID &gt; 本进程生成。
+     * 被 lake-service 拉起时用服务端的 ID，两边才能按同一个主键合并。
+     */
+    private static String runId(Args args) {
+        String given = args.get("run-id");
+        if (given != null && !given.trim().isEmpty()) {
+            return given.trim();
+        }
+        String fromEnv = RunRecordWriter.env("BATCH_RUN_ID");
+        if (fromEnv != null) {
+            return fromEnv;
+        }
+        return "run-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
     }
 
     private static List<String> resolvePlan(Args args) {
@@ -120,6 +153,8 @@ public final class BatchApp {
         System.out.println("  --catalog-type <t>    hadoop | hive");
         System.out.println("  --hive-uri <uri>      thrift://hms:9083");
         System.out.println("  --keep-session        job 之间复用同一个 SparkSession（默认已复用）");
+        System.out.println("  --run-id <id>         指定运行 ID（服务端拉起时由 BATCH_RUN_ID 环境变量注入）");
+        System.out.println("  --no-record           不往 ops.batch_runs 写运行记录");
         System.out.println();
         System.out.println("ingest:");
         System.out.println("  --days <n>            生成最近 n 天数据，默认 7");

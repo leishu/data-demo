@@ -124,7 +124,7 @@ open http://localhost:8088/                # 内置查询控制台
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码） |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单 |
-| `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部 |
+| `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部；列表 = 本进程内存记录 ∪ `ops.batch_runs` 历史（按 id 合并，内存优先），历史读不到时降级返回 `history.status` |
 | `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
 | `GET /actuator/health` | 带 `presto` 组件的健康检查 |
 
@@ -143,6 +143,9 @@ open http://localhost:8088/                # 内置查询控制台
   JDBC 本身没变成响应式（Presto 没有 r2dbc 驱动），响应式只加在 Web 层与流控上。
 - **长任务用 SSE，不用轮询**。查询结果和作业跟踪都是一条长连接推到底，前端不再定时打接口；
   客户端断开时服务端 `stmt.cancel()` / 停掉日志游标，不白算也不空转。
+- **运行历史落湖表，但不依赖它**。作业结束时 BatchApp 往 `ops.batch_runs` 写一行终态
+  （`--no-record` 可关），服务端用 `information_schema` 探测表在不在，读不到就只降级提示；
+  记账失败也不会把作业退出码改掉——它与作业结果无关。
 
 
 ## 控制台（Vue 3 + Vite）
@@ -238,13 +241,17 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 
 | job | 做什么 | 关键点 |
 |---|---|---|
-| `init` | 建库 + 三层表 | 幂等；表属性含 `format-version=2`、CoW 写模式 |
+| `init` | 建库 + 三层表 + `ops.batch_runs` | 幂等；表属性含 `format-version=2`、CoW 写模式；运行历史表放独立 `ops` namespace，不进业务表清单 |
 | `ingest` | 生成落地文件 → 写入 ODS | 只读本次生成的 `dt=` 目录；`order_id` 带业务日期，同一天重跑数据稳定；故意的重复单(3%)和迟到数据(10%)验证按事件时间入分区 |
 | `transform` | ODS→DWD `MERGE`，DWD→ADS `INSERT OVERWRITE` | 只扫近 N 天分区；只更新变化的行 |
 | `evolve` | 加 `channel` 列并回填 | 纯元数据变更 + CoW 重写，用来演示 schema 演进 |
 | `maintain` | `rewrite_data_files` / `rewrite_manifests` / `expire_snapshots` | 建议按天调度 |
 | `show` | 快照、历史、分区布局、数据抽样 | 只读巡检 |
 | `verify-sql` | 用 Spark 执行 ad-hoc 脚本 | 跳过 `@presto-only` 语句，其余做最小方言适配 |
+
+每个 job 跑完（无论成功失败）都会往 `ops.batch_runs` 落一行终态：`run_id / job / status / 耗时 / 日志路径`。
+`run_id` 由 lake-service 生成并通过 `BATCH_RUN_ID` 环境变量注入，所以服务重启后从表里读回的记录
+还能和原来的日志文件对上；不想记账加 `--no-record`。
 
 ## 即席查询脚本（`sql/adhoc/`）
 
