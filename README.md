@@ -1,0 +1,297 @@
+# lakehouse-demo
+
+Spark 做批处理、Iceberg 做存储与表格式层、Presto 做即席查询的湖仓脚手架，外面套一个 Spring Boot 4
+服务层做查询接口与作业编排。三条命令就能在本地跑通，不装 Hadoop、不装 Docker 也行；要接集群时只改 3 个配置项。
+
+```
+ 上游落地文件(Parquet/CSV/JSON)          HTTP 调用方 / 控制台
+        │                                      │
+        │  Spark Batch  (spark-batch)          │  Spring Boot 4 (lake-service, JDK 21)
+        ▼                                      ▼
+┌──────────────────────────────────────────────────────────┐
+│ Iceberg 表格式层                                          │
+│   ODS  bronze_orders   →  DWD  silver_orders  →  ADS      │
+│   (按事件时间分区)        (MERGE 去重)          gold_daily_revenue │
+│   catalog: hadoop(本地) / hive(HMS)   storage: 本地/MinIO │
+│   快照 · 时间旅行 · schema 演进 · 隐藏分区 · 小文件治理    │
+└──────────────────────────────────────────────────────────┘
+        ▲ 写入                                 ▲ 即席查询
+        │                                      │
+   Spark 3.5                              Presto 0.290 (JDBC)
+```
+
+## 版本矩阵
+
+| 组件 | 版本 | 说明 |
+|---|---|---|
+| JDK | 11（批处理）/ 21（服务层） | Spark 3.5 官方支持到 17，所以批处理模块产出 Java 11 字节码；`lake-service` 用 21 |
+| Spark | 3.5.1 (Scala 2.12) | 批处理 |
+| Iceberg | 1.5.2 | `iceberg-spark-runtime-3.5_2.12` |
+| Presto | 0.290 | 服务端镜像 + `presto-jdbc` 客户端 |
+| Spring Boot | 4.1.2 | Web + Actuator，Spring Framework 7 / Tomcat 11 / Jakarta EE 11 |
+| 控制台 | Vue 3.5 + vue-router 4 + Vite 7 | 独立工程 `lake-ui/`，构建产物进 `static/ui/` |
+| 日志 | log4j2（批处理）/ logback（服务层） | Spark 发行版绑死 log4j2；Web 服务用 Boot 默认的 logback |
+| Hadoop | 3.3.4 | 由 Spark 传递依赖，无需单独装 |
+| scala-collection-compat | 2.11.0 | Iceberg 的 `CALL` 存储过程在 Scala 2.12 下必需 |
+
+## 目录结构
+
+```
+lakehouse-demo/
+├── platform-common/          公共层：配置、Iceberg DDL、转换 SQL、SQL 脚本解析
+│   └── src/main/java/com/demo/lake/common/
+│       ├── config/PlatformConfig.java    本地/集群配置归一化
+│       ├── catalog/LakeTables.java       三层表 DDL（含表属性）
+│       ├── catalog/TransformSql.java     MERGE / 汇总 SQL
+│       ├── catalog/TableRef.java         catalog.db.table
+│       ├── sql/SqlScript.java            读脚本、按分号切分
+│       └── cli/Args.java                 极简参数解析
+├── spark-batch/              批处理：init / ingest / transform / evolve / maintain / show / verify-sql
+├── presto-adhoc/             即席查询 CLI：JDBC 客户端 + 表格化输出 + QueryStats
+├── lake-service/             Spring Boot 4 服务层：查询 REST 接口 + 作业编排 + 控制台页面
+├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 配置
+├── sql/adhoc/                可以直接丢给 Presto 的查询脚本
+├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Presto
+├── bin/                      便捷脚本
+└── conf/platform.properties.example   集群模式配置模板
+```
+
+## 快速开始（本地，免 Docker）
+
+```bash
+# 1. 编译 + 跑测试（会真实建表、MERGE、加列、清理快照）
+bin/build.sh          # 自动找 ~/soft/jdk-21* / /usr/lib/jvm/java-21*；也可 export JAVA21_HOME 指定
+                      # 整个 reactor 用 JDK 21 构建，但 spark 模块编译目标仍是 Java 11
+
+# 2. 一条命令跑完 init → ingest → transform → maintain → show
+bin/dev-batch.sh --job all
+
+# 3. 想连 schema 演进一起看（加 channel 列 + 回填 + 时间旅行前的快照对比）
+bin/dev-batch.sh --job all --evolve
+
+# 4. 没有 Presto 也能校验 SQL（用 Spark 执行同一份脚本）
+bin/dev-batch.sh --job verify-sql --sql-file sql/adhoc/01_daily_revenue.sql
+
+# 5. 起服务层（查询 REST + 作业编排 + 控制台）
+bin/lake-service.sh build && bin/lake-service.sh start   # http://localhost:8088/
+```
+
+> 只动批处理时 `mvn -pl spark-batch -am package` 用 JDK 11 也能构建；只有 `lake-service`
+> 要求 JDK 21（模块内已挂 enforcer，版本不对会直接给出提示而不是 javac 的晦涩报错）。
+
+本地模式用 **Hadoop catalog**：元数据就是 `warehouse/lake.db/*/metadata/*.metadata.json`，
+数据是 Parquet，`data/raw/orders/dt=*/` 是模拟的上游落地文件。全程不需要任何外部服务。
+
+跑完之后你会看到（默认 7 天 × 2000 单）：
+
+```
+bronze_orders         14,385 行   ← 含 3% 重复 + 10% 迟到数据
+silver_orders         14,000 行   ← MERGE 去重后，一行一个订单
+gold_daily_revenue       783 行   ← 按 天 × 商户 × 品类 聚合
+```
+
+再跑一次 `--job ingest --days 3` 然后 `--job maintain`，就能看到小文件治理的效果：
+bronze 从 18 个文件（每分区 2 个）合并回 9 个（每分区 1 个，平均 30KB → 更大文件）。
+
+单独跑某一步：
+
+```bash
+bin/dev-batch.sh --job init
+bin/dev-batch.sh --job ingest --days 7 --orders-per-day 2000
+bin/dev-batch.sh --job transform
+bin/dev-batch.sh --job maintain --retain-last 5
+bin/dev-batch.sh --job show
+```
+
+## 服务层（Spring Boot 4 + JDK 21）
+
+`lake-service` 把「查」和「跑」包装成 HTTP：查询走 Presto（Hikari 连接池），批作业走独立进程。
+
+```bash
+export JAVA21_HOME=~/soft/jdk-21.0.12      # 也可以不设，脚本会自动找 ~/soft/jdk-21*
+bin/lake-service.sh build                  # 打包（release 21）
+bin/lake-service.sh start                  # 后台启动，默认 8088
+open http://localhost:8088/                # 内置查询控制台
+```
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/query` | `{"sql":"select ...","maxRows":100}` → 列定义 + 行 + 耗时 + `truncated` |
+| `GET /api/tables` | 当前库的表清单（读 Presto 的 `information_schema`） |
+| `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
+| `GET /api/config` | 生效配置回显（S3 密钥打码） |
+| `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单 |
+| `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部 |
+| `GET /actuator/health` | 带 `presto` 组件的健康检查 |
+
+几个刻意的设计：
+
+- **SQL 默认只读**。`SqlGuard` 只放行 `select/with/show/describe/explain`，且必须单条语句；
+  要放开把 `lake.query.allow-writes` 置 true。给外部一个「能跑任意 SQL」的接口太危险。
+- **Presto 挂了服务照常启动**（连接池 `initializationFailTimeout=-1`），查询返回 **503** 并给出
+  「先起 Presto」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
+- **批作业用子进程**，不在 Web 容器里养 SparkSession：内存、线程、崩溃隔离都更省心，
+  换成 `spark-submit --master yarn ...` 也只改 `lake.batch.command-template`。
+- **服务层不侵入 Spark 代码**。Spring 只在 driver/服务侧；批处理 jar 要进 `spark-submit`、
+  要能序列化到 executor，塞一个 `ApplicationContext` 只会让集群问题更难查。
+
+遇到过的 Boot 4 坑（都已处理）：
+
+1. `spring-boot-starter-web` 在 4.x 里只是兼容别名，正名是 **`spring-boot-starter-webmvc`**。
+2. actuator 的 health 被抽到独立模块 `spring-boot-health`，包名从 `boot.actuate.health`
+   变成 **`boot.health.contributor`**，老代码直接编译不过。
+3. **不要 import `spring-boot-dependencies` BOM**：它会把本项目为 Spark 锁的 slf4j / log4j / junit
+   版本一起改掉。starter 的 pom 是 flatten 过的，自带版本号，显式写版本即可。
+4. logback 1.5.x 要 slf4j 2.0.2x，而父 pom 给 Spark 锁的是 2.0.7 → 在 `lake-service/pom.xml` 里
+   按模块覆盖 `slf4j.version`，别动父 pom。
+5. JDK 21 下 `javax.annotation.PreDestroy` 已不存在，要用 **`jakarta.annotation.PreDestroy`**。
+
+## 控制台（Vue 3 + Vite）
+
+`lake-service` 自带单页控制台，源码在 `lake-ui/`（Vue 3.5 + vue-router 4 + Vite 7），
+构建产物写到 `lake-service/src/main/resources/static/ui/`，所以 jar 里自带页面，不需要额外的 Web 服务器。
+
+| 页面 | 能做什么 |
+|---|---|
+| 查询台 `#/query` | SQL 编辑器（Ctrl/⌘+Enter 执行）、结果表格（类型标注、数值右对齐、NULL 置灰）、耗时/截断提示、QueryStats、复制 TSV |
+| 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行），一键「在查询台打开」 |
+| 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时每 2.5s 跟） |
+| 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Presto 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
+
+```bash
+bin/build-ui.sh                    # 首次会 npm install，然后 vite build
+npm --prefix lake-ui run dev       # 开发模式 5173，/api 与 /actuator 代理到 8088
+npm --prefix lake-ui run mock      # 没有 Presto / Docker 时：4173 起个假后端，纯验前端
+```
+
+`bin/build.sh` 会先构建前端再打包；只编后端时用 `SKIP_UI=1 bin/build.sh`（认不到 node 也会自动跳过）。
+
+几个实现上的取舍：
+
+- **同源托管，不做 CORS**：前端和接口同一个端口，省掉跨域配置；开发期靠 Vite proxy，而不是给后端开 CORS。
+- **hash 路由**：`#/query`，静态资源托管不需要服务端做 history fallback。
+- **`/ui/` 需要显式 forward**：Spring 只有根路径有 welcome page，目录请求不会自动找 `index.html`。
+- **缺资源返回 404**：`ApiExceptionHandler` 单独处理 `NoResourceFoundException`，否则会被兜底 handler 变成 500（前端加载旧 assets 时就会踩到）。
+- **深链可分享**：`#/query?sql=select...&run=1` 打开即执行，`#/jobs?run=<runId>` 直达某次作业的日志。
+- SQL 存 localStorage，结果只在内存里，不落盘。
+
+## 接集群（HMS + MinIO + Presto）
+
+```bash
+# 1. 起基础设施（Postgres 存 HMS 元数据，MinIO 存数据，Presto 提供查询）
+bin/infra.sh up
+
+# 2. 用集群配置跑批（Hive catalog + s3a 仓库）
+cp conf/platform.properties.example conf/platform.properties
+MVN_PROFILE=s3 bin/dev-batch.sh --job all      # s3 profile 带上 iceberg-aws-bundle + hadoop-aws
+
+# 3. Presto 即席查询
+bin/presto-query.sh --list
+bin/presto-query.sh --sql-file sql/adhoc/01_daily_revenue.sql
+bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
+```
+
+> `infra/docker-compose.yml` 是演示用组合，本机没有 Docker 所以未实测；镜像 tag 可按你们内网仓库替换。
+> 生产上通常换成企业自己的 HMS / 对象存储，配置只改 `platform.catalog.type / hive.uri / warehouse`。
+
+### S3 依赖：为什么 IDE 会报「找不到依赖项」
+
+这两个包只在 `spark-batch` 的 `s3` profile 里声明，**默认构建不激活、也不会下载**，所以第一次在 IDE 里勾上 profile 就会报红：
+
+| 坐标 | 作用 | 体积 |
+| --- | --- | --- |
+| `org.apache.iceberg:iceberg-aws-bundle:1.5.2` | Iceberg 的 `S3FileIO`，读写 metadata / data 文件 | ~30 MB |
+| `org.apache.hadoop:hadoop-aws:3.3.4` | Spark 的 `s3a://` 文件系统，传递引入 `com.amazonaws:aws-java-sdk-bundle:1.12.262` | 1 MB + 268 MB |
+
+坐标本身在中央仓库（和阿里云镜像）都存在，缺的是本地仓库副本。两条命令解决：
+
+```bash
+# 1) 首次：父 pom 和 platform-common 得先进本地仓库，否则依赖树解析不出来
+mvn -N install -DskipTests
+mvn -pl platform-common install -DskipTests
+# 2) 预下载 s3 相关依赖（含传递依赖）
+mvn -Ps3 -pl spark-batch dependency:go-offline
+```
+
+IDEA 侧同时确认：Maven 面板勾选 `s3` profile、`Settings → Build Tools → Maven → Local repository` 指向 `~/.m2/repository`、没开 Offline work，然后 `Reload All Maven Projects`。
+
+`hadoop-aws` 的版本必须与 Spark 发行版自带的 Hadoop 对齐（Spark 3.5.1 官方包是 3.3.4），不一致会在运行期报 `NoSuchMethodError`；换集群时用 `-Dhadoop.version=` 覆盖。
+
+已经有 Spark 集群时，用 `bin/submit-batch.sh` 提交（自动 `--packages` 拉 Iceberg runtime）：
+
+```bash
+SPARK_MASTER=yarn bin/submit-batch.sh --job all \
+  --catalog-type hive --hive-uri thrift://hms:9083 --warehouse s3a://lake/warehouse
+```
+
+## 批处理作业
+
+| job | 做什么 | 关键点 |
+|---|---|---|
+| `init` | 建库 + 三层表 | 幂等；表属性含 `format-version=2`、CoW 写模式 |
+| `ingest` | 生成落地文件 → 写入 ODS | 故意的重复单(3%)和迟到数据(10%)，验证按事件时间入分区 |
+| `transform` | ODS→DWD `MERGE`，DWD→ADS `INSERT OVERWRITE` | 只扫近 N 天分区；只更新变化的行 |
+| `evolve` | 加 `channel` 列并回填 | 纯元数据变更 + CoW 重写，用来演示 schema 演进 |
+| `maintain` | `rewrite_data_files` / `rewrite_manifests` / `expire_snapshots` | 建议按天调度 |
+| `show` | 快照、历史、分区布局、数据抽样 | 只读巡检 |
+| `verify-sql` | 用 Spark 执行 ad-hoc 脚本 | 跳过 `@presto-only` 语句，其余做最小方言适配 |
+
+## 即席查询脚本（`sql/adhoc/`）
+
+| 脚本 | 内容 |
+|---|---|
+| `01_daily_revenue.sql` | 每日 GMV / 退款 / 净收入 / 退款率 |
+| `02_top_merchants.sql` | 商户 GMV 排行 |
+| `03_partition_pruning.sql` | 两条 `EXPLAIN` 对比分区裁剪 |
+| `04_time_travel.sql` | `$snapshots`、`FOR VERSION AS OF`、`FOR TIMESTAMP AS OF` |
+| `05_table_health.sql` | `$files` / `$partitions` 小文件与分区巡检 |
+| `06_refund_by_category.sql` | 品类退款率（经方言适配可用 Spark 校验） |
+| `07_channel_mix.sql` | 渠道结构（需先跑过 `--job evolve`） |
+
+## 几个关键设计决定
+
+**1. 行级写一律 copy-on-write，不用 merge-on-read。**
+Presto 0.29x 的 Iceberg connector 读 MoR 表要处理 delete file，跨引擎容易踩坑。
+CoW 的代价是写放大，换来的是「Spark 写、Presto 读」零兼容问题。如果后续换成 Trino / Presto 新版，
+或者干脆只有 Spark 读，把 `platform.write-mode=merge-on-read` 打开即可。
+
+**2. ODS/DWD 用 `days(event_time)` 隐藏分区，不用入湖日期。**
+上游落地文件按 `dt=YYYY-MM-DD` 分目录，但写入时 Iceberg 按 `event_time` 自己路由——
+迟到数据会进正确的历史分区，不需要重跑整个目录。
+
+**3. 去重用 `MERGE` + `row_number()`，不做全量覆盖。**
+`WHEN MATCHED AND s.event_time > t.event_time` 保证只更新真正变了的行；
+`WHERE event_time >= current_date() - INTERVAL 7 DAYS` 让每次只碰最近几个分区。
+
+**4. 快照和文件要定期治理。**
+`rewrite_data_files` 合并小文件、`rewrite_manifests` 控制元数据规模、`expire_snapshots` 清历史。
+不管的话元数据目录会越滚越大，Presto 查询规划也会变慢。
+
+**5. 统一 UTC。**
+`spark.sql.session.timeZone=UTC`，避免「按天汇总」在不同时区下结果对不上。
+
+## 踩过的坑（都在代码里做了兜底）
+
+- **JDK11+ 反射限制**：`.mvn/jvm.config` 已配好 `--add-opens`；用 `spark-submit` 部署时放进
+  `--conf spark.driver.extraJavaOptions` / `spark.executor.extraJavaOptions`。
+- **`CALL ... rewrite_data_files` 报 `NoClassDefFoundError: scala/jdk/CollectionConverters`**：
+  Iceberg 的 SQL 扩展编译时用了 Scala 2.13 的 API，Spark 2.12 发行版不带兼容包，
+  需要显式引入 `scala-collection-compat`（pom 里已加，`bin/submit-batch.sh` 的 `--packages` 也带了）。
+- **Hadoop catalog 不支持 namespace 元数据**：`CREATE DATABASE ... COMMENT 'xxx'` 会报
+  `metadata is not supported`，所以建库 DDL 故意不带 COMMENT。
+- **Presto 查元数据表**：`silver_orders$snapshots` 里的 `$` 要加双引号：
+  `FROM iceberg.lake."silver_orders$snapshots"`。
+- **Presto 脚本想在 Spark 上校验**：`date_add('day', -6, current_date)` 这类 Presto 语法 Spark 不认，
+  `PrestoDialect` 只做最小替换（`date_add` / 带引号的 `INTERVAL` 字面量），
+  带 `@presto-only` 标记的语句（`$snapshots` 元数据表、`FOR VERSION AS OF`）直接跳过——
+  别指望它当通用方言翻译器用。
+- **`mvn exec:java` 只能对单个模块跑**：脚本里用 `package exec:java` + `-Dexec.mainClass`，
+  父模块靠 `exec-maven-plugin` 的 `skip=true` 跳过。
+
+## 生产化 TODO
+
+- 调度：把 `ingest/transform/maintain` 拆成 Airflow / DolphinScheduler 的日任务，`maintain` 单独跑。
+- 权限：HMS 接 Ranger / Presto 接 LDAP，Iceberg 表级授权。
+- 并发写：Spark 与 Flink 同时写同一张表时，确认 catalog 支持乐观锁（HMS + Iceberg 1.5 已支持）。
+- 监控：把 `$files`、`$snapshots` 的指标打到 Prometheus（文件数、平均文件大小、快照数量）。
+- 存储：生产用对象存储时开 `write.metadata.delete-after-commit.enabled`（已开）并配合生命周期规则。

@@ -1,0 +1,24 @@
+{
+  "name": "lake-ui",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Lakehouse 控制台前端：Vue 3 + vue-router + Vite + Element Plus",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "mock": "node mock/server.mjs"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "element-plus": "^2.9.7",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "unplugin-vue-components": "^32.1.0",
+    "vite": "^7.1.0"
+  }
+}

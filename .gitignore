@@ -1,0 +1,29 @@
+target/
+*.class
+*.jar
+*.war
+
+# 本地仓库与落地数据（跑起来就会生成，不入库）
+warehouse/
+data/raw/
+spark-warehouse/
+logs/
+metastore_db/
+derby.log
+
+# 本地环境配置（含密钥，别提交）
+conf/platform.properties
+
+# 前端依赖与构建产物（由 bin/build-ui.sh 生成，不入库）
+lake-ui/node_modules/
+lake-ui/.vite/
+lake-service/src/main/resources/static/ui/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+.workbuddy/

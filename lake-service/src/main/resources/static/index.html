@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lakehouse 控制台</title>
+  <!--
+    入口页：Vue 控制台的构建产物在 static/ui/（源码见 lake-ui/，由 Vite 输出到这里）。
+    这里探测一下再跳转，没构建过就给出提示，而不是把用户丢到 404。
+  -->
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: #0a0d12; color: #8b95a7;
+      font: 14px/1.75 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      display: grid; place-items: center; text-align: center;
+    }
+    main { max-width: 520px; padding: 24px; }
+    h1 { font-size: 15px; color: #e7ecf4; margin: 0 0 10px; font-weight: 600; }
+    p { margin: 6px 0; }
+    a { color: #5aa2f0; }
+    code {
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+      background: #151c26; border: 1px solid #232c3a; border-radius: 5px;
+      padding: 2px 6px; color: #cfe0f5; white-space: nowrap;
+    }
+    #hint { display: none; }
+    .steps { text-align: left; display: inline-block; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Lakehouse 控制台</h1>
+    <p id="loading">正在进入控制台…</p>
+    <div id="hint">
+      <p>前端还没构建，<code>static/ui</code> 不存在。</p>
+      <div class="steps">
+        <p>1. <code>bin/build-ui.sh</code></p>
+        <p>2. 刷新本页，或直接访问 <a href="./ui/">/ui/</a></p>
+      </div>
+      <p style="margin-top: 12px">
+        只想看接口：<a href="./api/config">/api/config</a> ·
+        <a href="./actuator/health">/actuator/health</a>
+      </p>
+    </div>
+  </main>
+  <script>
+    fetch('./ui/index.html', { method: 'HEAD' })
+      .then(function (r) {
+        if (r.ok) {
+          location.replace('./ui/')
+        } else {
+          document.getElementById('loading').style.display = 'none'
+          document.getElementById('hint').style.display = 'block'
+        }
+      })
+      .catch(function () {
+        document.getElementById('loading').style.display = 'none'
+        document.getElementById('hint').style.display = 'block'
+      })
+  </script>
+</body>
+</html>

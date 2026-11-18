@@ -1,0 +1,52 @@
+server:
+  port: 8088
+  shutdown: graceful
+
+spring:
+  application:
+    name: lake-service
+  # JDK 21：请求处理跑在虚拟线程上，即席查询这种大量阻塞在 IO 上的场景收益明显
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,loggers
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  info:
+    env:
+      enabled: true
+
+info:
+  app:
+    name: lake-service
+    stack: JDK 21 + Spring Boot 4 + logback + Presto JDBC + HikariCP
+
+lake:
+  # 与 Spark / CLI 共用 platform-common 的配置来源，这里只指路
+  conf-file: conf/platform.properties
+  query:
+    max-rows: 1000
+    timeout-seconds: 60
+    pool-size: 8
+    allow-writes: false
+  batch:
+    enabled: true
+    # 换成集群提交：spark-submit --master yarn --class com.demo.lake.batch.BatchApp <jar> --job {job}
+    command-template: bin/dev-batch.sh --job {job}
+    work-dir: .
+    log-dir: logs/batch
+    timeout-seconds: 1800
+
+logging:
+  level:
+    root: INFO
+    com.demo.lake: INFO

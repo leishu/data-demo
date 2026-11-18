@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.demo.lake</groupId>
+    <artifactId>lakehouse-demo</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>spark-batch</artifactId>
+  <name>spark-batch</name>
+  <description>Spark 批处理：ODS -&gt; DWD(MERGE) -&gt; ADS(DWS)，含 Iceberg 小文件合并与快照治理</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.demo.lake</groupId>
+      <artifactId>platform-common</artifactId>
+    </dependency>
+
+    <!-- provided:集群上由 spark-submit 提供，本地开发用 mvn exec:java 会带入 -->
+    <dependency>
+      <groupId>org.apache.spark</groupId>
+      <artifactId>spark-sql_${scala.binary.version}</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId>
+      <artifactId>iceberg-spark-runtime-3.5_${scala.binary.version}</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <!-- Iceberg 的 CALL 存储过程依赖 Scala 2.13 的 CollectionConverters API，
+         Spark 2.12 发行版不带对应的兼容包，必须自己引 -->
+    <dependency>
+      <groupId>org.scala-lang.modules</groupId>
+      <artifactId>scala-collection-compat_${scala.binary.version}</artifactId>
+    </dependency>
+
+    <!-- 只在本地 dev 运行时补齐日志实现 -->
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-slf4j2-impl</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+    </dependency>
+  </dependencies>
+
+  <profiles>
+    <!--
+      读写 S3 / MinIO：mvn -Ps3 ...
+        iceberg-aws-bundle  -> Iceberg 的 S3FileIO（platform-common 里 io-impl 指定）
+        hadoop-aws          -> Spark 的 s3a:// 文件系统（会传递引入 aws-java-sdk-bundle，约 268MB）
+      默认不激活，所以默认构建不需要这两个包；IDE 里如果勾了这个 profile 又没下载过，
+      会报「找不到依赖项」，先执行一次：
+        mvn -Ps3 -pl spark-batch -am dependency:go-offline
+    -->
+    <profile>
+      <id>s3</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.iceberg</groupId>
+          <artifactId>iceberg-aws-bundle</artifactId>
+          <scope>provided</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-aws</artifactId>
+          <scope>provided</scope>
+        </dependency>
+      </dependencies>
+    </profile>
+  </profiles>
+
+  <build>
+    <plugins>
+      <!-- 本地跑 Spark：exec:java，参数用法见 README「本地免 Docker 跑通」 -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>${exec.plugin.version}</version>
+        <configuration>
+          <skip>false</skip>
+          <mainClass>com.demo.lake.batch.BatchApp</mainClass>
+          <classpathScope>test</classpathScope>
+          <cleanupDaemonThreads>false</cleanupDaemonThreads>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.demo.lake</groupId>
+    <artifactId>lakehouse-demo</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>lake-service</artifactId>
+  <name>lake-service</name>
+  <description>Spring Boot 服务层：Presto 即席查询 REST 接口 + Spark 批作业编排（JDK 21 / Boot 4 / logback）</description>
+
+  <properties>
+    <!-- 本模块是唯一要求 JDK 21 的模块；其余模块仍是 release 11（Spark 3.5.1 官方只支持到 17） -->
+    <maven.compiler.release>21</maven.compiler.release>
+    <java.version>21</java.version>
+    <!-- Boot 4.1 的 logback 1.5.x 要求 slf4j 2.0.2x；父 pom 为 Spark 锁的是 2.0.7，这里按模块覆盖 -->
+    <slf4j.version>2.0.20</slf4j.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.demo.lake</groupId>
+      <artifactId>platform-common</artifactId>
+    </dependency>
+
+    <!-- Web 层：Boot 4 把 starter-web 拆成了 webmvc（starter-web 仅作为兼容别名保留） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <!-- 健康检查 / 指标 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+
+    <!-- 连接池 + Presto 驱动：即席查询并发复用连接，比 CLI 的「一次一连接」更接近生产形态 -->
+    <dependency>
+      <groupId>com.zaxxer</groupId>
+      <artifactId>HikariCP</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.facebook.presto</groupId>
+      <artifactId>presto-jdbc</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <!-- JDK 11 下直接 mvn package 会报 "release version 21 not supported"，
+           这里提前给出能看懂的提示（只影响本模块，spark-batch 单独构建仍可用 JDK 11） -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>3.4.1</version>
+        <executions>
+          <execution>
+            <id>require-jdk-21</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <version>[21,)</version>
+                  <message>lake-service 需要 JDK 21：用 bin/build.sh 构建，或 export JAVA21_HOME 后 mvn -pl lake-service</message>
+                </requireJavaVersion>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- 打成可执行 fat jar：java -jar lake-service/target/lake-service-1.0.0-SNAPSHOT.jar -->
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <version>${spring.boot.version}</version>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

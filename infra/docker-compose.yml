@@ -1,0 +1,85 @@
+# 本地湖仓基础设施（演示用，勿直接上生产）
+# 组件：Postgres(元数据库) + MinIO(对象存储) + Hive Metastore(Iceberg catalog) + Presto(即席查询)
+#
+#   docker compose up -d --build
+#   docker compose down -v      # 连数据一起清掉
+#
+# Spark 批处理不需要跑在容器里：本机 mvn exec:java 连 HMS + MinIO 即可（见 README）。
+name: lakehouse-demo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lake-postgres
+    environment:
+      POSTGRES_DB: metastore
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hive
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d metastore"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: lake-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # 控制台
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: lake-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 admin password >/dev/null 2>&1; do sleep 2; done;
+      mc mb --ignore-existing local/lake;
+      mc anonymous set download local/lake || true;
+      echo 'bucket lake ready';
+      "
+
+  hive-metastore:
+    build:
+      context: ./hive
+    container_name: lake-hms
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      # 仓库指向 MinIO；HMS 只负责存元数据，真正写数据的是 Spark / Presto
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/metastore
+        -Djavax.jdo.option.ConnectionUserName=hive
+        -Djavax.jdo.option.ConnectionPassword=hive
+        -Dhive.metastore.warehouse.dir=s3a://lake/warehouse
+    ports:
+      - "9083:9083"
+
+  presto:
+    image: prestodb/presto:0.290
+    container_name: lake-presto
+    depends_on:
+      - hive-metastore
+      - minio
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./presto/etc:/opt/presto-server/etc:ro
+
+volumes:
+  pgdata:
+  miniodata:

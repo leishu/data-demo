@@ -1,0 +1,271 @@
+/**
+ * Element Plus 深色适配层。
+ *
+ * 做法：先加载官方的 element-plus/theme-chalk/dark/css-vars.css 打底（html.dark
+ * 下的整套基调），这里再把变量覆盖成项目自己的色板（styles.css 里的
+ * --bg / --panel / --accent ...）。只覆盖 CSS 变量 + 极少量结构性微调，
+ * 组件的 hover / active / disabled / 遮罩都由 Element Plus 自己按变量派生。
+ *
+ * 派生色说明：Element Plus 的 --el-color-x-light-N 是主色与底色按比例混合，
+ * 深色主题下 N 越大越暗（light-3 → hover、light-5 → active、
+ * light-8/9 → tag 与 plain 底色、dark-2 → 强调文字）。下面按
+ * 「主色 : #11161e」的比例手算，改品牌色时这几组要一起重算。
+ */
+
+html.dark {
+  /* ---------------- 主色 ---------------- */
+  --el-color-primary: #5aa2f0;
+  --el-color-primary-light-3: #4478b1;
+  --el-color-primary-light-5: #365c87;
+  --el-color-primary-light-7: #27405d;
+  --el-color-primary-light-8: #203248;
+  --el-color-primary-light-9: #182433;
+  --el-color-primary-dark-2: #7bb5f3;
+
+  --el-color-success: #3ddc97;
+  --el-color-success-light-3: #30a173;
+  --el-color-success-light-5: #288061;
+  --el-color-success-light-7: #21574a;
+  --el-color-success-light-8: #1c4539;
+  --el-color-success-light-9: #152a26;
+  --el-color-success-dark-2: #64e3ac;
+
+  --el-color-warning: #f0b74c;
+  --el-color-warning-light-3: #ad873e;
+  --el-color-warning-light-5: #8a6c37;
+  --el-color-warning-light-7: #5e4d2d;
+  --el-color-warning-light-8: #463d29;
+  --el-color-warning-light-9: #272623;
+  --el-color-warning-dark-2: #f3c570;
+
+  --el-color-danger: #ff6f6f;
+  --el-color-danger-light-3: #b85457;
+  --el-color-danger-light-5: #91454b;
+  --el-color-danger-light-7: #61343b;
+  --el-color-danger-light-8: #482a33;
+  --el-color-danger-light-9: #2a1f26;
+  --el-color-danger-dark-2: #ff8c8c;
+
+  --el-color-error: #ff6f6f;
+  --el-color-error-light-3: #b85457;
+  --el-color-error-light-5: #91454b;
+  --el-color-error-light-7: #61343b;
+  --el-color-error-light-8: #482a33;
+  --el-color-error-light-9: #2a1f26;
+  --el-color-error-dark-2: #ff8c8c;
+
+  --el-color-info: #8b95a7;
+  --el-color-info-light-3: #666e7d;
+  --el-color-info-light-5: #4e5562;
+  --el-color-info-light-7: #353c47;
+  --el-color-info-light-8: #292f39;
+  --el-color-info-light-9: #1d222b;
+  --el-color-info-dark-2: #a2aab8;
+
+  /* ---------------- 容器 / 文字 / 线条 ---------------- */
+  --el-bg-color-page: #0a0d12;
+  --el-bg-color: #11161e;
+  --el-bg-color-overlay: #151c26;
+
+  --el-text-color-primary: #e7ecf4;
+  --el-text-color-regular: #a4aebd;
+  --el-text-color-secondary: #8b95a7;
+  --el-text-color-placeholder: #5a6474;
+  --el-text-color-disabled: #4a5261;
+
+  --el-border-color: #232c3a;
+  --el-border-color-light: #1b2330;
+  --el-border-color-lighter: #1b2330;
+  --el-border-color-extra-light: #171e28;
+  --el-border-color-dark: #2f3a4b;
+  --el-border-color-darker: #394556;
+
+  --el-fill-color: #151c26;
+  --el-fill-color-light: #1a2230;
+  --el-fill-color-lighter: #171e28;
+  --el-fill-color-extra-light: #141a23;
+  --el-fill-color-dark: #1f2836;
+  --el-fill-color-darker: #232c3a;
+  --el-fill-color-blank: #11161e;
+
+  --el-disabled-bg-color: #141a23;
+  --el-disabled-text-color: #4a5261;
+  --el-disabled-border-color: #1f2836;
+  --el-mask-color: rgba(10, 13, 18, 0.82);
+  --el-mask-color-extra-light: rgba(10, 13, 18, 0.35);
+  --el-overlay-color-lighter: rgba(10, 13, 18, 0.8);
+
+  --el-box-shadow-lighter: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --el-box-shadow-light: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --el-box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  --el-box-shadow-dark: 0 14px 40px rgba(0, 0, 0, 0.6);
+
+  /* ---------------- 尺寸 / 排版 ---------------- */
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 999px;
+  --el-font-size-base: 13.5px;
+  --el-font-size-small: 12.5px;
+  --el-font-size-extra-small: 11.5px;
+  --el-component-size: 32px;
+  --el-component-size-small: 26px;
+  --el-component-size-large: 38px;
+  --el-font-family: var(--font);
+
+  /* ---------------- 输入框 / 下拉 ---------------- */
+  --el-input-bg-color: #151c26;
+  --el-input-border-color: #232c3a;
+  --el-input-hover-border-color: #2f3a4b;
+  --el-input-focus-border-color: #5aa2f0;
+  --el-input-text-color: #e7ecf4;
+  --el-input-placeholder-color: #5a6474;
+  --el-input-icon-color: #8b95a7;
+
+  /* ---------------- 普通按钮（非 primary） ----------------
+     只影响默认按钮：.el-button--primary / --success 等类内部会重新赋值，
+     优先级比 html.dark 高，所以不会被这里带偏。
+     底色比 panel 亮一档，按钮放进 job-card（本身就是 panel-2）里也不会糊住。 */
+  --el-button-bg-color: #1a2230;
+  --el-button-border-color: #232c3a;
+  --el-button-text-color: #e7ecf4;
+  --el-button-hover-bg-color: #1f2836;
+  --el-button-hover-border-color: #2f3a4b;
+  --el-button-hover-text-color: #e7ecf4;
+  --el-button-active-bg-color: #232c3a;
+  --el-button-active-border-color: #2f3a4b;
+  --el-button-active-text-color: #e7ecf4;
+}
+
+/* ================= 结构性微调 =================
+   只调 Element Plus 没有暴露成变量的间距，不做换肤。 */
+
+/* 卡片：和原来手写的 .card 对齐（10px 圆角 / 紧凑 header） */
+html.dark .el-card {
+  --el-card-border-radius: 10px;
+  --el-card-padding: 14px;
+  --el-card-border-color: var(--border);
+  background: var(--panel);
+}
+
+html.dark .el-card__header {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+html.dark .el-card__body {
+  padding: 14px;
+}
+
+/* 表格：表头灰底、行高紧凑、单元格左右留白比默认小一点 */
+html.dark .el-table {
+  --el-table-bg-color: var(--panel);
+  --el-table-tr-bg-color: var(--panel);
+  --el-table-header-bg-color: var(--panel-2);
+  --el-table-header-text-color: var(--muted);
+  --el-table-text-color: #dde4ef;
+  --el-table-border-color: var(--border-soft);
+  --el-table-row-hover-bg-color: rgba(90, 162, 240, 0.07);
+  --el-table-current-row-bg-color: rgba(90, 162, 240, 0.1);
+  font-size: 12.5px;
+}
+
+html.dark .el-table th.el-table__cell {
+  font-weight: 500;
+  padding: 6px 0;
+}
+
+html.dark .el-table td.el-table__cell {
+  padding: 5px 0;
+}
+
+html.dark .el-table .cell {
+  padding: 0 10px;
+  line-height: 1.55;
+}
+
+/* 表头里两行（列名 + 类型）时不要被 ellipsis 截断 */
+html.dark .el-table th.el-table__cell .cell {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+/* 侧边栏菜单：透明底融进渐变，选中项补一个背景色 */
+html.dark .el-menu {
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--muted);
+  --el-menu-hover-bg-color: var(--panel-2);
+  --el-menu-active-color: #cfe3fb;
+  --el-menu-item-height: 38px;
+  --el-menu-item-font-size: 13px;
+  --el-menu-base-level-padding: 10px;
+  border-right: none;
+}
+
+html.dark .el-menu-item {
+  border-radius: 8px;
+  margin-bottom: 3px;
+}
+
+html.dark .el-menu-item.is-active {
+  background: rgba(90, 162, 240, 0.13);
+}
+
+/* 次要操作（刷新 / 展开 / 复制）：text 按钮默认是主题蓝，压成灰的 */
+html.dark .el-button.is-text {
+  color: var(--muted);
+}
+
+html.dark .el-button.is-text:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+/* 标签：小号更紧凑，圆角由 round 属性给 */
+html.dark .el-tag--small {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+/* 提示条 */
+html.dark .el-alert {
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+html.dark .el-alert .el-alert__title {
+  font-size: 12.5px;
+}
+
+html.dark .el-alert .el-alert__description {
+  font-size: 12.5px;
+  margin: 4px 0 0;
+}
+
+/* 描述列表：默认行距比原来手写的 dl.kv 松，压紧一点更像信息面板 */
+html.dark .el-descriptions__body .el-descriptions__table .el-descriptions__cell {
+  padding: 2px 12px 2px 0;
+  line-height: 1.65;
+}
+
+html.dark .el-descriptions__label {
+  color: var(--faint);
+  font-weight: 400;
+}
+
+html.dark .el-empty {
+  --el-empty-padding: 18px 0;
+  --el-empty-image-width: 78px;
+  --el-empty-description-margin-top: 6px;
+}
+
+/* 默认插图在深色底上有点抢眼，压暗一档 */
+html.dark .el-empty__image {
+  opacity: 0.55;
+}
+
+html.dark .el-empty__description p {
+  font-size: 12.5px;
+  color: var(--faint);
+}

@@ -1,0 +1,28 @@
+# 复制成 conf/platform.properties 生效（已被 .gitignore 忽略）
+# 这里是"接集群"的示例：元数据放 Hive Metastore，数据放 MinIO(S3)
+
+platform.catalog.name=iceberg
+platform.catalog.type=hive
+platform.database=lake
+
+platform.hive.uri=thrift://localhost:9083
+platform.warehouse=s3a://lake/warehouse
+
+platform.s3.endpoint=http://localhost:9000
+platform.s3.region=us-east-1
+platform.s3.access-key=admin
+platform.s3.secret-key=password
+platform.s3.path-style-access=true
+
+# format-version=2 + 行级写走 copy-on-write：
+# Presto 0.29x 的 Iceberg connector 读 MoR 表会碰 delete file，CoW 兼容性最好
+platform.format-version=2
+platform.write-mode=copy-on-write
+
+platform.spark.master=local[*]
+platform.spark.shuffle.partitions=8
+platform.spark.timezone=UTC
+
+platform.presto.host=localhost
+platform.presto.port=8080
+platform.presto.user=demo

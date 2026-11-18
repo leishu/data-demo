@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.demo.lake</groupId>
+  <artifactId>lakehouse-demo</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>lakehouse-demo</name>
+  <description>Spark(批处理) + Iceberg(存储/表格式) + Presto(即席查询) 湖仓一体脚手架</description>
+
+  <modules>
+    <module>platform-common</module>
+    <module>spark-batch</module>
+    <module>presto-adhoc</module>
+    <module>lake-service</module>
+  </modules>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <maven.compiler.release>21</maven.compiler.release>
+    <java.version>21</java.version>
+
+    <!-- 版本矩阵：Spark 3.5.x(Java11/Scala2.12) + Iceberg 1.5.x + Presto 0.290(JDBC) -->
+    <spark.version>3.5.1</spark.version>
+    <scala.binary.version>2.12</scala.binary.version>
+    <iceberg.version>1.5.2</iceberg.version>
+    <scala.collection.compat.version>2.11.0</scala.collection.compat.version>
+    <hadoop.version>3.3.4</hadoop.version>
+    <presto.version>0.290</presto.version>
+    <presto.server.version>0.290</presto.server.version>
+    <log4j.version>2.20.0</log4j.version>
+    <slf4j.version>2.0.7</slf4j.version>
+    <junit.version>5.10.2</junit.version>
+
+    <!--
+      lake-service 使用 JDK 21 + Spring Boot 4（Spring Framework 7 / Tomcat 11 / Jakarta EE 11）。
+      Spark 模块仍保持 release=11：Spark 3.5.1 官方只支持到 JDK 17，字节码降到 11 才能在各版本集群上跑。
+    -->
+    <spring.boot.version>4.1.2</spring.boot.version>
+    <hikaricp.version>7.0.2</hikaricp.version>
+
+    <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
+    <maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
+    <exec.plugin.version>3.1.1</exec.plugin.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- ========== 内部模块 ========== -->
+      <dependency>
+        <groupId>com.demo.lake</groupId>
+        <artifactId>platform-common</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- ========== Spark ========== -->
+      <dependency>
+        <groupId>org.apache.spark</groupId>
+        <artifactId>spark-sql_${scala.binary.version}</artifactId>
+        <version>${spark.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.spark</groupId>
+        <artifactId>spark-core_${scala.binary.version}</artifactId>
+        <version>${spark.version}</version>
+      </dependency>
+
+      <!-- ========== Iceberg ========== -->
+      <!-- runtime 包已 relocate 掉 Iceberg 内部依赖，避免与 Spark 的 guava/jackson 冲突 -->
+      <dependency>
+        <groupId>org.apache.iceberg</groupId>
+        <artifactId>iceberg-spark-runtime-3.5_${scala.binary.version}</artifactId>
+        <version>${iceberg.version}</version>
+      </dependency>
+      <!--
+        iceberg-spark-runtime 的 SQL 扩展（CALL 存储过程）编译时用了 scala.jdk.CollectionConverters，
+        该 API 只在 Scala 2.13 原生存在；Spark 2.12 发行版又不带 scala-collection-compat，
+        所以走 CALL rewrite_data_files / expire_snapshots 时必须显式补上这个包。
+      -->
+      <dependency>
+        <groupId>org.scala-lang.modules</groupId>
+        <artifactId>scala-collection-compat_${scala.binary.version}</artifactId>
+        <version>${scala.collection.compat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.iceberg</groupId>
+        <artifactId>iceberg-aws-bundle</artifactId>
+        <version>${iceberg.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-aws</artifactId>
+        <version>${hadoop.version}</version>
+      </dependency>
+
+      <!-- ========== Presto (JDBC 客户端) ========== -->
+      <dependency>
+        <groupId>com.facebook.presto</groupId>
+        <artifactId>presto-jdbc</artifactId>
+        <version>${presto.version}</version>
+      </dependency>
+
+      <!-- ========== Spring Boot（仅 lake-service） ========== -->
+      <!-- 不导入 spring-boot-dependencies BOM：它会改掉本项目为 Spark 锁定的 slf4j/log4j/junit 版本。
+           starter 的 pom 是 flatten 过的，依赖版本自带，显式写版本即可。 -->
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-webmvc</artifactId>
+        <version>${spring.boot.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-actuator</artifactId>
+        <version>${spring.boot.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.zaxxer</groupId>
+        <artifactId>HikariCP</artifactId>
+        <version>${hikaricp.version}</version>
+      </dependency>
+
+      <!-- ========== 日志 ========== -->
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-core</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.logging.log4j</groupId>
+        <artifactId>log4j-slf4j2-impl</artifactId>
+        <version>${log4j.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.slf4j</groupId>
+        <artifactId>slf4j-api</artifactId>
+        <version>${slf4j.version}</version>
+      </dependency>
+
+      <!-- ========== 测试 ========== -->
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <version>${junit.version}</version>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${maven.compiler.plugin.version}</version>
+          <configuration>
+            <release>${maven.compiler.release}</release>
+            <compilerArgs>
+              <arg>-parameters</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven.surefire.plugin.version}</version>
+          <configuration>
+            <!-- Spark 在 JDK11+ 需要反射打开这些包 -->
+            <argLine>
+              --add-opens=java.base/java.lang=ALL-UNNAMED
+              --add-opens=java.base/java.lang.invoke=ALL-UNNAMED
+              --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+              --add-opens=java.base/java.io=ALL-UNNAMED
+              --add-opens=java.base/java.net=ALL-UNNAMED
+              --add-opens=java.base/java.nio=ALL-UNNAMED
+              --add-opens=java.base/java.util=ALL-UNNAMED
+              --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+              --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED
+              --add-opens=java.base/sun.nio.ch=ALL-UNNAMED
+              --add-opens=java.base/sun.nio.cs=ALL-UNNAMED
+              --add-opens=java.base/sun.security.action=ALL-UNNAMED
+              --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
+            </argLine>
+            <trimStackTrace>false</trimStackTrace>
+          </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>exec-maven-plugin</artifactId>
+          <version>${exec.plugin.version}</version>
+          <configuration>
+            <!-- 父模块/公共模块不该被执行；需要跑的模块显式 skip=false -->
+            <skip>true</skip>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+
+  <!--
+    s3 相关的两个依赖（iceberg-aws-bundle / hadoop-aws）声明在 spark-batch/pom.xml 的 <profile>s3</profile> 里，
+    只有批处理模块需要它们，父 pom 不再重复声明（否则每个子模块都会被塞进 268MB 的 aws-java-sdk-bundle）。
+  -->
+</project>
