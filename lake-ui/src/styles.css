@@ -182,6 +182,15 @@ a {
   gap: 14px;
 }
 
+/* 卡片按内容高度排布，不要被 flex 压扁。
+   .el-card 是 display:flex + overflow:hidden，作为列向 flex 项时
+   automatic minimum size 会退化成 0：窗口一矮就被压缩，卡片内容被
+   .el-card__body 的 overflow:auto 接住，变成卡片内部滚动条。
+   这里固定 flex-shrink:0，超出的部分统一交给 .view 自己的滚动条。 */
+.view > * {
+  flex: 0 0 auto;
+}
+
 /* ---------------- 工具类 ---------------- */
 
 .mono {

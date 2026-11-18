@@ -1,6 +1,10 @@
 package com.demo.lake.presto;
 
 import com.facebook.presto.jdbc.PrestoResultSet;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -111,39 +115,14 @@ public final class PrestoClient implements AutoCloseable {
     }
 
     /** 一次查询的结果快照 */
+    @Getter
+    @Accessors(fluent = true)
+    @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
     public static final class QueryResult {
         private final List<String> headers;
         private final List<List<String>> rows;
         private final boolean truncated;
         private final long elapsedMs;
         private final String stats;
-
-        QueryResult(List<String> headers, List<List<String>> rows, boolean truncated, long elapsedMs, String stats) {
-            this.headers = headers;
-            this.rows = rows;
-            this.truncated = truncated;
-            this.elapsedMs = elapsedMs;
-            this.stats = stats;
-        }
-
-        public List<String> headers() {
-            return headers;
-        }
-
-        public List<List<String>> rows() {
-            return rows;
-        }
-
-        public boolean truncated() {
-            return truncated;
-        }
-
-        public long elapsedMs() {
-            return elapsedMs;
-        }
-
-        public String stats() {
-            return stats;
-        }
     }
 }

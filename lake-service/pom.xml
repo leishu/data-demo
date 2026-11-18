@@ -28,6 +28,12 @@
       <artifactId>platform-common</artifactId>
     </dependency>
 
+    <!-- 编译期生成 @Slf4j 的 logger 与访问器；provided 不进 fat jar -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+    </dependency>
+
     <!-- Web 层：WebFlux + Reactor Netty。Boot 4 把 starter-web 拆成了 webmvc / webflux 两个 starter，
          这里用 webflux：事件循环 + 背压，长连接（SSE）比 Servlet 那套自然 -->
     <dependency>
@@ -88,6 +94,16 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
         <version>${spring.boot.version}</version>
+        <configuration>
+          <!-- repackage 默认把 provided 依赖也打包进来；lombok 只在编译期有用，
+               进了 BOOT-INF/lib 只会白占体积（需要在运行时排除它的 classpath 扫描） -->
+          <excludes>
+            <exclude>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+            </exclude>
+          </excludes>
+        </configuration>
         <executions>
           <execution>
             <goals>

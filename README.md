@@ -32,6 +32,7 @@ Spark 做批处理、Iceberg 做存储与表格式层、Presto 做即席查询�
 | 控制台 | Vue 3.5 + vue-router 4 + Vite 7 | 独立工程 `lake-ui/`，构建产物进 `static/ui/` |
 | 日志 | log4j2（批处理）/ logback（服务层） | Spark 发行版绑死 log4j2；Web 服务用 Boot 默认的 logback |
 | Hadoop | 3.3.4 | 由 Spark 传递依赖，无需单独装 |
+| Lombok | 1.18.34 | 编译期生成访问器 / 构造器 / `log`；`provided` 不进产物，fat jar 单独 exclude |
 | scala-collection-compat | 2.11.0 | Iceberg 的 `CALL` 存储过程在 Scala 2.12 下必需 |
 
 ## 目录结构

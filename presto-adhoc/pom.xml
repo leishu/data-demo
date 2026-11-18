@@ -20,6 +20,10 @@
       <artifactId>platform-common</artifactId>
     </dependency>
     <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+    </dependency>
+    <dependency>
       <groupId>com.facebook.presto</groupId>
       <artifactId>presto-jdbc</artifactId>
     </dependency>

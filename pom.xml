@@ -37,6 +37,8 @@
     <hive.version>2.3.9</hive.version>
     <presto.version>0.290</presto.version>
     <presto.server.version>0.290</presto.server.version>
+    <!-- 注解处理：编译期生成访问器 / 构造器 / logger，scope=provided 不进产物 -->
+    <lombok.version>1.18.34</lombok.version>
     <log4j.version>2.20.0</log4j.version>
     <slf4j.version>2.0.7</slf4j.version>
     <junit.version>5.10.2</junit.version>
@@ -60,6 +62,18 @@
         <groupId>com.demo.lake</groupId>
         <artifactId>platform-common</artifactId>
         <version>${project.version}</version>
+      </dependency>
+
+      <!-- ========== Lombok ========== -->
+      <!--
+        纯编译期依赖：provided 保证它不进 spark-batch 的运行 classpath；
+        Spring Boot 的 repackage 会把 provided 也打进 fat jar，所以 lake-service 里另外 exclude。
+      -->
+      <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <version>${lombok.version}</version>
+        <scope>provided</scope>
       </dependency>
 
       <!-- ========== Spark ========== -->
@@ -207,6 +221,17 @@
             <compilerArgs>
               <arg>-parameters</arg>
             </compilerArgs>
+            <!--
+              显式声明处理器路径：不依赖 classpath 上的隐式扫描，构建更可预期；
+              处理器在编译结束后自动失效，运行时不需要 lombok jar。
+            -->
+            <annotationProcessorPaths>
+              <path>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+              </path>
+            </annotationProcessorPaths>
           </configuration>
         </plugin>
         <plugin>
