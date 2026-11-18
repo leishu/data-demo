@@ -33,6 +33,8 @@
     <iceberg.version>1.5.2</iceberg.version>
     <scala.collection.compat.version>2.11.0</scala.collection.compat.version>
     <hadoop.version>3.3.4</hadoop.version>
+    <!-- 对齐 Spark 3.5 发行版自带的 Hive，HMS 客户端 API 用这个版本 -->
+    <hive.version>2.3.9</hive.version>
     <presto.version>0.290</presto.version>
     <presto.server.version>0.290</presto.server.version>
     <log4j.version>2.20.0</log4j.version>
@@ -98,6 +100,46 @@
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-aws</artifactId>
         <version>${hadoop.version}</version>
+      </dependency>
+
+      <!-- ========== Hive Metastore 客户端（仅本地 exec:java 需要） ========== -->
+      <!--
+        Spark 的 Maven 构件（spark-sql）只带 hive-storage-api，hive-metastore / hive-common
+        这些 jar 只在发行版 $SPARK_HOME/jars 里。Iceberg 的 HiveCatalog 会链接
+        org.apache.hadoop.hive.metastore.api.* 和 HiveConf，本地没有就会
+        NoClassDefFoundError: UnknownDBException。上集群由 Spark 自带，所以 scope=provided。
+      -->
+      <dependency>
+        <groupId>org.apache.hive</groupId>
+        <artifactId>hive-metastore</artifactId>
+        <version>${hive.version}</version>
+        <exclusions>
+          <!-- hadoop 2.x 时代的 system-scope 依赖，JDK 9+ 没有 tools.jar，
+               不排除会让整个依赖图解析失败 -->
+          <exclusion>
+            <groupId>jdk.tools</groupId>
+            <artifactId>jdk.tools</artifactId>
+          </exclusion>
+          <!-- hive-common 2.3.9 会带进 SLF4J 1.7 的旧绑定（log4j-slf4j-impl 2.6.2 /
+               slf4j-log4j12），和本项目的 log4j-slf4j2-impl 2.20 抢 StaticLoggerBinder，
+               表现为 NoSuchMethodError: Log4jLoggerFactory.<init>(Log4jMarkerFactory) -->
+          <exclusion>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-web</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-log4j12</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>log4j</groupId>
+            <artifactId>log4j</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
 
       <!-- ========== Presto (JDBC 客户端) ========== -->

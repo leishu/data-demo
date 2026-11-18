@@ -26,6 +26,15 @@
       <artifactId>spark-sql_${scala.binary.version}</artifactId>
       <scope>provided</scope>
     </dependency>
+    <!-- HMS 客户端：iceberg-spark-runtime 里的 HiveCatalog 在类初始化时就要
+         org.apache.hadoop.hive.metastore.api.* / HiveConf，而 spark-sql 的 Maven 构件
+         不带这些（只在发行版 $SPARK_HOME/jars 里），不补就本地 exec:java 直接
+         NoClassDefFoundError: org/apache/hadoop/hive/metastore/api/UnknownDBException。 -->
+    <dependency>
+      <groupId>org.apache.hive</groupId>
+      <artifactId>hive-metastore</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>org.apache.iceberg</groupId>
       <artifactId>iceberg-spark-runtime-3.5_${scala.binary.version}</artifactId>

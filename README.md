@@ -143,20 +143,6 @@ open http://localhost:8088/                # 内置查询控制台
 - **长任务用 SSE，不用轮询**。查询结果和作业跟踪都是一条长连接推到底，前端不再定时打接口；
   客户端断开时服务端 `stmt.cancel()` / 停掉日志游标，不白算也不空转。
 
-遇到过的 Boot 4 坑（都已处理）：
-
-1. `spring-boot-starter-web` 在 4.x 里只是兼容别名，正名是 **`spring-boot-starter-webmvc`**，
-   响应式则是 **`spring-boot-starter-webflux`**——换完之后 WebMvc 那套配置（`WebMvcConfigurer`）全部失效。
-2. actuator 的 health 被抽到独立模块 `spring-boot-health`，包名从 `boot.actuate.health`
-   变成 **`boot.health.contributor`**，老代码直接编译不过。
-3. **不要 import `spring-boot-dependencies` BOM**：它会把本项目为 Spark 锁的 slf4j / log4j / junit
-   版本一起改掉。starter 的 pom 是 flatten 过的，自带版本号，显式写版本即可。
-4. logback 1.5.x 要 slf4j 2.0.2x，而父 pom 给 Spark 锁的是 2.0.7 → 在 `lake-service/pom.xml` 里
-   按模块覆盖 `slf4j.version`，别动父 pom。
-5. JDK 21 下 `javax.annotation.PreDestroy` 已不存在，要用 **`jakarta.annotation.PreDestroy`**。
-6. WebFlux 没有 `ViewControllerRegistry`/`ViewResolver`，目录跳转只能写 `RouterFunction`；
-   请求体解析失败是 **`ServerWebInputException`**（不再是 `HttpMessageNotReadableException`），
-   缺资源是 **`org.springframework.web.reactive.resource.NoResourceFoundException`**，异常处理要整个重写。
 
 ## 控制台（Vue 3 + Vite）
 

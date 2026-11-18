@@ -1,10 +1,11 @@
 # 本地湖仓基础设施（Docker）
 
-这份文档解决三件事：
+这份文档解决四件事：
 
 1. 在这台机器上装好 **Docker Engine + Compose v2**（含镜像加速，否则拉不下镜像）；
 2. 一条命令起齐 **Postgres + MinIO + Hive Metastore + Presto**，并验证「Spark 写、Presto 读」；
-3. 说明**怎么加新依赖**（Kafka、ClickHouse、Redis……），不用每次重造环境。
+3. 日常运维：子命令、裸 docker 速查、数据卷与清理、固定排查顺序；
+4. 说明**怎么加新依赖**（Kafka、ClickHouse、Redis……），不用每次重造环境。
 
 > 设计取舍：**只把基础设施放进容器**。JDK 11 / JDK 21 / Maven / Node 仍然用宿主机的
 > （`~/soft/jdk-21.0.12`、`/usr/lib/jvm/java-11-*`）。Spark 的 driver 就在 IDE 里跑，
@@ -104,10 +105,9 @@ bin/infra.sh up            # 起 Postgres + MinIO + HMS + Presto（首次会构�
 bin/infra.sh up tools      # 额外起 Adminer（Postgres 网页客户端）
 bin/infra.sh ps            # 看健康状态
 bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
-bin/infra.sh logs presto   # 跟某个服务日志
-bin/infra.sh down          # 停容器，保留数据
-bin/infra.sh clean         # 停容器 + 删数据卷（元数据、对象存储全清）
 ```
+
+首次验收就这四条。`logs` / `restart` / `psql` / `down` / `clean` 的完整语义和日常运维见第 3 章。
 
 `up` 结束后会打印端口清单：
 
@@ -125,7 +125,88 @@ bin/infra.sh clean         # 停容器 + 删数据卷（元数据、对象存储
 
 ---
 
-## 3. 接 Spark 跑一遍
+## 3. 日常运维（Docker 速查）
+
+### 3.1 `bin/infra.sh` 子命令
+
+日常只走这一个入口：它会自己 `cd infra/`、等容器 healthy、打印端点，省得记 compose 项目名和 profile。
+
+| 命令 | 作用 | 说明 |
+|---|---|---|
+| `bin/infra.sh up` | 起核心四件套 | 自带 `--build`，改过 `infra/hive/Dockerfile` 会自动重建 HMS 镜像 |
+| `bin/infra.sh up tools` | 额外起 Adminer（:8081） | 走 `--profile tools` |
+| `bin/infra.sh ps` | 容器 + 健康状态 | 出问题时的第一步 |
+| `bin/infra.sh logs [服务...]` | 跟日志（`-f --tail=200`） | 参数是**服务名**：`postgres` / `minio` / `hive-metastore` / `presto`，不是容器名 |
+| `bin/infra.sh restart [服务...]` | 重启容器 | 只改了挂载文件或环境变量时够用，不必重建镜像 |
+| `bin/infra.sh psql [参数]` | 进 HMS 的 Postgres | 等价于 `docker exec -it lake-postgres psql -U hive -d metastore` |
+| `bin/infra.sh doctor` | 端口 / HTTP / Presto 端到端检查 | 检查清单见第 2 章 |
+| `bin/infra.sh down` | 停容器，**保留数据卷** | 第二天 `up` 接着用 |
+| `bin/infra.sh clean` | 停容器 + **删数据卷** | 不可恢复，见 3.3 |
+
+> 命名对照：容器名固定是 `lake-postgres` / `lake-minio` / `lake-hms` / `lake-presto`；
+> 而 `logs`、`restart` 要的是 compose **服务名**（`postgres` / `minio` / `hive-metastore` / `presto`）。
+> 卷名前缀是 `infra_`（compose 项目名取目录名）。要直接用 `docker compose`，先 `cd infra/`。
+
+### 3.2 裸 docker 命令速查
+
+| 场景 | 命令 |
+|---|---|
+| 看容器 / 镜像 / 卷 / 磁盘占用 | `docker ps -a`、`docker images`、`docker volume ls`、`docker system df` |
+| 进容器 | `docker exec -it lake-hms bash`、`docker exec -it lake-presto ls /opt/presto-server/etc/catalog` |
+| 单个容器起停 | `docker stop lake-presto`、`docker start lake-presto` |
+| 实时资源占用 | `docker stats`（`Ctrl-C` 只退查看，不停容器） |
+| 看端口映射 | `docker port lake-presto` |
+| 看 compose 展开后的最终配置 | `docker compose -f infra/docker-compose.yml config` |
+
+### 3.3 数据卷、`prune` 与 `clean`
+
+数据不在代码目录里，而在三个 named volume：
+
+| 卷 | 内容 | 丢了会怎样 |
+|---|---|---|
+| `infra_pgdata` | HMS 元数据库（库表 / 分区 / 快照指针） | `show tables` 变空 |
+| `infra_miniodata` | MinIO 里的 parquet + Iceberg metadata | 元数据还在也读不出数据 |
+| `infra_prestodata` | Presto 本地暂存 | 影响最小，重启自动重建 |
+
+| 想做的事 | 用哪个 | 注意 |
+|---|---|---|
+| 下班关环境 | `bin/infra.sh down` | 数据全在 |
+| 改了 Dockerfile 想重来 | `bin/infra.sh up` | 只重建镜像，卷不动 |
+| 元数据 / 对象存储要归零 | `bin/infra.sh clean` | 删完必须重跑 `MVN_PROFILE=s3 bin/dev-batch.sh --job all` |
+| 只清构建缓存 | `docker builder prune` | 不动镜像和卷 |
+
+> **不要随手 `docker system prune -a`。** 它会把 `prestodb/presto:0.290`（最大的一块）、
+> `bitnamilegacy/minio`、`apache/hive` 一起删掉，下次 `up` 要重拉 1 GB+ 并重建 HMS 镜像
+> （镜像里还带 86 MB 的 AWS SDK bundle）；`docker volume prune` 更狠，会把上面三个数据卷当
+> “未使用”删掉。真要腾空间：先 `docker system df` 看清，再 `docker image prune`（只删悬空镜像）。
+
+### 3.4 改了什么，要做什么
+
+| 改动 | 需要执行 |
+|---|---|
+| Java / SQL / `conf/platform.properties` | 什么都不用，重跑作业或查询 |
+| `infra/hive/core-site.xml`（挂载）或 compose 里的环境变量 | `bin/infra.sh restart hive-metastore` |
+| `infra/hive/Dockerfile`、`infra/hive/entrypoint.sh` | `bin/infra.sh up`（自带 `--build`） |
+| `infra/presto/etc/**` | `bin/infra.sh restart presto` |
+| 环境彻底归零 | `bin/infra.sh clean`，再重跑批处理 |
+
+### 3.5 排查顺序
+
+固定三步，别跳：
+
+```bash
+bin/infra.sh ps                  # 谁没起来 / 谁 unhealthy
+bin/infra.sh logs hive-metastore # 它自己说了什么（换成对应服务名）
+bin/infra.sh doctor              # 端口 / HTTP / JDBC 全链路
+```
+
+> 规律：`unhealthy` 只是表象，真因都在容器日志里，而且大多是配置问题不是资源问题——
+> HMS 报 schematool 参数不被识别、Presto 报 `Configuration property 'xxx' was not used`。
+> 对照表见第 7 章。
+
+---
+
+## 4. 接 Spark 跑一遍
 
 ```bash
 cp conf/platform.properties.example conf/platform.properties
@@ -152,9 +233,9 @@ bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --st
 
 ---
 
-## 4. 加新依赖（可扩展性）
+## 5. 加新依赖（可扩展性）
 
-### 4.1 临时用：独立容器接进同一网络
+### 5.1 临时用：独立容器接进同一网络
 
 网络名固定是 `lakehouse-net`，任何容器都能加入：
 
@@ -163,7 +244,7 @@ docker run --rm -it --network lakehouse-net \
   bitnamilegacy/minio-client:2025.7.21 --version
 ```
 
-### 4.2 长期用：写 `docker-compose.override.yml`
+### 5.2 长期用：写 `docker-compose.override.yml`
 
 Compose 会自动合并同目录的 `docker-compose.override.yml`，**不用改基础文件**，适合个人/临时依赖：
 
@@ -183,7 +264,7 @@ services:
 
 `bin/infra.sh up tools` 就会把它一起带起来。
 
-### 4.3 团队共用：直接加进 `docker-compose.yml`
+### 5.3 团队共用：直接加进 `docker-compose.yml`
 
 照抄现有服务的四件套即可：
 
@@ -222,7 +303,7 @@ services:
 | 可选服务 | `profiles: ["tools"]` 或自定义 profile |
 | 日志 | `logging: *default-logging`（20m×3 轮转） |
 
-### 4.4 想装命令行工具（aws-cli、kcat、psql 客户端……）
+### 5.4 想装命令行工具（aws-cli、kcat、psql 客户端……）
 
 不用污染宿主机，起一个一次性 toolbox：
 
@@ -236,7 +317,7 @@ docker run --rm -it --network lakehouse-net \
 
 ---
 
-## 5. 版本与镜像现状
+## 6. 版本与镜像现状
 
 | 组件 | 镜像 | 说明 |
 |---|---|---|
@@ -254,7 +335,7 @@ MinIO 替代方案（要长期用、不想依赖归档镜像时）：
 
 ---
 
-## 6. 排错
+## 7. 排错
 
 | 现象 | 原因 / 处理 |
 |---|---|
@@ -263,6 +344,11 @@ MinIO 替代方案（要长期用、不想依赖归档镜像时）：
 | 拉镜像超时 / 403 / 429 | 镜像加速器失效：见 1.3，换源或走代理 |
 | 端口被占用 | `ss -ltnp \| grep -E '8080\|9000\|9083\|5432'`，改 compose 左侧端口 |
 | HMS 反复重启 | `bin/infra.sh logs hive-metastore`；多半是 Postgres 没就绪或密码不对。entrypoint 会重试 10 次 schema 初始化 |
+| HMS 日志报 `Parsing failed. Reason: Missing required option: [-initSchema ...]` | HMS 3.1.3 的 schematool 没有 `-initOrUpgradeSchema`（4.x 才有）。entrypoint 用 `-info` 探状态再选 `-initSchema` / `-upgradeSchema` |
+| 建库时报 `MetaException ... ClassNotFoundException: org.apache.hadoop.fs.s3a.S3AFileSystem` | 这是 HMS 侧：建 database 要把库目录 mkdirs 到 `s3a://`，镜像需 `hadoop-aws`；S3A 参数必须写在挂载的 `infra/hive/core-site.xml`（JVM 的 `-Dfs.s3a.*` 对 Hadoop Configuration 无效） |
+| Spark 报 `NoClassDefFoundError: org/apache/hadoop/hive/metastore/api/UnknownDBException` | 本地 `exec:java` 缺 HMS 客户端类（只在 Spark 发行版 `$SPARK_HOME/jars` 里）。`spark-batch` 已声明 `hive-metastore`（provided） |
+| Spark 报 `Unable to load region from any of the providers` | Iceberg 1.5.x 的 S3FileIO 不认 `s3.region`，region 走 `client.region`（`PlatformConfig` 已按此输出） |
+| Presto 反复重启，日志 `Configuration property 'xxx' was not used` | 该属性在 0.290 的 connector 里不存在（例如 `iceberg.register-table-procedure.enabled`），从 `iceberg.properties` 删掉即可 |
 | `bin/infra.sh doctor` 里 Presto 失败 | `bin/infra.sh logs presto`；看是不是 `iceberg.properties` 连不上 HMS / MinIO |
 | 查询报 `Schema lake not found` | 还没跑批处理。先 `MVN_PROFILE=s3 bin/dev-batch.sh --job all` |
 | 容器 exit 137 | 被 OOM kill。降 Presto 堆或停掉不用的服务 |
@@ -272,11 +358,13 @@ MinIO 替代方案（要长期用、不想依赖归档镜像时）：
 
 ---
 
-## 7. 已验证 / 未验证
+## 8. 已验证 / 未验证
 
 写这份文档时的核查范围：
 
 - 已核对：各镜像 tag 真实存在、Presto 0.290 镜像包含 server、HMS 官方 entrypoint 的
   `-initSchema` 行为、Presto 0.290 注册了 `fs.s3a.impl`、本机到 apt / Docker Hub / 各加速器的连通性。
-- **未实测**：本机当时还没装 Docker（`sudo` 需要密码），所以 `docker compose up` 没跑过。
-  装完后先执行 `bin/infra.sh doctor`；有失败项把 `bin/infra.sh logs <服务>` 的尾部贴出来再调。
+- 已实测（Docker 29.10.0 + compose 5.8.0）：`bin/infra.sh up` 四件套全部 healthy；
+  `MVN_PROFILE=s3 bin/dev-batch.sh --job all` 的 init / ingest / transform / maintain / show 全部通过；
+  `bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders"` 返回 14000 行。
+  期间踩到的坑已整理进第 7 章排错表。

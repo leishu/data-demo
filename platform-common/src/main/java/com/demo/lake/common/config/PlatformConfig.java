@@ -157,7 +157,9 @@ public final class PlatformConfig {
             m.put(prefix + ".s3.path-style-access", String.valueOf(s3PathStyle()));
             m.put(prefix + ".s3.access-key-id", get("platform.s3.access-key", ""));
             m.put(prefix + ".s3.secret-access-key", get("platform.s3.secret-key", ""));
-            m.put(prefix + ".s3.region", get("platform.s3.region", "us-east-1"));
+            // Iceberg 1.5.x 的 S3FileIO 没有 region 属性，region 走共享的 client.region；
+            // 少了它，AWS SDK v2 会抛 "Unable to load region from any of the providers"
+            m.put(prefix + ".client.region", get("platform.s3.region", "us-east-1"));
 
             m.put("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
             m.put("spark.hadoop.fs.s3a.endpoint", get("platform.s3.endpoint", ""));

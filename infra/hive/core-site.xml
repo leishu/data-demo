@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+  Hive Metastore 自己的 S3A 配置（compose 挂到 /opt/hive/conf/core-site.xml）。
+
+  为什么 HMS 需要它：创建 database 时 HMS 会把库目录 mkdirs 到
+  s3a://lake/warehouse/<db>，没有 S3A 实现/凭据就直接抛
+  MetaException(ClassNotFoundException: S3AFileSystem 或认证失败)。
+  注意 JVM 的 -Dfs.s3a.* 对 Hadoop Configuration 无效（只有 XML 资源生效）。
+
+  endpoint 用 compose 里的服务名 minio；凭据与 conf/platform.properties 保持一致。
+-->
+<configuration>
+  <property>
+    <name>fs.s3a.endpoint</name>
+    <value>http://minio:9000</value>
+  </property>
+  <property>
+    <name>fs.s3a.access.key</name>
+    <value>admin</value>
+  </property>
+  <property>
+    <name>fs.s3a.secret.key</name>
+    <value>password</value>
+  </property>
+  <property>
+    <name>fs.s3a.path.style.access</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>fs.s3a.connection.ssl.enabled</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>fs.s3a.impl</name>
+    <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+  </property>
+</configuration>

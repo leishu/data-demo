@@ -81,8 +81,12 @@ services:
     networks: [lake]
 
   # ---------------------------------------------------------------- Hive Metastore
-  # 元数据走 Postgres；数据文件由 Spark / Presto 直接读写 MinIO，HMS 不碰数据。
-  # 镜像在 ./hive 里加了一层：Postgres JDBC 驱动 + 幂等的 schema 初始化。
+  # 元数据走 Postgres；数据文件由 Spark / Presto 直接读写 MinIO。
+  # 镜像在 ./hive 里加了一层：Postgres JDBC 驱动 + S3A（hadoop-aws）+ 幂等的 schema 初始化。
+  #
+  # HMS 不是“完全不碰数据”：建 database 时它要把库目录 mkdirs 到 s3a://lake/warehouse/<db>，
+  # 所以镜像里带了 hadoop-aws，S3A 的 endpoint / 凭据由 ./hive/core-site.xml 提供
+  # （JVM 的 -Dfs.s3a.* 对 Hadoop Configuration 不生效）。
   hive-metastore:
     build:
       context: ./hive
@@ -100,6 +104,8 @@ services:
         -Djavax.jdo.option.ConnectionUserName=hive
         -Djavax.jdo.option.ConnectionPassword=hive
         -Dhive.metastore.warehouse.dir=s3a://lake/warehouse
+    volumes:
+      - ./hive/core-site.xml:/opt/hive/conf/core-site.xml:ro
     ports:
       - "127.0.0.1:9083:9083"
     healthcheck:
