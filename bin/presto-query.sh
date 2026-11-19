@@ -24,8 +24,25 @@ cleanup() {
 trap cleanup EXIT
 
 ARGS=()
+NO_PRESTO=0   # --list / --print-only 不需要连服务
+CUSTOM_URL=0 # 指定了 --url 就不知道目标在哪儿，不做本地探测
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --list|--print-only)
+      NO_PRESTO=1
+      ARGS+=("$1")
+      shift
+      ;;
+    --url)
+      CUSTOM_URL=1
+      ARGS+=("$1" "${2:-}")
+      shift 2 || shift
+      ;;
+    --url=*)
+      CUSTOM_URL=1
+      ARGS+=("$1")
+      shift
+      ;;
     --sql)
       if [[ $# -lt 2 ]]; then
         echo "--sql 缺少参数" >&2
@@ -65,6 +82,14 @@ for arg in "${ARGS[@]}"; do
   EXEC_ARGS+="$(quote_arg "$arg") "
 done
 EXEC_ARGS="${EXEC_ARGS% }"
+
+# Presto 默认不随基础设施启动（常驻 ~0.8G），先探一下 8080：
+# 不然要等到 mvn 跑起来才报 JDBC 连接超时，看不出是服务没起
+if [[ "${NO_PRESTO}" == "0" && "${CUSTOM_URL}" == "0" ]] \
+   && ! curl -fsS --max-time 3 http://localhost:8080/v1/info >/dev/null 2>&1; then
+  echo "[!] Presto 没在跑（localhost:8080 不可达）。先执行：bin/infra.sh up presto" >&2
+  exit 1
+fi
 
 "${MVN_BIN}" -q -pl presto-adhoc -am -DskipTests package exec:java \
   "${REPO_ARGS[@]}" \

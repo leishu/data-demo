@@ -90,19 +90,29 @@ docker tag  docker.m.daocloud.io/library/alpine:latest alpine:latest
 |---|---|
 | 镜像总体积 | 约 2.5–3.5 GB（Presto 最大） |
 | 磁盘 | 建议预留 20 GB（镜像 + 数据卷 + 构建缓存） |
-| 内存 | 容器峰值约 2.5–3.5 GB；本机 15 GB，但日常已用 8–9 GB |
+| 内存 | `bin/infra.sh up` 默认约 0.75 GB（HMS 0.4 / MinIO 0.27 / Postgres 0.06）；带上 Presto 约 1.5 GB（Presto 0.8） |
 | 端口 | 5432 / 9000 / 9001 / 9083 / 8080（+ 8081 Adminer），全部只绑 `127.0.0.1` |
 
-内存紧张时优先降 Presto：`infra/presto/etc/jvm.config` 的 `-Xmx1G` 和
-`infra/docker-compose.yml` 的 `presto.mem_limit` 一起改，两边保持「容器上限 = 堆 + 1G 左右」。
+内存几乎全花在两个 JVM 上，想再省就改这几处（两列需成对改，别只改一边）：
+
+| 服务 | 堆参数在哪 | 容器上限在哪 | 说明 |
+|---|---|---|---|
+| Presto | `infra/presto/etc/jvm.config` 的 `-Xmx768m` | compose 的 `presto.mem_limit` | 堆 ≈ 2 × `config.properties` 的 `query.max-memory`；调堆要顺手调 `query.max-*`，否则要么“堆够但查询被拒”，要么“查询放行但堆 OOM” |
+| HMS | compose 里 `SERVICE_OPTS` 末尾的 `-Xmx512m` | compose 的 `hive-metastore.mem_limit` | 官方 `/entrypoint.sh` 把 `-Xmx1G` 写死了，靠 JVM「重复 `-Xmx` 取最后一个」覆盖 |
+| MinIO | compose 里的 `GOMEMLIMIT` | compose 的 `minio.mem_limit` | Go 运行时软上限，超了不会 OOM，只会更勤快地回收 |
+
+> Presto 0.290 镜像内置 JDK 11：`G1PeriodicGCInterval` / `G1PeriodicGCPeriod` 这类 JDK 12+ 才有的参数
+> 写进 `jvm.config` 会直接 `Unrecognized VM option` 起不来（实测踩过）。
+> 健康检查间隔已统一放到 30s，不要改回 5s：探测进程 fork 得越勤，瞬时内存和 CPU 唤醒越多。
 
 ---
 
 ## 2. 起停与验证
 
 ```bash
-bin/infra.sh up            # 起 Postgres + MinIO + HMS + Presto（首次会构建 HMS、拉镜像）
-bin/infra.sh up tools      # 额外起 Adminer（Postgres 网页客户端）
+bin/infra.sh up            # 起 Postgres + MinIO + HMS（首次会构建 HMS、拉镜像）
+bin/infra.sh up presto     # 额外起 Presto（即席查询才需要，常驻 ~0.8 GB）
+bin/infra.sh up tools      # 额外起 Adminer（Postgres 网页客户端），可与 presto 组合
 bin/infra.sh ps            # 看健康状态
 bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 ```
@@ -121,7 +131,8 @@ bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 | Adminer | http://localhost:8081 | 服务器填 `postgres` |
 
 `doctor` 会依次验证：Docker → 容器状态 → MinIO/Presto HTTP → HMS 端口 → Postgres →
-`select 1` → `show tables from iceberg.lake`。最后一项在还没跑过批处理时会是 WARN，属于正常。
+`select 1` → `show tables from iceberg.lake`。Presto 没起时前两项会 WARN 跳过（默认模式就是这样），
+最后一项在还没跑过批处理时也是 WARN，都属于正常。
 
 ---
 
@@ -133,8 +144,10 @@ bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 
 | 命令 | 作用 | 说明 |
 |---|---|---|
-| `bin/infra.sh up` | 起核心四件套 | 自带 `--build`，改过 `infra/hive/Dockerfile` 会自动重建 HMS 镜像 |
-| `bin/infra.sh up tools` | 额外起 Adminer（:8081） | 走 `--profile tools` |
+| `bin/infra.sh up` | 起 Postgres + MinIO + HMS | **默认不含 Presto**（省 ~0.8 GB）；自带 `--build`，改过 `infra/hive/Dockerfile` 会自动重建 HMS 镜像 |
+| `bin/infra.sh up presto` | 额外起 Presto（:8080） | 即席查询 / `lake-service` 查数时需要；`all` 等价。不用时 `docker stop lake-presto` 立刻回收 |
+| `bin/infra.sh up tools` | 额外起 Adminer（:8081） | 走 `--profile tools`，可写成 `up tools presto` |
+| `bin/infra.sh core` | 同 `up` | 旧命令名，保留兼容 |
 | `bin/infra.sh ps` | 容器 + 健康状态 | 出问题时的第一步 |
 | `bin/infra.sh logs [服务...]` | 跟日志（`-f --tail=200`） | 参数是**服务名**：`postgres` / `minio` / `hive-metastore` / `presto`，不是容器名 |
 | `bin/infra.sh restart [服务...]` | 重启容器 | 只改了挂载文件或环境变量时够用，不必重建镜像 |
@@ -188,6 +201,7 @@ bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 | `infra/hive/core-site.xml`（挂载）或 compose 里的环境变量 | `bin/infra.sh restart hive-metastore` |
 | `infra/hive/Dockerfile`、`infra/hive/entrypoint.sh` | `bin/infra.sh up`（自带 `--build`） |
 | `infra/presto/etc/**` | `bin/infra.sh restart presto` |
+| `infra/docker-compose.yml` 里的 `mem_limit` / `SERVICE_OPTS` / `GOMEMLIMIT` | `bin/infra.sh up`（容器配置变了要重建，`restart` 不生效） |
 | 环境彻底归零 | `bin/infra.sh clean`，再重跑批处理 |
 
 ### 3.5 排查顺序
@@ -217,7 +231,8 @@ mvn -Ps3 -pl spark-batch dependency:go-offline
 MVN_PROFILE=s3 bin/dev-batch.sh --job all
 bin/infra.sh doctor
 
-# 即席查询
+# 即席查询（Presto 默认没起，先拉起来）
+bin/infra.sh up presto
 bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
 ```
 
@@ -229,7 +244,8 @@ bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --st
   所以 Spark 用 `s3a://` 写、Presto 直接读没问题。
 - 行级写保持 `copy-on-write`，别开 merge-on-read —— 0.290 的 Iceberg connector 读 delete file 容易踩坑。
 
-服务层（`lake-service`）这时 `/api/query` 才真正可用；没起 Presto 时它仍然能启动，但查询返回 503。
+服务层（`lake-service`）这时 `/api/query` 才真正可用；没起 Presto 时它仍然能启动，但查询返回 503，
+跑一下 `bin/infra.sh up presto` 就好。
 
 ---
 

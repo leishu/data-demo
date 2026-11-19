@@ -185,16 +185,17 @@ npm --prefix lake-ui run mock      # 没有 Presto / Docker 时：4173 起个假
 # 0. 首次：装 Docker Engine + Compose v2（含镜像加速，约 3 分钟）
 bash bin/install-docker.sh        # 装完 newgrp docker 或重新登录
 
-# 1. 起基础设施（Postgres 存 HMS 元数据，MinIO 存数据，Presto 提供查询）
-bin/infra.sh up                   # 首次构建 HMS + 拉镜像，约 5-10 分钟
-bin/infra.sh doctor               # 端口 / HTTP / Presto 端到端自检
+# 1. 起基础设施（Postgres 存 HMS 元数据，MinIO 存数据；Presto 按需另行拉起）
+bin/infra.sh up                   # 起 Postgres + MinIO + HMS；首次构建 HMS + 拉镜像，约 5-10 分钟，常驻约 0.75 GB
+bin/infra.sh doctor               # 端口 / HTTP 自检（Presto 未起时自动跳过相关项）
 
 # 2. 用集群配置跑批（Hive catalog + s3a 仓库）
 cp conf/platform.properties.example conf/platform.properties
 bin/dev-batch.sh --job all       # 脚本看 warehouse 是 s3a:// 就自动带 -Ps3（iceberg-aws-bundle + hadoop-aws）
                                  # 想指定别的 profile 时用 MVN_PROFILE=xxx 覆盖，脚本就不再自动判断
 
-# 3. Presto 即席查询
+# 3. Presto 即席查询（默认不起 Presto，常驻约 0.8 GB，用完可 docker stop lake-presto）
+bin/infra.sh up presto
 bin/presto-query.sh --list
 bin/presto-query.sh --sql-file sql/adhoc/01_daily_revenue.sql
 bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats

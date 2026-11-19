@@ -12,8 +12,11 @@ set -euo pipefail
 # 3.1.3 上只能自己探状态（实测语义）：
 #   空库：-info exit 1，-initSchema exit 0
 #   已建表：-info exit 0，-initSchema exit 1，-upgradeSchema exit 0（已最新时是 no-op）
+# schematool 是跑完就退的一次性进程，不需要 1G 堆（跟 SERVICE_OPTS 里的 -Xmx512m 对齐）
+HMS_TOOL_HEAP="${HMS_TOOL_HEAP:-512m}"
+
 hms_schematool() {
-  HADOOP_CLIENT_OPTS="${HADOOP_CLIENT_OPTS:-} -Xmx1G ${SERVICE_OPTS:-}" \
+  HADOOP_CLIENT_OPTS="${HADOOP_CLIENT_OPTS:-} -Xmx${HMS_TOOL_HEAP} ${SERVICE_OPTS:-}" \
     "${HIVE_HOME}/bin/schematool" -dbType "${DB_DRIVER}" "$@"
 }
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 本地湖仓基础设施：起停 / 巡检 / 调试
 #
-#   bin/infra.sh up            # 起核心四件套（Postgres + MinIO + HMS + Presto）
-#   bin/infra.sh up tools      # 额外起 Adminer（:8081）
+#   bin/infra.sh up            # 起 Postgres + MinIO + HMS（默认，跑批够用）
+#   bin/infra.sh up presto     # 额外起 Presto（即席查询才需要，常驻 ~0.8G）
+#   bin/infra.sh up tools      # 额外起 Adminer（:8081），可和 presto 组合
 #   bin/infra.sh down          # 停容器，保留数据卷
 #   bin/infra.sh clean         # 停容器并删数据卷（元数据、对象存储全清）
 #   bin/infra.sh ps            # 容器与健康状态
@@ -29,12 +30,13 @@ usage() {
   cat <<'EOF'
 用法: bin/infra.sh <命令> [参数]
 
-  up [tools]        起核心四件套；带 tools 时额外起 Adminer
+  up [presto|tools|all]  起 Postgres + MinIO + HMS；带 presto（或 all）额外起 Presto，带 tools 额外起 Adminer
+  core              同 up（保留兼容：默认就不起 Presto）
   down              停容器，保留数据卷
   clean             停容器并删除数据卷（不可恢复）
   ps                容器与健康状态
   logs [服务...]    跟日志（默认全部）
-  doctor            端口 / HTTP / Presto 端到端检查
+  doctor            端口 / HTTP / 端到端检查（Presto 未起时自动跳过它那几项）
   psql [参数]       进 Postgres（HMS 元数据库）
   restart [服务...] 重启容器
 EOF
@@ -53,12 +55,13 @@ need_docker() {
   }
 }
 
-# shellcheck disable=SC2120,SC2119  # 可选参数：$1 是重试次数，调用方一般不传
+# 可选参数：要检查的 compose 服务名（不传 = compose ps 看到的全部服务）
 wait_healthy() {
-  local tries="${1:-150}" i state
+  local tries=150 i state
+  local -a svcs=("$@")
   log "等待容器 healthy（最多 $((tries * 2)) 秒）"
   for ((i = 1; i <= tries; i++)); do
-    state="$(docker compose ps --format '{{.Name}}|{{.State}}|{{.Health}}' 2>/dev/null || true)"
+    state="$(docker compose ps --format '{{.Name}}|{{.State}}|{{.Health}}' "${svcs[@]}" 2>/dev/null || true)"
     # 所有容器都 running，且带健康检查的容器都是 healthy（没有健康检查的 Health 为空）
     if [[ -n "${state}" ]] && ! awk -F'|' '
         ($2 != "running") || ($3 != "" && $3 != "healthy") { bad = 1 }
@@ -73,14 +76,16 @@ wait_healthy() {
 }
 
 print_endpoints() {
-  cat <<'EOF'
+  # 参数：1 = 已起 Presto；不传/0 = 三件套模式
+  if [[ "${1:-0}" == "1" ]]; then
+    cat <<'EOF'
 
   Presto          http://localhost:8080          (SQL 即席查询)
   MinIO API       http://localhost:9000          (admin / password)
   MinIO 控制台    http://localhost:9001
   Hive Metastore  thrift://localhost:9083
   Postgres        localhost:5432                 (hive / hive, db=metastore)
-  Adminer         http://localhost:8081          (仅在 up tools 时启动)
+  Adminer         http://localhost:8081          (仅在带 tools 时启动)
 
   下一步：
     cp conf/platform.properties.example conf/platform.properties
@@ -89,26 +94,68 @@ print_endpoints() {
     bin/lake-service.sh build && bin/lake-service.sh start
 
 EOF
+    return
+  fi
+  cat <<'EOF'
+
+  MinIO API       http://localhost:9000          (admin / password)
+  MinIO 控制台    http://localhost:9001
+  Hive Metastore  thrift://localhost:9083
+  Postgres        localhost:5432                 (hive / hive, db=metastore)
+  Adminer         http://localhost:8081          (仅在带 tools 时启动)
+
+  下一步：
+    cp conf/platform.properties.example conf/platform.properties
+    MVN_PROFILE=s3 bin/dev-batch.sh --job all
+    bin/lake-service.sh build && bin/lake-service.sh start
+
+  要查 SQL 时再补起 Presto（常驻 ~0.8G，不用时 docker stop lake-presto）：
+    bin/infra.sh up presto
+
+EOF
 }
 
+# 默认只起 Postgres + MinIO + HMS：日常跑批够用。Presto 只在做 SQL 查询时需要，
+# 常驻要 0.8G，所以改成按需拉起。
+#   bin/infra.sh up              三件套
+#   bin/infra.sh up presto       三件套 + Presto（all 等价）
+#   bin/infra.sh up tools        三件套 + Adminer
+#   bin/infra.sh up tools presto 三件套 + Adminer + Presto
 cmd_up() {
   need_docker
-  local args=()
-  if [[ "${1:-}" == "tools" || "${1:-}" == "--tools" ]]; then
+  local with_tools=0 with_presto=0 arg label
+  local -a args=() svcs=(postgres minio hive-metastore)
+  for arg in "$@"; do
+    case "${arg}" in
+      tools|--tools) with_tools=1 ;;
+      presto|query|all) with_presto=1 ;;
+      *) warn "忽略未知参数：${arg}" ;;
+    esac
+  done
+  if [[ "${with_tools}" == "1" ]]; then
     args=("${PROFILE_TOOLS[@]}")
-    log "启动核心服务 + tools profile"
-  else
-    log "启动核心服务"
   fi
-  "${COMPOSE[@]}" "${args[@]}" up -d --build
-  wait_healthy || true
+  label="Postgres + MinIO + HMS"
+  if [[ "${with_tools}" == "1" ]]; then label+=" + Adminer"; fi
+  if [[ "${with_presto}" == "1" ]]; then
+    svcs+=(presto)
+    label+=" + Presto"
+  fi
+  log "启动 ${label}"
+  "${COMPOSE[@]}" "${args[@]}" up -d --build "${svcs[@]}"
+  wait_healthy "${svcs[@]}" || true
   "${COMPOSE[@]}" ps
-  print_endpoints
+  print_endpoints "${with_presto}"
+}
+
+# 保留旧命令名：up 默认行为已经就是 core
+cmd_core() {
+  cmd_up
 }
 
 cmd_doctor() {
   need_docker
-  local failed=0
+  local failed=0 presto_up=0
 
   echo
   log "1. Docker"
@@ -134,7 +181,13 @@ cmd_doctor() {
     fi
   }
   check_http "MinIO 健康"  "http://localhost:9000/minio/health/live"
-  check_http "Presto 信息" "http://localhost:8080/v1/info"
+  # 默认模式故意不起 Presto，这里不能算失败
+  if docker ps --format '{{.Names}}' | grep -qx lake-presto; then
+    presto_up=1
+    check_http "Presto 信息" "http://localhost:8080/v1/info"
+  else
+    warn "Presto 未启动（默认模式），跳过 Presto 相关检查"
+  fi
 
   if timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/9083' 2>/dev/null; then
     ok "HMS    127.0.0.1:9083"
@@ -149,7 +202,9 @@ cmd_doctor() {
 
   echo
   log "4. Presto 端到端"
-  if "${COMPOSE[@]}" exec -T presto presto-cli \
+  if [[ "${presto_up}" != "1" ]]; then
+    warn "Presto 未启动，跳过端到端查询（bin/infra.sh up presto 可补起）"
+  elif "${COMPOSE[@]}" exec -T presto presto-cli \
       --server localhost:8080 --execute 'select 1' >/dev/null 2>&1; then
     ok "Presto 能执行查询"
 
@@ -190,6 +245,7 @@ shift || true
 
 case "${cmd}" in
   up)       cmd_up "$@" ;;
+  core)     cmd_core ;;
   down)     need_docker; "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" down ;;
   clean)
     need_docker
