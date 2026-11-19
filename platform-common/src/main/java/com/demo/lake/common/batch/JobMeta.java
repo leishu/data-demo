@@ -23,9 +23,9 @@ import lombok.experimental.Accessors;
 public final class JobMeta {
 
     /** 主链路：页面第一组，按顺序跑一遍就是一条数据管道 */
-    public static final String PIPELINE = "pipeline";
+    public static final String PIPELINE = "主链路";
     /** 补充项：Schema 演进 / 仅命令行 / 全链路 */
-    public static final String OTHER = "other";
+    public static final String OTHER = "补充项";
 
     private final String name;
     private final String title;

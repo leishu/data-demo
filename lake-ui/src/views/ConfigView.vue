@@ -9,18 +9,24 @@ const loading = ref(false)
 
 const cfg = computed(() => store.config)
 
+/** 兜底格式化：数组里是对象时取 name，绝不让 [object Object] 露到页面上 */
+function fmtValue(v) {
+  if (v === null || v === undefined) return '—'
+  if (Array.isArray(v)) {
+    if (!v.length) return '—'
+    return v
+      .map((item) =>
+        item && typeof item === 'object' ? (item.name ?? JSON.stringify(item)) : String(item)
+      )
+      .join(', ')
+  }
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
+
 function entries(obj) {
   if (!obj || typeof obj !== 'object') return []
-  return Object.entries(obj).map(([k, v]) => [
-    k,
-    v === null || v === undefined
-      ? '—'
-      : typeof v === 'object'
-        ? Array.isArray(v)
-          ? v.join(', ')
-          : JSON.stringify(v)
-        : String(v)
-  ])
+  return Object.entries(obj).map(([k, v]) => [k, fmtValue(v)])
 }
 
 /**
@@ -42,9 +48,19 @@ const platformEntries = computed(() => {
     })
 })
 
+// jobs 是对象数组，内容用下面的作业表格渲染，不塞进键值对
 const batchEntries = computed(() =>
-  entries({ ...(cfg.value?.batch || {}) }).filter(([k]) => k !== 'enabled')
+  entries({ ...(cfg.value?.batch || {}) }).filter(([k]) => k !== 'enabled' && k !== 'jobs')
 )
+
+const jobCards = computed(() => cfg.value?.batch?.jobs || [])
+const allowedCount = computed(() => (cfg.value?.batch?.allowedJobs || []).length)
+
+/** 白名单里写了、但 LakeJobs 里没有的名字：拼出来的命令必定报「未知 job」，配置页要露出来 */
+const unknownJobs = computed(() => {
+  const known = new Set(jobCards.value.map((j) => j.name))
+  return (cfg.value?.batch?.allowedJobs || []).filter((name) => !known.has(name))
+})
 
 async function reload() {
   loading.value = true
@@ -143,6 +159,52 @@ onMounted(reload)
           <span class="mono wrap">{{ v }}</span>
         </el-descriptions-item>
       </el-descriptions>
+
+      <div class="jobs-head">
+        <span class="card-title">可触发作业</span>
+        <el-tag size="small" effect="light" type="info">
+          {{ jobCards.length }} / 白名单 {{ allowedCount }}
+        </el-tag>
+        <span class="faint note">标题与描述来自 platform-common 的 LakeJobs</span>
+      </div>
+
+      <el-alert
+        v-if="unknownJobs.length"
+        class="unknown-alert"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`白名单里有 ${unknownJobs.length} 个名字不在 LakeJobs 中：${unknownJobs.join('、')}`"
+      />
+
+      <el-table v-if="jobCards.length" :data="jobCards" size="small" max-height="320" class="jobs">
+        <el-table-column label="作业" width="110">
+          <template #default="{ row }">
+            <span class="mono job-name" :class="{ featured: row.featured }">{{ row.name }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="标题" width="128" prop="title" />
+        <el-table-column label="分组" width="96">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain" :type="row.group === '补充项' ? 'info' : 'primary'">
+              {{ row.group }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="说明" min-width="240">
+          <template #default="{ row }">
+            <span class="desc">{{ row.desc }}</span>
+            <el-tag v-if="row.cliOnly" size="small" effect="light" type="warning" class="flag">
+              仅命令行
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty
+        v-else
+        :image-size="56"
+        description="白名单为空，或写进去的作业名都不认识"
+      />
     </el-card>
 
     <el-card>
@@ -207,6 +269,37 @@ onMounted(reload)
 
 .kv :deep(.el-descriptions__content) {
   font-size: 12px;
+}
+
+.jobs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0 8px;
+}
+
+.unknown-alert {
+  margin-bottom: 8px;
+  font-size: 11.5px;
+}
+
+.jobs :deep(.el-table__cell) {
+  padding: 6px 0;
+}
+
+.job-name.featured {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.desc {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.flag {
+  margin-left: 6px;
 }
 
 .loading-icon {
