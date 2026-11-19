@@ -151,7 +151,7 @@ public final class BatchApp {
         System.out.println("  --retain-last <n>     过期快照时保留最近 n 个，默认 5");
         System.out.println();
         System.out.println("verify-sql:");
-        System.out.println("  --sql-file <path>     用 Spark 校验 ad-hoc SQL（跳过 @presto-only 语句）");
+        System.out.println("  --sql-file <path>     用 Spark 校验 ad-hoc SQL（跳过 @trino-only 语句）");
         System.out.println();
         System.out.println("示例:");
         System.out.println("  --job all --days 7 --orders-per-day 3000");

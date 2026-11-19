@@ -26,7 +26,7 @@ class BatchJobServiceTest {
         return p;
     }
 
-    /** 单测不连 Presto：历史一律当读不到，只验内存那份 */
+    /** 单测不连 Trino：历史一律当读不到，只验内存那份 */
     private BatchHistoryService noHistory() {
         return new BatchHistoryService(null, null) {
             @Override

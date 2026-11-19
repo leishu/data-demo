@@ -11,7 +11,7 @@ import java.util.List;
  * <ul>
  *   <li>{@link History#OK} 湖表可读，已合并</li>
  *   <li>{@link History#NOT_INITIALIZED} 表还没建（没跑过 init）</li>
- *   <li>{@link History#UNAVAILABLE} Presto 连不上</li>
+ *   <li>{@link History#UNAVAILABLE} Trino 连不上</li>
  *   <li>{@link History#ERROR} 查询报错</li>
  * </ul>
  */

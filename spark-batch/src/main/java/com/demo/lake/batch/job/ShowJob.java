@@ -8,7 +8,7 @@ import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.config.PlatformConfig;
 import org.apache.spark.sql.SparkSession;
 
-/** 只读巡检：快照、历史、分区、文件布局。Presto 侧也能查同样的元数据表 */
+/** 只读巡检：快照、历史、分区、文件布局。Trino 侧也能查同样的元数据表 */
 public class ShowJob implements LakeJob {
 
     @Override

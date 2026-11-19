@@ -48,11 +48,11 @@ class PlatformConfigTest {
     }
 
     @Test
-    void prestoUrlFollowsCatalogAndDatabase() {
+    void trinoUrlFollowsCatalogAndDatabase() {
         System.setProperty("platform.database", "lake_test");
         try {
             PlatformConfig cfg = PlatformConfig.load();
-            assertEquals("jdbc:presto://localhost:8080/iceberg/lake_test", cfg.prestoJdbcUrl());
+            assertEquals("jdbc:trino://localhost:8080/iceberg/lake_test", cfg.trinoJdbcUrl());
         } finally {
             System.clearProperty("platform.database");
         }

@@ -60,7 +60,7 @@ async function scrollLogBottom() {
 }
 
 async function loadRuns() {
-  // 上一轮还没回来就跳过：Presto 慢的时候别让请求排队叠加
+  // 上一轮还没回来就跳过：Trino 慢的时候别让请求排队叠加
   if (runsLoading.value) return
   runsLoading.value = true
   try {

@@ -1,6 +1,7 @@
-package com.demo.lake.presto;
+package com.demo.lake.trino;
 
-import com.facebook.presto.jdbc.PrestoResultSet;
+import io.trino.jdbc.QueryStats;
+import io.trino.jdbc.TrinoResultSet;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -19,28 +20,30 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * Presto JDBC 薄封装：连一个 coordinator，跑一条语句，拿回列/行/耗时。
+ * Trino JDBC 薄封装：连一个 coordinator，跑一条语句，拿回列/行/耗时。
  * 不缓存连接池——即席查询 CLI 一次一个会话，够了。
  */
-public final class PrestoClient implements AutoCloseable {
+public final class TrinoClient implements AutoCloseable {
 
     private final Connection connection;
     private final int timeoutSeconds;
 
-    private PrestoClient(Connection connection, int timeoutSeconds) {
+    private TrinoClient(Connection connection, int timeoutSeconds) {
         this.connection = connection;
         this.timeoutSeconds = timeoutSeconds;
     }
 
-    public static PrestoClient connect(String url, String user, String source, int timeoutSeconds)
+    public static TrinoClient connect(String url, String user, String source, int timeoutSeconds)
             throws SQLException {
         Properties props = new Properties();
         props.setProperty("user", user);
+        // source 是驱动认的连接属性，会作为查询来源上报到 coordinator
+        if (source != null && !source.isBlank()) {
+            props.setProperty("source", source);
+        }
         Connection conn = DriverManager.getConnection(url, props);
-        // 0.290 驱动不认识 source 连接属性；ApplicationName 会作为查询的 source 上报
-        conn.setClientInfo("ApplicationName", source);
         conn.setReadOnly(true);
-        return new PrestoClient(conn, timeoutSeconds);
+        return new TrinoClient(conn, timeoutSeconds);
     }
 
     public QueryResult execute(String sql, int maxRows) throws SQLException {
@@ -77,11 +80,15 @@ public final class PrestoClient implements AutoCloseable {
 
                 long elapsedMs = (System.nanoTime() - start) / 1_000_000;
                 String stats = null;
-                // QueryStats 在不同驱动版本字段会变，这里只取 toString，避免绑死 API
-                if (rs instanceof PrestoResultSet) {
-                    Object s = ((PrestoResultSet) rs).getStats();
+                // QueryStats 没有重写 toString，直接打会得到类名@hash；这里只挑稳定且对排查有用的字段
+                if (rs instanceof TrinoResultSet) {
+                    QueryStats s = ((TrinoResultSet) rs).getStats();
                     if (s != null) {
-                        stats = s.toString();
+                        stats = String.format(
+                                "queryId=%s state=%s elapsed=%dms cpu=%dms splits=%d/%d rows=%d bytes=%d peakMem=%dB",
+                                s.getQueryId(), s.getState(), s.getElapsedTimeMillis(), s.getCpuTimeMillis(),
+                                s.getCompletedSplits(), s.getTotalSplits(), s.getProcessedRows(),
+                                s.getProcessedBytes(), s.getPeakMemoryBytes());
                     }
                 }
                 return new QueryResult(headers, rows, truncated, elapsedMs, stats);

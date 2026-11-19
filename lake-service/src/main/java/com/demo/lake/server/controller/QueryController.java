@@ -84,7 +84,7 @@ public class QueryController {
         out.put("database", cfg.database());
         out.put("warehouse", cfg.warehouse());
         out.put("writeMode", cfg.writeMode());
-        out.put("prestoUrl", cfg.prestoJdbcUrl());
+        out.put("trinoUrl", cfg.trinoJdbcUrl());
         out.put("query", Map.of(
                 "maxRows", props.getQuery().getMaxRows(),
                 "timeoutSeconds", props.getQuery().getTimeoutSeconds(),

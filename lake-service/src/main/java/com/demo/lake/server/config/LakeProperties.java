@@ -11,7 +11,7 @@ import java.util.List;
  * 服务层自有配置（lake.*）。
  *
  * <p>注意与 {@link com.demo.lake.common.config.PlatformConfig} 的分工：平台配置（catalog / warehouse /
- * Presto 地址）仍然只有 platform-common 那一份来源，这里只放「服务怎么跑」的参数，避免两套配置打架。</p>
+ * Trino 地址）仍然只有 platform-common 那一份来源，这里只放「服务怎么跑」的参数，避免两套配置打架。</p>
  *
  * <p>访问器由 Lombok 生成（JavaBean 风格，{@code getXxx}/{@code setXxx}）：Spring Boot 的
  * 宽松绑定依赖 setter，所以这两个注解是配置生效的必要条件，不能换成 {@code @Value} 或构造器绑定。</p>

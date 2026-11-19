@@ -46,14 +46,14 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
 
-    <!-- 连接池 + Presto 驱动：即席查询并发复用连接，比 CLI 的「一次一连接」更接近生产形态 -->
+    <!-- 连接池 + Trino 驱动：即席查询并发复用连接，比 CLI 的「一次一连接」更接近生产形态 -->
     <dependency>
       <groupId>com.zaxxer</groupId>
       <artifactId>HikariCP</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.facebook.presto</groupId>
-      <artifactId>presto-jdbc</artifactId>
+      <groupId>io.trino</groupId>
+      <artifactId>trino-jdbc</artifactId>
     </dependency>
 
     <dependency>

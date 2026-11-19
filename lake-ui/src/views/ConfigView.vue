@@ -99,17 +99,17 @@ onMounted(reload)
           <el-descriptions-item label="写模式">
             <el-tag size="small" effect="light" type="primary">{{ cfg.writeMode }}</el-tag>
             <span v-if="cfg.writeMode === 'copy-on-write'" class="faint note block">
-              Presto 读 MoR 要处理 delete file，CoW 更稳
+              Trino 读 MoR 要处理 delete file，CoW 更稳
             </span>
           </el-descriptions-item>
         </el-descriptions>
       </el-card>
 
       <el-card>
-        <template #header><span class="card-title">Presto 连接</span></template>
+        <template #header><span class="card-title">Trino 连接</span></template>
         <el-descriptions :column="1" size="small" class="kv">
           <el-descriptions-item label="JDBC URL">
-            <span class="mono wrap">{{ cfg.prestoUrl }}</span>
+            <span class="mono wrap">{{ cfg.trinoUrl }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="连接池">{{ cfg.query?.poolSize }} 个连接</el-descriptions-item>
           <el-descriptions-item label="单次上限">{{ cfg.query?.maxRows }} 行</el-descriptions-item>

@@ -12,7 +12,7 @@
 
   <artifactId>platform-common</artifactId>
   <name>platform-common</name>
-  <description>公共配置层：catalog 模式、仓库路径、Spark/Presto 连接参数、SQL 脚本解析</description>
+  <description>公共配置层：catalog 模式、仓库路径、Spark/Trino 连接参数、SQL 脚本解析</description>
 
   <dependencies>
     <dependency>

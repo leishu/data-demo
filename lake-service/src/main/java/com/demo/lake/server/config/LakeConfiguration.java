@@ -59,24 +59,23 @@ public class LakeConfiguration {
     }
 
     /**
-     * Presto 连接池。初始化失败不阻止应用启动（initializationFailTimeout = -1）：
-     * 服务要能在 Presto 没起来时先提供 /actuator/health 和明确的错误信息，而不是起不来。
+     * Trino 连接池。初始化失败不阻止应用启动（initializationFailTimeout = -1）：
+     * 服务要能在 Trino 没起来时先提供 /actuator/health 和明确的错误信息，而不是起不来。
      */
     @Bean(destroyMethod = "close")
     public DataSource dataSource(PlatformConfig cfg, LakeProperties props) {
         HikariConfig hikari = new HikariConfig();
-        hikari.setPoolName("presto");
-        hikari.setJdbcUrl(cfg.prestoJdbcUrl());
-        hikari.setUsername(cfg.prestoUser());
-        hikari.setDriverClassName("com.facebook.presto.jdbc.PrestoDriver");
+        hikari.setPoolName("trino");
+        hikari.setJdbcUrl(cfg.trinoJdbcUrl());
+        hikari.setUsername(cfg.trinoUser());
+        hikari.setDriverClassName("io.trino.jdbc.TrinoDriver");
         hikari.setReadOnly(true);
         hikari.setMaximumPoolSize(props.getQuery().getPoolSize());
         hikari.setConnectionTimeout(props.getQuery().getConnectionTimeoutMs());
         hikari.setInitializationFailTimeout(-1);
-        // Presto 0.290 的 JDBC 驱动没有 source 连接属性（会报 Unrecognized connection property），
-        // 用 applicationNamePrefix 给驱动默认的 "presto-jdbc" 加前缀，效果等价于自定义 source。
-        hikari.addDataSourceProperty("applicationNamePrefix", cfg.prestoSource() + "-service-");
-        log.info("Presto 连接池 -> {} (pool={})", cfg.prestoJdbcUrl(), props.getQuery().getPoolSize());
+        // source 是 Trino 驱动认的连接属性，会在 coordinator 的查询列表里标识来源
+        hikari.addDataSourceProperty("source", cfg.trinoSource() + "-service");
+        log.info("Trino 连接池 -> {} (pool={})", cfg.trinoJdbcUrl(), props.getQuery().getPoolSize());
         return new HikariDataSource(hikari);
     }
 }

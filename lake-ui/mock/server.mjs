@@ -1,5 +1,5 @@
 /**
- * 前端联调用的最小后端：本机没有 Presto / Docker 时也能把页面点通。
+ * 前端联调用的最小后端：本机没有 Trino / Docker 时也能把页面点通。
  *
  *   node mock/server.mjs            # http://127.0.0.1:4173
  *   node mock/server.mjs --port 4300
@@ -127,7 +127,7 @@ const JOBS = [
   { name: 'evolve', title: 'Schema 演进', desc: '新增 channel 列并回填，演示 ADD COLUMN 与元数据升级', group: 'other' },
   { name: 'maintain', title: '表维护', desc: 'rewrite_data_files 合并小文件 + expire_snapshots', group: 'pipeline' },
   { name: 'show', title: '数据概览', desc: '打印三层行数与分区分布', group: 'pipeline' },
-  { name: 'verify-sql', title: 'SQL 校验', desc: '用 Spark 执行 Presto 脚本，需要 --sql-file 参数', group: 'other', cliOnly: true },
+  { name: 'verify-sql', title: 'SQL 校验', desc: '用 Spark 执行 Trino 脚本，需要 --sql-file 参数', group: 'other', cliOnly: true },
   { name: 'all', title: '全链路', desc: 'init → ingest → transform → maintain → show', group: 'other', featured: true }
 ].map((j) => ({ cliOnly: false, featured: false, ...j }))
 
@@ -140,7 +140,7 @@ const config = {
   database: DATABASE,
   warehouse: '/home/leishu/IdeaProjects/data-demo/warehouse',
   writeMode: 'copy-on-write',
-  prestoUrl: 'jdbc:presto://127.0.0.1:8080/iceberg/lake',
+  trinoUrl: 'jdbc:trino://127.0.0.1:8080/iceberg/lake',
   query: { maxRows: 1000, timeoutSeconds: 60, poolSize: 8, allowWrites: false },
   batch: {
     enabled: true,
@@ -258,7 +258,7 @@ const server = http.createServer((req, res) => {
   if (p === '/actuator/health') {
     return send(res, 200, {
       status: 'UP',
-      components: { presto: { status: 'UP' }, diskSpace: { status: 'UP' } }
+      components: { trino: { status: 'UP' }, diskSpace: { status: 'UP' } }
     })
   }
 

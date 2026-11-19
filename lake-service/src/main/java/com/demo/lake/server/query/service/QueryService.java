@@ -7,7 +7,7 @@ import com.demo.lake.server.query.model.Column;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.model.TableInfo;
-import com.facebook.presto.jdbc.PrestoResultSet;
+import io.trino.jdbc.TrinoResultSet;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,10 +33,10 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * Presto 查询执行：连接来自 Hikari 池，SQL 先过 {@link SqlGuard}。
+ * Trino 查询执行：连接来自 Hikari 池，SQL 先过 {@link SqlGuard}。
  *
  * <p>JDBC 是阻塞 API，所以对外返回 Mono/Flux，并 {@code subscribeOn(blocking)} 到虚拟线程上执行。
- * Hikari 与 ResultSet 并没有变成响应式：那需要 r2dbc 驱动，Presto 没有，硬包一层只是把阻塞藏起来。</p>
+ * Hikari 与 ResultSet 并没有变成响应式：那需要 r2dbc 驱动，Trino 没有，硬包一层只是把阻塞藏起来。</p>
  */
 @Service
 @Slf4j
@@ -154,7 +154,7 @@ public class QueryService {
                     boolean truncated = false;
                     while (rs.next()) {
                         if (sink.isCancelled()) {
-                            // 浏览器关页 / 前端 abort：别让 Presto 在那边继续算
+                            // 浏览器关页 / 前端 abort：别让 Trino 在那边继续算
                             stmt.cancel();
                             return;
                         }
@@ -191,7 +191,7 @@ public class QueryService {
     }
 
     /**
-     * 表清单 + 字段清单，全部走 Presto 自己的 information_schema，不额外维护一份表结构。
+     * 表清单 + 字段清单，全部走 Trino 自己的 information_schema，不额外维护一份表结构。
      *
      * <p>一次 left join 把表和列一起捞回来：建表 DDL 里的 {@code COMMENT '订单号'} 就是
      * {@code information_schema.columns.comment}，页面直接拿它当字段中文名。</p>
@@ -244,8 +244,8 @@ public class QueryService {
     private static RuntimeException translate(SQLException e) {
         String msg = e.getMessage() == null ? e.toString() : e.getMessage();
         if (isConnectionIssue(e)) {
-            return new PrestoUnavailableException(
-                    "连不上 Presto，确认 coordinator 已启动（bin/infra.sh up）且 platform.presto.host/port 正确：" + msg, e);
+            return new TrinoUnavailableException(
+                    "连不上 Trino，确认 coordinator 已启动（bin/infra.sh up trino）且 platform.trino.host/port 正确：" + msg, e);
         }
         return new QueryFailedException(msg, e.getSQLState(), e.getErrorCode(), e);
     }
@@ -277,8 +277,8 @@ public class QueryService {
     /** QueryStats 的字段随驱动版本变，只取 toString，避免绑死内部 API */
     private static String stats(ResultSet rs) {
         try {
-            if (rs instanceof PrestoResultSet presto) {
-                Object s = presto.getStats();
+            if (rs instanceof TrinoResultSet trinoResult) {
+                Object s = trinoResult.getStats();
                 return s == null ? null : s.toString();
             }
         } catch (RuntimeException ignore) {

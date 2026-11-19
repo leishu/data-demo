@@ -5,7 +5,7 @@
 #
 # 为什么用脚本而不是 apt install docker.io：
 #   - docker.io 是发行版打包的旧版本，不带 compose v2 / buildx 插件；
-#   - 后面要拉 iceberg / hive / presto 这些多架构镜像，buildx 基本是刚需。
+#   - 后面要拉 iceberg / hive / trino 这些多架构镜像，buildx 基本是刚需。
 #
 # 可覆盖的环境变量：
 #   DOCKER_APT_MIRROR        apt 源列表，逗号分隔，默认阿里云 + 清华（本机到
@@ -231,10 +231,10 @@ cat <<EOF
        bin/infra.sh up
        bin/infra.sh doctor
 
-  3) 跑一遍「Spark 写 → Presto 读」（s3 profile 首次会下 ~300MB 依赖）
+  3) 跑一遍「Spark 写 → Trino 读」（s3 profile 首次会下 ~300MB 依赖）
        cp conf/platform.properties.example conf/platform.properties
        MVN_PROFILE=s3 bin/dev-batch.sh --job all
-       bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
+       bin/trino-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
 
   4) 详细说明与扩展方式（怎么加 Redis / ClickHouse / Kafka 等）
        infra/README.md

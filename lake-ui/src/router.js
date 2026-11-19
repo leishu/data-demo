@@ -14,7 +14,7 @@ const router = createRouter({
       path: '/query',
       name: 'query',
       component: QueryView,
-      meta: { title: '查询台', subtitle: '走 Presto 执行只读 SQL，结果直接看' }
+      meta: { title: '查询台', subtitle: '走 Trino 执行只读 SQL，结果直接看' }
     },
     {
       path: '/tables',

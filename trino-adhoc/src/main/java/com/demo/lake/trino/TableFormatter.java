@@ -1,4 +1,4 @@
-package com.demo.lake.presto;
+package com.demo.lake.trino;
 
 import java.util.ArrayList;
 import java.util.List;

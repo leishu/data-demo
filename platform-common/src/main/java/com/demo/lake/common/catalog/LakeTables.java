@@ -16,8 +16,8 @@ import java.util.List;
  * </ul>
  *
  * <p>关键表属性说明：merge/update/delete 全部走 copy-on-write。
- * Presto 0.29x 的 Iceberg connector 读 MoR 表需要处理 delete file，
- * 走 CoW 可以让 Spark 写、Presto 读这条链路零兼容问题（代价是写放大）。</p>
+ * 读取侧（Trino）要处理 MoR 的 delete file，走 CoW 可以让 Spark 写、Trino 读
+ * 这条链路零兼容问题（代价是写放大）。</p>
  *
  * <p>另有一个 ops 层（独立 namespace {@value #OPS_SCHEMA}）：{@code ops.batch_runs} 记录批作业
  * 的终态运行历史。放在业务库之外，就不会出现在 lake-service 的表浏览清单里。</p>
@@ -64,7 +64,7 @@ public final class LakeTables {
      * ops：批作业运行历史。只落终态（SUCCEEDED / FAILED），不写 RUNNING——
      * 进程被 kill 或超时强杀时没人来收尾，留着 RUNNING 行会变成永久脏数据。
      *
-     * <p>不分区：单表行数就是「跑过多少次作业」，量级极小，分区只会让 Presto 侧多一层元数据。</p>
+     * <p>不分区：单表行数就是「跑过多少次作业」，量级极小，分区只会让 Trino 侧多一层元数据。</p>
      */
     public static String createBatchRuns(PlatformConfig cfg) {
         TableRef t = TableRef.of(cfg.catalogName(), OPS_SCHEMA, BATCH_RUNS);

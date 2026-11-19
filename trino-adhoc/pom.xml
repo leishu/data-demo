@@ -10,9 +10,9 @@
     <version>1.0.0-SNAPSHOT</version>
   </parent>
 
-  <artifactId>presto-adhoc</artifactId>
-  <name>presto-adhoc</name>
-  <description>Presto 即席查询：JDBC 客户端 + 结果表格化 + 查询统计</description>
+  <artifactId>trino-adhoc</artifactId>
+  <name>trino-adhoc</name>
+  <description>Trino 即席查询：JDBC 客户端 + 结果表格化 + 查询统计</description>
 
   <dependencies>
     <dependency>
@@ -24,8 +24,8 @@
       <artifactId>lombok</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.facebook.presto</groupId>
-      <artifactId>presto-jdbc</artifactId>
+      <groupId>io.trino</groupId>
+      <artifactId>trino-jdbc</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.logging.log4j</groupId>
@@ -49,7 +49,7 @@
         <version>${exec.plugin.version}</version>
         <configuration>
           <skip>false</skip>
-          <mainClass>com.demo.lake.presto.PrestoAdhocRunner</mainClass>
+          <mainClass>com.demo.lake.trino.TrinoAdhocRunner</mainClass>
           <classpathScope>test</classpathScope>
         </configuration>
       </plugin>

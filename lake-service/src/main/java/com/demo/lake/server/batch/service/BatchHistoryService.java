@@ -4,7 +4,7 @@ import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
-import com.demo.lake.server.query.PrestoUnavailableException;
+import com.demo.lake.server.query.TrinoUnavailableException;
 import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.service.QueryService;
 import lombok.RequiredArgsConstructor;
@@ -24,13 +24,13 @@ import java.util.regex.Pattern;
  * <p>这是旁路数据源，三条降级规则：</p>
  * <ol>
  *   <li>表不存在（从没跑过 init）→ 空列表 + NOT_INITIALIZED，不去执行注定报错的查询；</li>
- *   <li>Presto 连不上 / 查询失败 → 空列表 + UNAVAILABLE/ERROR，只记 warn；</li>
+ *   <li>Trino 连不上 / 查询失败 → 空列表 + UNAVAILABLE/ERROR，只记 warn；</li>
  *   <li>探测结果缓存 {@value #PROBE_TTL_SECONDS}s：页面每 6s 刷一次列表，
  *       不能每次都去问 information_schema，也不能让「刚跑完 init」等太久。</li>
  * </ol>
  *
  * <p>读列表的结果本身也缓存 {@value #CACHE_TTL_SECONDS}s 并单飞：多开几个页面时，
- * 6s 的轮询会被放大成 N 倍，缓存把同一时间窗内的重复读合并成一次 Presto 查询。</p>
+ * 6s 的轮询会被放大成 N 倍，缓存把同一时间窗内的重复读合并成一次 Trino 查询。</p>
  *
  * <p>方法都是阻塞 JDBC，调用方保证跑在 blocking 调度器上（{@link BatchJobService} 负责）。</p>
  */
@@ -105,11 +105,11 @@ public class BatchHistoryService {
             }
             return new Result(List.copyOf(select(" order by started_at desc limit " + n)),
                     new RunsView.History(RunsView.History.OK, null, table));
-        } catch (PrestoUnavailableException e) {
+        } catch (TrinoUnavailableException e) {
             invalidateProbe();
-            log.warn("读运行历史失败（Presto 不可用）: {}", e.getMessage());
+            log.warn("读运行历史失败（Trino 不可用）: {}", e.getMessage());
             return new Result(List.of(), new RunsView.History(RunsView.History.UNAVAILABLE,
-                    "连不上 Presto，当前只显示本进程的运行记录", table));
+                    "连不上 Trino，当前只显示本进程的运行记录", table));
         } catch (RuntimeException e) {
             invalidateProbe();
             log.warn("读运行历史失败: {}", e.getMessage());
@@ -143,7 +143,7 @@ public class BatchHistoryService {
     }
 
     private List<BatchRun> select(String suffix) {
-        // 时间列取 epoch 毫秒：Presto 的 timestamp 不带时区，cast 成 varchar 或驱动转成
+        // 时间列取 epoch 毫秒：Trino 的 timestamp 不带时区，cast 成 varchar 或驱动转成
         // java.sql.Timestamp 都会按会话时区重排（同一行在 UTC 会话与 Asia/Shanghai 会话下差 8 小时），
         // 只有 to_unixtime 这种绝对时刻换算与连接时区无关。
         String sql = "select run_id, job, command, status, exit_code,"
@@ -158,7 +158,7 @@ public class BatchHistoryService {
         return runs;
     }
 
-    /** 表在不在：问 Presto 自己的系统表，不额外维护一份表清单 */
+    /** 表在不在：问 Trino 自己的系统表，不额外维护一份表清单 */
     private boolean present() {
         long now = System.nanoTime();
         long at = probedAtNanos;
@@ -176,7 +176,7 @@ public class BatchHistoryService {
     }
 
     private void invalidateProbe() {
-        // 表可能被删了、Presto 可能刚重启：下次调用重新探测
+        // 表可能被删了、Trino 可能刚重启：下次调用重新探测
         probedAtNanos = 0;
     }
 

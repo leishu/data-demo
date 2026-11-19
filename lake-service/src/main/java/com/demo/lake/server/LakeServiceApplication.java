@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *
  * <p>职责边界：</p>
  * <ul>
- *   <li>即席查询：把 Presto 的 JDBC 能力包成 REST 接口，连接走 HikariCP 池</li>
+ *   <li>即席查询：把 Trino 的 JDBC 能力包成 REST 接口，连接走 HikariCP 池</li>
  *   <li>作业编排：按需触发 Spark 批作业（独立进程，避免在 Web 容器里养一个 SparkSession）</li>
  * </ul>
  *

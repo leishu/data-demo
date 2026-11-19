@@ -10,12 +10,12 @@
   <packaging>pom</packaging>
 
   <name>lakehouse-demo</name>
-  <description>Spark(批处理) + Iceberg(存储/表格式) + Presto(即席查询) 湖仓一体脚手架</description>
+  <description>Spark(批处理) + Iceberg(存储/表格式) + Trino(即席查询) 湖仓一体脚手架</description>
 
   <modules>
     <module>platform-common</module>
     <module>spark-batch</module>
-    <module>presto-adhoc</module>
+    <module>trino-adhoc</module>
     <module>lake-service</module>
   </modules>
 
@@ -27,7 +27,7 @@
     <maven.compiler.release>11</maven.compiler.release>
     <java.version>11</java.version>
 
-    <!-- 版本矩阵：Spark 3.5.x(Java11/Scala2.12) + Iceberg 1.5.x + Presto 0.290(JDBC) -->
+    <!-- 版本矩阵：Spark 3.5.x(Java11/Scala2.12) + Iceberg 1.5.x + Trino 476(JDBC) -->
     <spark.version>3.5.1</spark.version>
     <scala.binary.version>2.12</scala.binary.version>
     <iceberg.version>1.5.2</iceberg.version>
@@ -35,8 +35,7 @@
     <hadoop.version>3.3.4</hadoop.version>
     <!-- 对齐 Spark 3.5 发行版自带的 Hive，HMS 客户端 API 用这个版本 -->
     <hive.version>2.3.9</hive.version>
-    <presto.version>0.290</presto.version>
-    <presto.server.version>0.290</presto.server.version>
+    <trino.version>476</trino.version>
     <!-- 注解处理：编译期生成访问器 / 构造器 / logger，scope=provided 不进产物 -->
     <lombok.version>1.18.34</lombok.version>
     <log4j.version>2.20.0</log4j.version>
@@ -156,11 +155,12 @@
         </exclusions>
       </dependency>
 
-      <!-- ========== Presto (JDBC 客户端) ========== -->
+      <!-- ========== Trino (JDBC 客户端) ========== -->
+      <!-- trino-jdbc 476 仍是 Java 11 字节码，和本 reactor 的 release 11 兼容 -->
       <dependency>
-        <groupId>com.facebook.presto</groupId>
-        <artifactId>presto-jdbc</artifactId>
-        <version>${presto.version}</version>
+        <groupId>io.trino</groupId>
+        <artifactId>trino-jdbc</artifactId>
+        <version>${trino.version}</version>
       </dependency>
 
       <!-- ========== Spring Boot（仅 lake-service） ========== -->

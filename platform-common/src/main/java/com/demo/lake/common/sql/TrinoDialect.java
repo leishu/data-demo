@@ -4,8 +4,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 最小限度的 Presto -&gt; Spark SQL 方言适配，只服务于 {@code --job verify-sql}
- * （没装 Presto 时用 Spark 校验脚本能不能跑）。
+ * 最小限度的 Trino -&gt; Spark SQL 方言适配，只服务于 {@code --job verify-sql}
+ * （没装 Trino 时用 Spark 校验脚本能不能跑）。
  *
  * <p>不做通用方言翻译，只覆盖本项目脚本里出现的两种差异：</p>
  * <ul>
@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
  *   <li>{@code INTERVAL '1' DAY} -&gt; {@code INTERVAL 1 DAYS}</li>
  * </ul>
  */
-public final class PrestoDialect {
+public final class TrinoDialect {
 
     private static final Pattern DATE_ADD = Pattern.compile(
             "date_add\\(\\s*'day'\\s*,\\s*(-?\\d+)\\s*,\\s*([A-Za-z_][A-Za-z0-9_.]*(?:\\(\\))?)\\s*\\)",
@@ -23,7 +23,7 @@ public final class PrestoDialect {
             "INTERVAL\\s+'(-?\\d+)'\\s+(DAY|DAYS|HOUR|HOURS|MONTH|MONTHS|YEAR|YEARS|MINUTE|MINUTES)",
             Pattern.CASE_INSENSITIVE);
 
-    private PrestoDialect() {
+    private TrinoDialect() {
     }
 
     public static String toSpark(String sql) {

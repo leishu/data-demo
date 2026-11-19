@@ -127,7 +127,7 @@ public final class PlatformConfig {
         return getInt("platform.format-version", 2);
     }
 
-    /** copy-on-write | merge-on-read —— 选 cow 是为了让老版本 Presto 能直接读 */
+    /** copy-on-write | merge-on-read —— 默认 cow，跨引擎读写最稳 */
     public String writeMode() {
         return get("platform.write-mode", "copy-on-write").toLowerCase(Locale.ROOT);
     }
@@ -183,32 +183,32 @@ public final class PlatformConfig {
         return getBoolean("platform.s3.path-style-access", true);
     }
 
-    // ------------------------------------------------------------------ Presto
+    // ------------------------------------------------------------------ Trino
 
-    public String prestoHost() {
-        return get("platform.presto.host", "localhost");
+    public String trinoHost() {
+        return get("platform.trino.host", "localhost");
     }
 
-    public int prestoPort() {
-        return getInt("platform.presto.port", 8080);
+    public int trinoPort() {
+        return getInt("platform.trino.port", 8080);
     }
 
-    public String prestoUser() {
-        return get("platform.presto.user", "demo");
+    public String trinoUser() {
+        return get("platform.trino.user", "demo");
     }
 
-    public String prestoSource() {
-        return get("platform.presto.source", "lakehouse-adhoc");
+    public String trinoSource() {
+        return get("platform.trino.source", "lakehouse-adhoc");
     }
 
-    /** jdbc:presto://host:port/catalog/schema */
-    public String prestoJdbcUrl() {
-        String explicit = get("platform.presto.url", null);
+    /** jdbc:trino://host:port/catalog/schema */
+    public String trinoJdbcUrl() {
+        String explicit = get("platform.trino.url", null);
         if (explicit != null) {
             return explicit;
         }
-        return String.format("jdbc:presto://%s:%d/%s/%s",
-                prestoHost(), prestoPort(), catalogName(), database());
+        return String.format("jdbc:trino://%s:%d/%s/%s",
+                trinoHost(), trinoPort(), catalogName(), database());
     }
 
     // ------------------------------------------------------------------ 可观测

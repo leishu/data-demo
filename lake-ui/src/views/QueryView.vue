@@ -190,7 +190,7 @@ function onKeydown(e) {
     <ErrorNotice
       v-if="error"
       :error="error"
-      :title="error.status === 503 ? 'Presto 不可用' : 'SQL 执行失败'"
+      :title="error.status === 503 ? 'Trino 不可用' : 'SQL 执行失败'"
       @retry="run"
     />
 
@@ -198,7 +198,7 @@ function onKeydown(e) {
       <el-icon class="is-loading loading-icon"><Loading /></el-icon>
       <div class="state-text">
         <strong>正在执行</strong>
-        <span class="faint">查询会走 Presto coordinator，大表慢查询请自行加分区条件</span>
+        <span class="faint">查询会走 Trino coordinator，大表慢查询请自行加分区条件</span>
       </div>
     </div>
 

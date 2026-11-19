@@ -19,13 +19,13 @@ const activeKey = computed(() => '/' + (route.path.split('/')[1] || 'query'))
 
 /** Element Plus 的 el-tag type 只有 success / warning / danger / info */
 const serviceStatus = computed(() => (store.health.reachable ? 'success' : 'danger'))
-const prestoStatus = computed(() => {
+const trinoStatus = computed(() => {
   const c = store.health.components || {}
   if (!store.health.reachable) return 'UNKNOWN'
-  return c.presto ? c.presto.status : store.health.status
+  return c.trino ? c.trino.status : store.health.status
 })
-const prestoTone = computed(() => {
-  switch (prestoStatus.value) {
+const trinoTone = computed(() => {
+  switch (trinoStatus.value) {
     case 'UP':
       return 'success'
     case 'DOWN':
@@ -41,10 +41,10 @@ const checking = computed(() => store.health.status === 'CHECKING')
 
 async function check() {
   await refreshHealth()
-  const p = prestoStatus.value
+  const p = trinoStatus.value
   if (!store.health.reachable) ElMessage.error('服务接口没响应')
-  else if (p === 'UP') ElMessage.success('依赖正常：Presto UP')
-  else ElMessage.warning(`服务在线，但 Presto 是 ${p}（起 coordinator 后可用查询）`)
+  else if (p === 'UP') ElMessage.success('依赖正常：Trino UP')
+  else ElMessage.warning(`服务在线，但 Trino 是 ${p}（起 coordinator 后可用查询）`)
 }
 
 let timer = null
@@ -93,7 +93,7 @@ onUnmounted(() => {
       </el-menu>
 
       <div class="sidebar-foot">
-        <div>Spark · Iceberg · Presto</div>
+        <div>Spark · Iceberg · Trino</div>
         <code>Element Plus · Spring Boot 4</code>
       </div>
     </aside>
@@ -110,13 +110,13 @@ onUnmounted(() => {
             服务 {{ store.health.reachable ? 'UP' : 'DOWN' }}
           </el-tag>
           <el-tooltip
-            content="来自 /actuator/health 的 presto 组件状态；DOWN 时查询接口返回 503"
+            content="来自 /actuator/health 的 trino 组件状态；DOWN 时查询接口返回 503"
             placement="bottom"
             :show-after="120"
           >
-            <el-tag size="small" round effect="light" :type="prestoTone">
+            <el-tag size="small" round effect="light" :type="trinoTone">
               <span class="dot" />
-              Presto {{ prestoStatus }}
+              Trino {{ trinoStatus }}
             </el-tag>
           </el-tooltip>
           <el-button size="small" text :loading="checking" @click="check">刷新</el-button>

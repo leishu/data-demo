@@ -1,8 +1,8 @@
 # 本地湖仓基础设施（演示 / 开发用，勿直接上生产）
 #
-# 组件：Postgres(元数据库) + MinIO(对象存储) + Hive Metastore(Iceberg catalog) + Presto(即席查询)
+# 组件：Postgres(元数据库) + MinIO(对象存储) + Hive Metastore(Iceberg catalog) + Trino(即席查询)
 #
-#   bin/infra.sh up              # 起核心四件套
+#   bin/infra.sh up              # 起 Postgres + MinIO + HMS（Trino 按需）
 #   bin/infra.sh up tools        # 额外起 Adminer（Postgres 网页客户端 :8081）
 #   bin/infra.sh doctor          # 健康检查 + 端到端查询
 #   bin/infra.sh clean           # 停掉并删除数据卷
@@ -29,7 +29,7 @@ networks:
 volumes:
   pgdata:
   miniodata:
-  prestodata:
+  trinodata:
 
 services:
   # ---------------------------------------------------------------- 元数据库
@@ -87,7 +87,7 @@ services:
     networks: [lake]
 
   # ---------------------------------------------------------------- Hive Metastore
-  # 元数据走 Postgres；数据文件由 Spark / Presto 直接读写 MinIO。
+  # 元数据走 Postgres；数据文件由 Spark / Trino 直接读写 MinIO。
   # 镜像在 ./hive 里加了一层：Postgres JDBC 驱动 + S3A（hadoop-aws）+ 幂等的 schema 初始化。
   #
   # HMS 不是“完全不碰数据”：建 database 时它要把库目录 mkdirs 到 s3a://lake/warehouse/<db>，
@@ -130,10 +130,10 @@ services:
     logging: *default-logging
     networks: [lake]
 
-  # ---------------------------------------------------------------- Presto
-  presto:
-    image: prestodb/presto:0.290
-    container_name: lake-presto
+  # ---------------------------------------------------------------- Trino
+  trino:
+    image: trinodb/trino:476
+    container_name: lake-trino
     depends_on:
       hive-metastore:
         condition: service_healthy
@@ -142,15 +142,17 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./presto/etc:/opt/presto-server/etc:ro
-      - prestodata:/var/lib/presto/data
+      # 整目录只读挂载：config / node / jvm / catalog 全部来自 infra/trino/etc
+      - ./trino/etc:/etc/trino:ro
+      - trinodata:/data/trino
     healthcheck:
-      # 用容器自带的 curl 探测（原来每 15s 起一个 python3 解释器，纯属浪费内存）
+      # 镜像自带 curl，直接探 coordinator 信息接口
       test: ["CMD-SHELL", "curl -fsS --max-time 3 http://127.0.0.1:8080/v1/info >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 20
-      start_period: 60s
+      # Trino 冷启动（加载 connector + 连 HMS）比 Presto 稍慢，首检给足时间
+      start_period: 90s
     mem_limit: 1536m
     stop_grace_period: 30s
     restart: unless-stopped

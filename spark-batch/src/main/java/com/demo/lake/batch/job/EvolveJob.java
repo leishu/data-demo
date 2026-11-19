@@ -14,7 +14,7 @@ import java.util.List;
 /**
  * 表结构演进演示：给 silver 加 channel 列并回填。
  * Iceberg 加列是纯元数据操作，不改写历史数据文件；
- * 老快照仍然只有旧列，Spark/Presto 读新快照时缺值列自动返回 NULL。
+ * 老快照仍然只有旧列，Spark/Trino 读新快照时缺值列自动返回 NULL。
  */
 public class EvolveJob implements LakeJob {
 

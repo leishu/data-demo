@@ -176,7 +176,7 @@ export function watchRun(id, { tail = 80, onStatus, onLog, onEnd, onError } = {}
 
 /**
  * 健康检查：依赖挂掉时后端返回 503，但 body 里仍有组件状态，
- * 所以不能走 request()，否则拿不到 presto 的具体状态。
+ * 所以不能走 request()，否则拿不到 trino 的具体状态。
  */
 export async function fetchHealth() {
   try {

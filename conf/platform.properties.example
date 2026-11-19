@@ -19,7 +19,7 @@ platform.s3.secret-key=password
 platform.s3.path-style-access=true
 
 # format-version=2 + 行级写走 copy-on-write：
-# Presto 0.29x 的 Iceberg connector 读 MoR 表会碰 delete file，CoW 兼容性最好
+# Trino 的 Iceberg connector 读 MoR 表要处理 delete file，CoW 兼容性最好
 platform.format-version=2
 platform.write-mode=copy-on-write
 
@@ -27,6 +27,6 @@ platform.spark.master=local[*]
 platform.spark.shuffle.partitions=8
 platform.spark.timezone=UTC
 
-platform.presto.host=localhost
-platform.presto.port=8080
-platform.presto.user=demo
+platform.trino.host=localhost
+platform.trino.port=8080
+platform.trino.user=demo

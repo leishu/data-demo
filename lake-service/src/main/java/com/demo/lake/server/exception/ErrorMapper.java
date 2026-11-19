@@ -1,8 +1,8 @@
 package com.demo.lake.server.exception;
 
 import com.demo.lake.server.query.InvalidQueryException;
-import com.demo.lake.server.query.PrestoUnavailableException;
 import com.demo.lake.server.query.QueryFailedException;
+import com.demo.lake.server.query.TrinoUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebInputException;
@@ -47,9 +47,9 @@ public final class ErrorMapper {
                     ? null : "sqlState=" + failed.getSqlState() + ", errorCode=" + failed.getErrorCode();
             return new Mapped(HttpStatus.BAD_REQUEST, failed.getMessage(), hint);
         }
-        if (t instanceof PrestoUnavailableException) {
+        if (t instanceof TrinoUnavailableException) {
             return new Mapped(HttpStatus.SERVICE_UNAVAILABLE, t.getMessage(),
-                    "先起 Presto：bin/infra.sh up；或改用 bin/presto-query.sh 的本地模式校验 SQL");
+                    "先起 Trino：bin/infra.sh up trino；或改用 bin/trino-query.sh 的本地模式校验 SQL");
         }
         // ServerWebInputException 是 ResponseStatusException 的子类，必须排在它前面
         if (t instanceof ServerWebInputException) {

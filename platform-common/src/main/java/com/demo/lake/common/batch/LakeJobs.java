@@ -61,7 +61,7 @@ public final class LakeJobs {
                             + "外加 silver/gold 数据抽样"),
             JobMeta.other(VERIFY_SQL, "SQL 校验",
                     "用 Spark 执行 --sql-file 指定的 ad-hoc 脚本（默认 01_daily_revenue.sql）；"
-                            + "跳过 @presto-only 语句，其余做最小方言适配，有失败即作业失败").withCliOnly(),
+                            + "跳过 @trino-only 语句，其余做最小方言适配，有失败即作业失败").withCliOnly(),
             JobMeta.other(ALL, "全链路",
                     "按 init → ingest → transform → maintain → show 顺序跑完整链路"
                             + "（加 --evolve 会插入 evolve），全程复用同一个 SparkSession").withFeatured());

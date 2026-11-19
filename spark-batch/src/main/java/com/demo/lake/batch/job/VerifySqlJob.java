@@ -4,8 +4,8 @@ import com.demo.lake.batch.LakeJob;
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.common.config.PlatformConfig;
-import com.demo.lake.common.sql.PrestoDialect;
 import com.demo.lake.common.sql.SqlScript;
+import com.demo.lake.common.sql.TrinoDialect;
 import org.apache.spark.sql.SparkSession;
 
 import java.nio.file.Files;
@@ -14,15 +14,15 @@ import java.nio.file.Paths;
 import java.util.List;
 
 /**
- * 用 Spark SQL 跑一遍 ad-hoc 脚本，做"没装 Presto 也能验证 SQL"的兜底。
+ * 用 Spark SQL 跑一遍 ad-hoc 脚本，做"没装 Trino 也能验证 SQL"的兜底。
  * <ul>
- *   <li>带 {@code @presto-only} 标记的语句（Presto 专有语法）会被跳过；</li>
+ *   <li>带 {@code @trino-only} 标记的语句（Trino 专有语法）会被跳过；</li>
  *   <li>其余语句做最小方言适配（date_add / INTERVAL 字面量）后交给 Spark 执行。</li>
  * </ul>
  */
 public class VerifySqlJob implements LakeJob {
 
-    private static final String SKIP_MARK = "@presto-only";
+    private static final String SKIP_MARK = "@trino-only";
 
     @Override
     public String name() {
@@ -46,10 +46,10 @@ public class VerifySqlJob implements LakeJob {
         for (String stmt : statements) {
             if (stmt.contains(SKIP_MARK)) {
                 skipped++;
-                System.out.println("  -- 跳过(Presto 专有): " + SqlScript.oneLine(stmt, 90));
+                System.out.println("  -- 跳过(Trino 专有): " + SqlScript.oneLine(stmt, 90));
                 continue;
             }
-            String sql = PrestoDialect.toSpark(stmt);
+            String sql = TrinoDialect.toSpark(stmt);
             System.out.println("  >> " + SqlScript.oneLine(sql, 110));
             try {
                 spark.sql(sql).show(20, false);

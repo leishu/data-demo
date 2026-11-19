@@ -1,6 +1,6 @@
 # lakehouse-demo
 
-Spark 做批处理、Iceberg 做存储与表格式层、Presto 做即席查询的湖仓脚手架，外面套一个 Spring Boot 4
+Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的湖仓脚手架，外面套一个 Spring Boot 4
 服务层做查询接口与作业编排。三条命令就能在本地跑通，不装 Hadoop、不装 Docker 也行；要接集群时只改 3 个配置项。
 
 ```
@@ -17,7 +17,7 @@ Spark 做批处理、Iceberg 做存储与表格式层、Presto 做即席查询�
 └──────────────────────────────────────────────────────────┘
         ▲ 写入                                 ▲ 即席查询
         │                                      │
-   Spark 3.5                              Presto 0.290 (JDBC)
+   Spark 3.5                              Trino 476 (JDBC)
 ```
 
 ## 版本矩阵
@@ -27,7 +27,7 @@ Spark 做批处理、Iceberg 做存储与表格式层、Presto 做即席查询�
 | JDK | 11（批处理）/ 21（服务层） | Spark 3.5 官方支持到 17，所以批处理模块产出 Java 11 字节码；`lake-service` 用 21 |
 | Spark | 3.5.1 (Scala 2.12) | 批处理 |
 | Iceberg | 1.5.2 | `iceberg-spark-runtime-3.5_2.12` |
-| Presto | 0.290 | 服务端镜像 + `presto-jdbc` 客户端 |
+| Trino | 476 | 服务端镜像 `trinodb/trino:476` + `trino-jdbc` 客户端 |
 | Spring Boot | 4.1.2 | WebFlux + Actuator，Spring Framework 7 / Reactor Netty / Jakarta EE 11 |
 | 控制台 | Vue 3.5 + vue-router 4 + Vite 7 | 独立工程 `lake-ui/`，构建产物进 `static/ui/` |
 | 日志 | log4j2（批处理）/ logback（服务层） | Spark 发行版绑死 log4j2；Web 服务用 Boot 默认的 logback |
@@ -48,11 +48,11 @@ lakehouse-demo/
 │       ├── sql/SqlScript.java            读脚本、按分号切分
 │       └── cli/Args.java                 极简参数解析
 ├── spark-batch/              批处理：init / ingest / transform / evolve / maintain / show / verify-sql
-├── presto-adhoc/             即席查询 CLI：JDBC 客户端 + 表格化输出 + QueryStats
+├── trino-adhoc/              即席查询 CLI：JDBC 客户端 + 表格化输出 + QueryStats
 ├── lake-service/             Spring Boot 4 服务层：查询/作业 REST + SSE 流 + 控制台页面
 ├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 配置
-├── sql/adhoc/                可以直接丢给 Presto 的查询脚本
-├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Presto
+├── sql/adhoc/                可以直接丢给 Trino 的查询脚本
+├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Trino
 ├── bin/                      便捷脚本
 └── conf/platform.properties.example   集群模式配置模板
 ```
@@ -70,7 +70,7 @@ bin/dev-batch.sh --job all
 # 3. 想连 schema 演进一起看（加 channel 列 + 回填 + 时间旅行前的快照对比）
 bin/dev-batch.sh --job all --evolve
 
-# 4. 没有 Presto 也能校验 SQL（用 Spark 执行同一份脚本）
+# 4. 没有 Trino 也能校验 SQL（用 Spark 执行同一份脚本）
 bin/dev-batch.sh --job verify-sql --sql-file sql/adhoc/01_daily_revenue.sql
 
 # 5. 起服务层（查询 REST + 作业编排 + 控制台）
@@ -107,7 +107,7 @@ bin/dev-batch.sh --job show
 
 ## 服务层（Spring Boot 4 + JDK 21）
 
-`lake-service` 把「查」和「跑」包装成 HTTP：查询走 Presto（Hikari 连接池），批作业走独立进程。
+`lake-service` 把「查」和「跑」包装成 HTTP：查询走 Trino（Hikari 连接池），批作业走独立进程。
 
 ```bash
 export JAVA21_HOME=~/soft/jdk-21.0.12      # 也可以不设，脚本会自动找 ~/soft/jdk-21*
@@ -120,27 +120,27 @@ open http://localhost:8088/                # 内置查询控制台
 |---|---|
 | `POST /api/query` | `{"sql":"select ...","maxRows":100}` → 列定义 + 行 + 耗时 + `truncated` |
 | `POST /api/query/stream` | 同上，但走 SSE：`meta` → `rows`… → `done`，出错则发 `error` |
-| `GET /api/tables` | 当前库的表清单 + 字段清单（读 Presto 的 `information_schema`，字段 `comment` 即 DDL 里的中文名） |
+| `GET /api/tables` | 当前库的表清单 + 字段清单（读 Trino 的 `information_schema`，字段 `comment` 即 DDL 里的中文名） |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单 |
 | `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部；列表 = 本进程内存记录 ∪ `ops.batch_runs` 历史（按 id 合并，内存优先），历史读不到时降级返回 `history.status` |
 | `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
-| `GET /actuator/health` | 带 `presto` 组件的健康检查 |
+| `GET /actuator/health` | 带 `trino` 组件的健康检查 |
 
 几个刻意的设计：
 
 - **SQL 默认只读**。`SqlGuard` 只放行 `select/with/show/describe/explain`，且必须单条语句；
   要放开把 `lake.query.allow-writes` 置 true。给外部一个「能跑任意 SQL」的接口太危险。
-- **Presto 挂了服务照常启动**（连接池 `initializationFailTimeout=-1`），查询返回 **503** 并给出
-  「先起 Presto」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
+- **Trino 挂了服务照常启动**（连接池 `initializationFailTimeout=-1`），查询返回 **503** 并给出
+  「先起 Trino」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
 - **批作业用子进程**，不在 Web 容器里养 SparkSession：内存、线程、崩溃隔离都更省心，
   换成 `spark-submit --master yarn ...` 也只改 `lake.batch.command-template`。
 - **服务层不侵入 Spark 代码**。Spring 只在 driver/服务侧；批处理 jar 要进 `spark-submit`、
   要能序列化到 executor，塞一个 `ApplicationContext` 只会让集群问题更难查。
 - **阻塞 IO 一律 offload**。WebFlux 的请求线程就是 Netty 事件循环，Hikari 取连接、`rs.next()`、
   等子进程都得 `subscribeOn(blocking)` 到虚拟线程上，否则一个慢查询就能让整个服务不响应。
-  JDBC 本身没变成响应式（Presto 没有 r2dbc 驱动），响应式只加在 Web 层与流控上。
+  JDBC 本身没变成响应式（Trino 没有 r2dbc 驱动），响应式只加在 Web 层与流控上。
 - **长任务用 SSE，不用轮询**。查询结果和作业跟踪都是一条长连接推到底，前端不再定时打接口；
   客户端断开时服务端 `stmt.cancel()` / 停掉日志游标，不白算也不空转。
 - **运行历史落湖表，但不依赖它**。作业结束时 BatchApp 往 `ops.batch_runs` 写一行终态
@@ -158,12 +158,12 @@ open http://localhost:8088/                # 内置查询控制台
 | 查询台 `#/query` | SQL 编辑器（Ctrl/⌘+Enter 执行）、结果边到边渲染（SSE）、表格（类型标注、数值右对齐、NULL 置灰）、耗时/截断提示、QueryStats、复制 TSV |
 | 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行，表头带字段中文名），一键「在查询台打开」 |
 | 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时用 SSE 实时跟） |
-| 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Presto 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
+| 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Trino 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
 
 ```bash
 bin/build-ui.sh                    # 首次会 npm install，然后 vite build
 npm --prefix lake-ui run dev       # 开发模式 5173，/api 与 /actuator 代理到 8088
-npm --prefix lake-ui run mock      # 没有 Presto / Docker 时：4173 起个假后端，纯验前端
+npm --prefix lake-ui run mock      # 没有 Trino / Docker 时：4173 起个假后端，纯验前端
 ```
 
 `bin/build.sh` 会先构建前端再打包；只编后端时用 `SKIP_UI=1 bin/build.sh`（认不到 node 也会自动跳过）。
@@ -179,26 +179,26 @@ npm --prefix lake-ui run mock      # 没有 Presto / Docker 时：4173 起个假
 - **深链可分享**：`#/query?sql=select...&run=1` 打开即执行，`#/jobs?run=<runId>` 直达某次作业的日志。
 - SQL 存 localStorage，结果只在内存里，不落盘。
 
-## 接集群（HMS + MinIO + Presto）
+## 接集群（HMS + MinIO + Trino）
 
 ```bash
 # 0. 首次：装 Docker Engine + Compose v2（含镜像加速，约 3 分钟）
 bash bin/install-docker.sh        # 装完 newgrp docker 或重新登录
 
-# 1. 起基础设施（Postgres 存 HMS 元数据，MinIO 存数据；Presto 按需另行拉起）
+# 1. 起基础设施（Postgres 存 HMS 元数据，MinIO 存数据；Trino 按需另行拉起）
 bin/infra.sh up                   # 起 Postgres + MinIO + HMS；首次构建 HMS + 拉镜像，约 5-10 分钟，常驻约 0.75 GB
-bin/infra.sh doctor               # 端口 / HTTP 自检（Presto 未起时自动跳过相关项）
+bin/infra.sh doctor               # 端口 / HTTP 自检（Trino 未起时自动跳过相关项）
 
 # 2. 用集群配置跑批（Hive catalog + s3a 仓库）
 cp conf/platform.properties.example conf/platform.properties
 bin/dev-batch.sh --job all       # 脚本看 warehouse 是 s3a:// 就自动带 -Ps3（iceberg-aws-bundle + hadoop-aws）
                                  # 想指定别的 profile 时用 MVN_PROFILE=xxx 覆盖，脚本就不再自动判断
 
-# 3. Presto 即席查询（默认不起 Presto，常驻约 0.8 GB，用完 bin/infra.sh stop presto 回收）
-bin/infra.sh up presto
-bin/presto-query.sh --list
-bin/presto-query.sh --sql-file sql/adhoc/01_daily_revenue.sql
-bin/presto-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
+# 3. Trino 即席查询（默认不起 Trino，常驻约 0.8 GB，用完 bin/infra.sh stop trino 回收）
+bin/infra.sh up trino
+bin/trino-query.sh --list
+bin/trino-query.sh --sql-file sql/adhoc/01_daily_revenue.sql
+bin/trino-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
 ```
 
 > 安装、镜像加速、端口、扩展新依赖（Kafka/ClickHouse/Redis……）和排错，全部见
@@ -249,7 +249,7 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 | `evolve` | 加 `channel` 列并回填 | 纯元数据变更 + CoW 重写，用来演示 schema 演进 |
 | `maintain` | `rewrite_data_files` / `rewrite_manifests` / `expire_snapshots` | 建议按天调度 |
 | `show` | 快照、历史、分区布局、数据抽样 | 只读巡检 |
-| `verify-sql` | 用 Spark 执行 ad-hoc 脚本 | 跳过 `@presto-only` 语句，其余做最小方言适配 |
+| `verify-sql` | 用 Spark 执行 ad-hoc 脚本 | 跳过 `@trino-only` 语句，其余做最小方言适配 |
 
 每个 job 跑完（无论成功失败）都会往 `ops.batch_runs` 落一行终态：`run_id / job / status / 耗时 / 日志路径`。
 `run_id` 由 lake-service 生成并通过 `BATCH_RUN_ID` 环境变量注入，所以服务重启后从表里读回的记录
@@ -277,9 +277,10 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 ## 几个关键设计决定
 
 **1. 行级写一律 copy-on-write，不用 merge-on-read。**
-Presto 0.29x 的 Iceberg connector 读 MoR 表要处理 delete file，跨引擎容易踩坑。
-CoW 的代价是写放大，换来的是「Spark 写、Presto 读」零兼容问题。如果后续换成 Trino / Presto 新版，
-或者干脆只有 Spark 读，把 `platform.write-mode=merge-on-read` 打开即可。
+读取侧（Trino）处理 MoR 的 delete file 跨引擎容易踩坑：Spark 写出来的删除文件，
+Trino 的 Iceberg connector 必须按 position/equality delete 正确合并，版本不齐时结果会静默出错。
+CoW 的代价是写放大，换来的是「Spark 写、Trino 读」零兼容问题。如果以后只让 Spark 读，
+或者两端版本都验证过，把 `platform.write-mode=merge-on-read` 打开即可。
 
 **2. ODS/DWD 用 `days(event_time)` 隐藏分区，不用入湖日期。**
 上游落地文件按 `dt=YYYY-MM-DD` 分目录，但写入时 Iceberg 按 `event_time` 自己路由——
@@ -291,7 +292,7 @@ CoW 的代价是写放大，换来的是「Spark 写、Presto 读」零兼容问
 
 **4. 快照和文件要定期治理。**
 `rewrite_data_files` 合并小文件、`rewrite_manifests` 控制元数据规模、`expire_snapshots` 清历史。
-不管的话元数据目录会越滚越大，Presto 查询规划也会变慢。
+不管的话元数据目录会越滚越大，Trino 查询规划也会变慢。
 
 **5. 统一 UTC。**
 `spark.sql.session.timeZone=UTC`，避免「按天汇总」在不同时区下结果对不上。
@@ -305,11 +306,11 @@ CoW 的代价是写放大，换来的是「Spark 写、Presto 读」零兼容问
   需要显式引入 `scala-collection-compat`（pom 里已加，`bin/submit-batch.sh` 的 `--packages` 也带了）。
 - **Hadoop catalog 不支持 namespace 元数据**：`CREATE DATABASE ... COMMENT 'xxx'` 会报
   `metadata is not supported`，所以建库 DDL 故意不带 COMMENT。
-- **Presto 查元数据表**：`silver_orders$snapshots` 里的 `$` 要加双引号：
+- **Trino 查元数据表**：`silver_orders$snapshots` 里的 `$` 要加双引号：
   `FROM iceberg.lake."silver_orders$snapshots"`。
-- **Presto 脚本想在 Spark 上校验**：`date_add('day', -6, current_date)` 这类 Presto 语法 Spark 不认，
-  `PrestoDialect` 只做最小替换（`date_add` / 带引号的 `INTERVAL` 字面量），
-  带 `@presto-only` 标记的语句（`$snapshots` 元数据表、`FOR VERSION AS OF`）直接跳过——
+- **Trino 脚本想在 Spark 上校验**：`date_add('day', -6, current_date)` 这类 Trino 语法 Spark 不认，
+  `TrinoDialect` 只做最小替换（`date_add` / 带引号的 `INTERVAL` 字面量），
+  带 `@trino-only` 标记的语句（`$snapshots` 元数据表、`FOR VERSION AS OF`）直接跳过——
   别指望它当通用方言翻译器用。
 - **`mvn exec:java` 只能对单个模块跑**：脚本里用 `package exec:java` + `-Dexec.mainClass`，
   父模块靠 `exec-maven-plugin` 的 `skip=true` 跳过。
@@ -317,7 +318,7 @@ CoW 的代价是写放大，换来的是「Spark 写、Presto 读」零兼容问
 ## 生产化 TODO
 
 - 调度：把 `ingest/transform/maintain` 拆成 Airflow / DolphinScheduler 的日任务，`maintain` 单独跑。
-- 权限：HMS 接 Ranger / Presto 接 LDAP，Iceberg 表级授权。
+- 权限：HMS 接 Ranger / Trino 接 LDAP + 系统访问控制，Iceberg 表级授权。
 - 并发写：Spark 与 Flink 同时写同一张表时，确认 catalog 支持乐观锁（HMS + Iceberg 1.5 已支持）。
 - 监控：把 `$files`、`$snapshots` 的指标打到 Prometheus（文件数、平均文件大小、快照数量）。
 - 存储：生产用对象存储时开 `write.metadata.delete-after-commit.enabled`（已开）并配合生命周期规则。

@@ -1,4 +1,4 @@
-package com.demo.lake.presto;
+package com.demo.lake.trino;
 
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.common.config.PlatformConfig;
@@ -20,15 +20,15 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Presto 即席查询 CLI。
+ * Trino 即席查询 CLI。
  *
  * <pre>
- * mvn -pl presto-adhoc exec:java -Dexec.args="--sql-file sql/adhoc/01_daily_revenue.sql"
- * mvn -pl presto-adhoc exec:java -Dexec.args="--sql \"select count(*) from iceberg.lake.silver_orders\""
- * mvn -pl presto-adhoc exec:java -Dexec.args="--list"
+ * mvn -pl trino-adhoc exec:java -Dexec.args="--sql-file sql/adhoc/01_daily_revenue.sql"
+ * mvn -pl trino-adhoc exec:java -Dexec.args="--sql \"select count(*) from iceberg.lake.silver_orders\""
+ * mvn -pl trino-adhoc exec:java -Dexec.args="--list"
  * </pre>
  */
-public final class PrestoAdhocRunner {
+public final class TrinoAdhocRunner {
 
     private static final Path SCRIPT_DIR = Paths.get("sql", "adhoc");
     private static final Pattern VAR = Pattern.compile("\\$\\{([a-zA-Z0-9_.-]+)}");
@@ -80,10 +80,10 @@ public final class PrestoAdhocRunner {
         int timeout = args.getInt("timeout", 300);
 
         PlatformConfig cfg = PlatformConfig.load(args.has("conf") ? Paths.get(args.get("conf")) : null);
-        String url = args.get("url", cfg.prestoJdbcUrl());
-        String user = args.get("user", cfg.prestoUser());
+        String url = args.get("url", cfg.trinoJdbcUrl());
+        String user = args.get("user", cfg.trinoUser());
 
-        System.out.println("Presto: " + url + "  (user=" + user + ", script=" + title
+        System.out.println("Trino: " + url + "  (user=" + user + ", script=" + title
                 + ", statements=" + statements.size() + ")");
 
         List<String> runnable = new ArrayList<>();
@@ -105,14 +105,14 @@ public final class PrestoAdhocRunner {
             return;
         }
 
-        try (PrestoClient client = PrestoClient.connect(url, user, cfg.prestoSource(), timeout)) {
+        try (TrinoClient client = TrinoClient.connect(url, user, cfg.trinoSource(), timeout)) {
             int index = 0;
             for (String sql : runnable) {
                 index++;
                 System.out.println("\n--- [" + index + "/" + runnable.size() + "] "
                         + SqlScript.oneLine(sql, 120));
                 try {
-                    PrestoClient.QueryResult result = client.execute(sql, limit);
+                    TrinoClient.QueryResult result = client.execute(sql, limit);
                     System.out.print(TableFormatter.render(result.headers(), result.rows()));
                     System.out.printf("%d 行 · %d ms%s%n", result.rows().size(), result.elapsedMs(),
                             result.truncated() ? " · 已截断到 limit=" + limit : "");
@@ -127,12 +127,12 @@ public final class PrestoAdhocRunner {
                 }
             }
         } catch (SQLException e) {
-            System.err.println("无法连接 Presto: " + url);
+            System.err.println("无法连接 Trino: " + url);
             System.err.println("  原因: " + e.getMessage());
             System.err.println();
             System.err.println("排查建议:");
-            System.err.println("  1) 启动 Presto + HMS + MinIO:  docker compose -f infra/docker-compose.yml up -d");
-            System.err.println("  2) 或先不装 Presto，用 Spark 校验同一份 SQL:");
+            System.err.println("  1) 启动 Trino + HMS + MinIO:  bin/infra.sh up trino");
+            System.err.println("  2) 或先不装 Trino，用 Spark 校验同一份 SQL:");
             System.err.println("     mvn -pl spark-batch -am exec:java "
                     + "-Dexec.args=\"--job verify-sql --sql-file " + (file == null ? "sql/adhoc/01_daily_revenue.sql" : file) + "\"");
             System.exit(3);
@@ -199,23 +199,23 @@ public final class PrestoAdhocRunner {
     }
 
     private static void printUsage() {
-        System.out.println("Presto 即席查询 CLI");
+        System.out.println("Trino 即席查询 CLI");
         System.out.println();
         System.out.println("用法:");
         System.out.println("  --sql-file <path>    执行 SQL 文件（可含多条语句）");
         System.out.println("  --sql \"<sql>\"         直接执行一条 SQL");
         System.out.println("  --list               列出 sql/adhoc 下的脚本");
-        System.out.println("  --url <jdbc url>     默认取自配置: jdbc:presto://host:port/catalog/schema");
+        System.out.println("  --url <jdbc url>     默认取自配置: jdbc:trino://host:port/catalog/schema");
         System.out.println("  --user <user>        默认 demo");
         System.out.println("  --limit <n>          最多显示行数，默认 200");
         System.out.println("  --timeout <sec>      查询超时，默认 300");
         System.out.println("  --params k1=v1,k2=v2 替换 SQL 里的 ${k1}");
         System.out.println("  --explain            自动加 EXPLAIN 前缀");
         System.out.println("  --print-only         只打印要执行的语句，不连服务");
-        System.out.println("  --stats              打印 Presto QueryStats");
+        System.out.println("  --stats              打印 Trino QueryStats");
         System.out.println("  --fail-fast          某条语句失败即退出");
     }
 
-    private PrestoAdhocRunner() {
+    private TrinoAdhocRunner() {
     }
 }

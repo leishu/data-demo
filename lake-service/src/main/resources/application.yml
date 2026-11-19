@@ -27,7 +27,7 @@ management:
 info:
   app:
     name: lake-service
-    stack: JDK 21 + Spring Boot 4 (WebFlux/Netty) + logback + Presto JDBC + HikariCP + SSE
+    stack: JDK 21 + Spring Boot 4 (WebFlux/Netty) + logback + Trino JDBC + HikariCP + SSE
 
 lake:
   # 与 Spark / CLI 共用 platform-common 的配置来源，这里只指路

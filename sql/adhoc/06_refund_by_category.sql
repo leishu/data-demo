@@ -1,5 +1,5 @@
--- 品类退款率（近 7 天）—— 明细层直接扫，验证 Presto 读 DWD 明细的即席能力
--- 这条经 PrestoDialect 把 date_add('day', -7, ...) 改写成 date_sub(...) 后，Spark 也能校验
+-- 品类退款率（近 7 天）—— 明细层直接扫，验证 Trino 读 DWD 明细的即席能力
+-- 这条经 TrinoDialect 把 date_add('day', -7, ...) 改写成 date_sub(...) 后，Spark 也能校验
 SELECT category,
        count(*)                                              AS orders,
        sum(CASE WHEN is_refund THEN 1 ELSE 0 END)            AS refunds,
