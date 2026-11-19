@@ -7,17 +7,7 @@ import { api } from '@/api'
 import { loadConfig, store } from '@/store'
 import { fmtDuration, fmtJobStatus, fmtTime, statusTone, tagType } from '@/utils'
 import ErrorNotice from '@/components/ErrorNotice.vue'
-
-const JOB_META = {
-  init: { title: '建库建表', desc: 'Iceberg DDL：库 + ODS/DWD/ADS 三张表与表属性' },
-  ingest: { title: '数据入湖', desc: '生成上游落地文件并写入 bronze（含 3% 重复 + 10% 迟到）' },
-  transform: { title: '加工汇总', desc: 'MERGE 去重进 silver，再重算 gold 汇总' },
-  evolve: { title: 'Schema 演进', desc: '新增 channel 列并回填，演示 ADD COLUMN 与元数据升级' },
-  maintain: { title: '表维护', desc: 'rewrite_data_files 合并小文件 + expire_snapshots' },
-  show: { title: '数据概览', desc: '打印三层行数与分区分布' },
-  'verify-sql': { title: 'SQL 校验', desc: '用 Spark 执行 Presto 脚本，需要 --sql-file 参数', cliOnly: true },
-  all: { title: '全链路', desc: 'init → ingest → transform → maintain → show', featured: true }
-}
+import JobCard from '@/components/JobCard.vue'
 
 const route = useRoute()
 
@@ -34,9 +24,10 @@ const logWrap = ref(null)
 let listTimer = null
 let pollTimer = null
 
-const allowedJobs = computed(() => (store.config?.batch?.allowedJobs || []).filter((j) => JOB_META[j] || j))
-const pipelineJobs = computed(() => allowedJobs.value.filter((j) => !['evolve', 'verify-sql', 'all'].includes(j)))
-const otherJobs = computed(() => allowedJobs.value.filter((j) => ['evolve', 'verify-sql', 'all'].includes(j)))
+// 卡片内容全部由服务端下发（源头是 platform-common 的 LakeJobs.METAS），这里只分组
+const jobCards = computed(() => store.config?.batch?.jobs || [])
+const pipelineJobs = computed(() => jobCards.value.filter((j) => j.group !== 'other'))
+const otherJobs = computed(() => jobCards.value.filter((j) => j.group === 'other'))
 const batchEnabled = computed(() => store.config?.batch?.enabled !== false)
 const commandTemplate = computed(() => store.config?.batch?.commandTemplate || '—')
 const logText = computed(() => (logTail.value.length ? logTail.value.join('\n') : '暂无日志'))
@@ -160,58 +151,44 @@ onUnmounted(() => {
       <div class="card-head">
         <div class="head-left">
           <span class="card-title">触发作业</span>
-          <el-tag size="small" effect="light" type="info">{{ allowedJobs.length }} 个白名单</el-tag>
+          <el-tag size="small" effect="light" type="info">{{ jobCards.length }} 个作业</el-tag>
         </div>
         <span class="faint note">命令模板 <code class="mono">{{ commandTemplate }}</code></span>
       </div>
     </template>
 
-    <div class="job-grid">
-      <div v-for="job in pipelineJobs" :key="job" class="job-card">
-        <div class="job-head">
-          <span class="job-name mono">{{ job }}</span>
-          <span class="job-title">{{ JOB_META[job]?.title || job }}</span>
-        </div>
-        <p class="job-desc">{{ JOB_META[job]?.desc }}</p>
-        <el-button
-          size="small"
-          class="block-btn"
-          :loading="submitting === job"
+    <el-empty
+      v-if="!jobCards.length"
+      description="白名单里没有可用的作业，检查 lake.batch.allowed-jobs"
+    />
+
+    <template v-else>
+      <div class="job-grid">
+        <JobCard
+          v-for="job in pipelineJobs"
+          :key="job.name"
+          :job="job"
+          :submitting="submitting"
           :disabled="!batchEnabled"
-          @click="submit(job)"
-        >
-          {{ submitting === job ? '提交中' : '运行' }}
-        </el-button>
+          @run="submit"
+        />
       </div>
-    </div>
 
-    <div class="divider"></div>
+      <template v-if="otherJobs.length">
+        <div class="divider"></div>
 
-    <div class="job-grid">
-      <div
-        v-for="job in otherJobs"
-        :key="job"
-        class="job-card"
-        :class="{ featured: JOB_META[job]?.featured }"
-      >
-        <div class="job-head">
-          <span class="job-name mono">{{ job }}</span>
-          <span class="job-title">{{ JOB_META[job]?.title || job }}</span>
+        <div class="job-grid">
+          <JobCard
+            v-for="job in otherJobs"
+            :key="job.name"
+            :job="job"
+            :submitting="submitting"
+            :disabled="!batchEnabled"
+            @run="submit"
+          />
         </div>
-        <p class="job-desc">{{ JOB_META[job]?.desc }}</p>
-        <el-button
-          size="small"
-          class="block-btn"
-          :type="JOB_META[job]?.featured ? 'primary' : 'default'"
-          :loading="submitting === job"
-          :disabled="!batchEnabled || JOB_META[job]?.cliOnly"
-          :title="JOB_META[job]?.cliOnly ? '需要 --sql-file 参数，请在命令行执行' : ''"
-          @click="submit(job)"
-        >
-          {{ JOB_META[job]?.cliOnly ? '仅命令行' : submitting === job ? '提交中' : '运行' }}
-        </el-button>
-      </div>
-    </div>
+      </template>
+    </template>
   </el-card>
 
   <ErrorNotice v-if="runError" :error="runError" title="作业提交失败" @retry="loadRuns" />
@@ -379,54 +356,10 @@ onUnmounted(() => {
   word-break: break-all;
 }
 
-.block-btn {
-  width: 100%;
-}
-
 .job-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
   gap: 10px;
-}
-
-.job-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-2);
-  padding: 11px 12px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.job-card.featured {
-  border-color: rgba(90, 162, 240, 0.35);
-  background: rgba(90, 162, 240, 0.07);
-}
-
-.job-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.job-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #cfe3fb;
-}
-
-.job-title {
-  font-size: 11.5px;
-  color: var(--faint);
-}
-
-.job-desc {
-  margin: 0 0 4px;
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--muted);
-  min-height: 36px;
 }
 
 .divider {

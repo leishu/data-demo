@@ -1,5 +1,6 @@
 package com.demo.lake.server.config;
 
+import com.demo.lake.common.batch.LakeJobs;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -54,8 +55,10 @@ public class LakeProperties {
         private String logDir = "logs/batch";
         /** 单次作业超时（秒），超时后 destroy 子进程 */
         private int timeoutSeconds = 1800;
-        /** 允许触发的作业名白名单：命令是拼接出来的，必须卡死来源 */
-        private List<String> allowedJobs = List.of(
-                "init", "ingest", "transform", "evolve", "maintain", "show", "verify-sql", "all");
+        /**
+         * 允许触发的作业名白名单：命令是拼接出来的，必须卡死来源。
+         * 默认值取 common 的作业名表，新增作业时不用回来再抄一遍。
+         */
+        private List<String> allowedJobs = LakeJobs.CHOICES;
     }
 }

@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
@@ -60,7 +61,7 @@ class BatchJobServiceTest {
     @Test
     void 成功作业记录退出码与耗时() throws Exception {
         BatchJobService service = newService(props("/bin/sh -c \"echo done; exit 0\""));
-        BatchRun submitted = service.submit("init");
+        BatchRun submitted = service.submit(LakeJobs.INIT);
         assertEquals(BatchRun.RUNNING, submitted.status());
 
         BatchRun done = await(service, submitted.id());
@@ -73,7 +74,7 @@ class BatchJobServiceTest {
     @Test
     void 非零退出码标记失败() throws Exception {
         BatchJobService service = newService(props("/bin/sh -c \"exit 3\""));
-        BatchRun done = await(service, service.submit("ingest").id());
+        BatchRun done = await(service, service.submit(LakeJobs.INGEST).id());
         assertEquals(BatchRun.FAILED, done.status());
         assertEquals(3, done.exitCode());
         assertTrue(done.message().contains("3"));
@@ -92,13 +93,13 @@ class BatchJobServiceTest {
         LakeProperties p = props("/bin/echo {job}");
         p.getBatch().setEnabled(false);
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
-                () -> newService(p).submit("show"));
+                () -> newService(p).submit(LakeJobs.SHOW));
         assertEquals(403, e.getStatusCode().value());
     }
 
     @Test
     void 列表合并湖表历史且内存优先() throws Exception {
-        BatchRun persisted = new BatchRun("run-1", "init", "--job init", BatchRun.SUCCEEDED, 0,
+        BatchRun persisted = new BatchRun("run-1", LakeJobs.INIT, "--job " + LakeJobs.INIT, BatchRun.SUCCEEDED, 0,
                 Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-11-01T00:00:05Z"),
                 5000L, null, "历史");
         BatchHistoryService history = new BatchHistoryService(null, null) {
@@ -114,7 +115,7 @@ class BatchJobServiceTest {
             }
         };
         BatchJobService service = new BatchJobService(props("/bin/sh -c \"echo done; exit 0\""), history);
-        BatchRun done = await(service, service.submit("init").id());
+        BatchRun done = await(service, service.submit(LakeJobs.INIT).id());
 
         assertEquals(2, service.list(20).runs().size());
         assertEquals(done, service.get(done.id()));

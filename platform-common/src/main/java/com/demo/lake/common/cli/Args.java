@@ -1,5 +1,7 @@
 package com.demo.lake.common.cli;
 
+import com.demo.lake.common.batch.LakeJobs;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -61,6 +63,6 @@ public final class Args {
     }
 
     public String job() {
-        return get("job", "all").toLowerCase(Locale.ROOT);
+        return get("job", LakeJobs.ALL).toLowerCase(Locale.ROOT);
     }
 }

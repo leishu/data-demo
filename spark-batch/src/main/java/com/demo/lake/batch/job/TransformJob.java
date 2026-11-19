@@ -1,6 +1,7 @@
 package com.demo.lake.batch.job;
 
 import com.demo.lake.batch.LakeJob;
+import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.catalog.TransformSql;
@@ -18,7 +19,7 @@ public class TransformJob implements LakeJob {
 
     @Override
     public String name() {
-        return "transform";
+        return LakeJobs.TRANSFORM;
     }
 
     @Override

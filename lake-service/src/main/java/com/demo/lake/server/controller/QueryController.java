@@ -1,6 +1,8 @@
 package com.demo.lake.server.controller;
 
+import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.config.PlatformConfig;
+import com.demo.lake.server.batch.model.JobView;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.exception.ErrorMapper;
 import com.demo.lake.server.query.model.QueryEvent;
@@ -87,10 +89,13 @@ public class QueryController {
                 "timeoutSeconds", props.getQuery().getTimeoutSeconds(),
                 "poolSize", props.getQuery().getPoolSize(),
                 "allowWrites", props.getQuery().isAllowWrites()));
-        out.put("batch", Map.of(
-                "enabled", props.getBatch().isEnabled(),
-                "commandTemplate", props.getBatch().getCommandTemplate(),
-                "allowedJobs", props.getBatch().getAllowedJobs()));
+        Map<String, Object> batch = new LinkedHashMap<>();
+        batch.put("enabled", props.getBatch().isEnabled());
+        batch.put("commandTemplate", props.getBatch().getCommandTemplate());
+        batch.put("allowedJobs", props.getBatch().getAllowedJobs());
+        // 页面卡片：白名单 ∩ LakeJobs.METAS。标题/描述只在 common 维护一份，前端纯渲染
+        batch.put("jobs", JobView.of(LakeJobs.visible(props.getBatch().getAllowedJobs())));
+        out.put("batch", batch);
         return out;
     }
 }

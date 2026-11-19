@@ -1,6 +1,7 @@
 package com.demo.lake.batch.job;
 
 import com.demo.lake.batch.LakeJob;
+import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.common.sql.PrestoDialect;
@@ -25,7 +26,7 @@ public class VerifySqlJob implements LakeJob {
 
     @Override
     public String name() {
-        return "verify-sql";
+        return LakeJobs.VERIFY_SQL;
     }
 
     @Override

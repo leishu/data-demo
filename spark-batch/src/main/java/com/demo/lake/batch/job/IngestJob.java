@@ -1,5 +1,6 @@
 package com.demo.lake.batch.job;
 
+import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.batch.LakeJob;
 import com.demo.lake.common.catalog.TableRef;
@@ -33,7 +34,7 @@ public class IngestJob implements LakeJob {
 
     @Override
     public String name() {
-        return "ingest";
+        return LakeJobs.INGEST;
     }
 
     @Override

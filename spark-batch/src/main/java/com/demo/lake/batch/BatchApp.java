@@ -8,6 +8,7 @@ import com.demo.lake.batch.job.ShowJob;
 import com.demo.lake.batch.job.TransformJob;
 import com.demo.lake.batch.job.VerifySqlJob;
 import com.demo.lake.common.batch.BatchRunStatus;
+import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.common.config.PlatformConfig;
 import org.apache.spark.sql.SparkSession;
@@ -130,22 +131,22 @@ public final class BatchApp {
 
     private static List<String> resolvePlan(Args args) {
         String job = args.job();
-        if ("all".equals(job)) {
-            List<String> plan = new ArrayList<>(Arrays.asList("init", "ingest", "transform"));
+        if (LakeJobs.ALL.equals(job)) {
+            List<String> plan = new ArrayList<>(Arrays.asList(LakeJobs.INIT, LakeJobs.INGEST, LakeJobs.TRANSFORM));
             if (args.flag("evolve")) {
-                plan.add("evolve");
+                plan.add(LakeJobs.EVOLVE);
             }
-            plan.addAll(Arrays.asList("maintain", "show"));
+            plan.addAll(Arrays.asList(LakeJobs.MAINTAIN, LakeJobs.SHOW));
             return plan;
         }
         if (!JOBS.containsKey(job)) {
-            throw new IllegalArgumentException("未知 job: " + job + "，可选: " + JOBS.keySet() + " / all");
+            throw new IllegalArgumentException("未知 job: " + job + "，可选: " + JOBS.keySet() + " / " + LakeJobs.ALL);
         }
         return List.of(job);
     }
 
     private static void printUsage() {
-        System.out.println("用法: --job <" + String.join("|", JOBS.keySet()) + "|all> [选项]");
+        System.out.println("用法: --job <" + String.join("|", JOBS.keySet()) + "|" + LakeJobs.ALL + "> [选项]");
         System.out.println();
         System.out.println("通用选项:");
         System.out.println("  --conf <file>         指定配置文件（默认 conf/platform.properties，存在才生效）");

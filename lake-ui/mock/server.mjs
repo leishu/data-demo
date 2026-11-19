@@ -58,6 +58,21 @@ const ORDERS = [
   ['O-20261116-88045', 'M049', 'GROCERY', '142.30', 'REFUNDED', '2026-11-16 18:47:10']
 ]
 
+/**
+ * 镜像 platform-common 的 LakeJobs.METAS：mock 不进 Java 构建，名字和文案只能靠这几行对齐。
+ * group=pipeline 进主链路那组，other 进下面那组；cliOnly 的按钮置灰。
+ */
+const JOBS = [
+  { name: 'init', title: '建库建表', desc: 'Iceberg DDL：库 + ODS/DWD/ADS 三张表与表属性', group: 'pipeline' },
+  { name: 'ingest', title: '数据入湖', desc: '生成上游落地文件并写入 bronze（含 3% 重复 + 10% 迟到）', group: 'pipeline' },
+  { name: 'transform', title: '加工汇总', desc: 'MERGE 去重进 silver，再重算 gold 汇总', group: 'pipeline' },
+  { name: 'evolve', title: 'Schema 演进', desc: '新增 channel 列并回填，演示 ADD COLUMN 与元数据升级', group: 'other' },
+  { name: 'maintain', title: '表维护', desc: 'rewrite_data_files 合并小文件 + expire_snapshots', group: 'pipeline' },
+  { name: 'show', title: '数据概览', desc: '打印三层行数与分区分布', group: 'pipeline' },
+  { name: 'verify-sql', title: 'SQL 校验', desc: '用 Spark 执行 Presto 脚本，需要 --sql-file 参数', group: 'other', cliOnly: true },
+  { name: 'all', title: '全链路', desc: 'init → ingest → transform → maintain → show', group: 'other', featured: true }
+].map((j) => ({ cliOnly: false, featured: false, ...j }))
+
 const config = {
   // 与 PlatformConfig.describe() 的真实输出保持一致：一句 k=v 摘要，不是对象
   platform:
@@ -72,7 +87,9 @@ const config = {
   batch: {
     enabled: true,
     commandTemplate: 'bin/dev-batch.sh --job {job}',
-    allowedJobs: ['init', 'ingest', 'transform', 'evolve', 'maintain', 'show', 'verify-sql', 'all']
+    allowedJobs: JOBS.map((j) => j.name),
+    // 与服务端 /api/config 同形：前端拿它直接渲染卡片，不再自己维护文案
+    jobs: JOBS
   }
 }
 

@@ -122,7 +122,7 @@ open http://localhost:8088/                # 内置查询控制台
 | `POST /api/query/stream` | 同上，但走 SSE：`meta` → `rows`… → `done`，出错则发 `error` |
 | `GET /api/tables` | 当前库的表清单（读 Presto 的 `information_schema`） |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
-| `GET /api/config` | 生效配置回显（S3 密钥打码） |
+| `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单 |
 | `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部；列表 = 本进程内存记录 ∪ `ops.batch_runs` 历史（按 id 合并，内存优先），历史读不到时降级返回 `history.status` |
 | `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
@@ -252,6 +252,10 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 每个 job 跑完（无论成功失败）都会往 `ops.batch_runs` 落一行终态：`run_id / job / status / 耗时 / 日志路径`。
 `run_id` 由 lake-service 生成并通过 `BATCH_RUN_ID` 环境变量注入，所以服务重启后从表里读回的记录
 还能和原来的日志文件对上；不想记账加 `--no-record`。
+
+作业名和页面文案只在 `platform-common` 的 `LakeJobs` 里定义一次：`BatchApp` 的注册键、`--job` 的取值、
+服务端 `lake.batch.allowed-jobs` 的默认白名单都取它；标题/描述/分组/是否仅命令行在 `LakeJobs.METAS`，
+由 `GET /api/config` 的 `batch.jobs` 下发给页面，前端只负责渲染。改名字时不会出现「页面还认、进程不认」的错位。
 
 ## 即席查询脚本（`sql/adhoc/`）
 
