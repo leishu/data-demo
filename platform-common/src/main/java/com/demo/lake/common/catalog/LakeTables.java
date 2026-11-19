@@ -86,7 +86,12 @@ public final class LakeTables {
                 + ")";
     }
 
-    /** ODS：原始订单落地表，只追加不做更新，保留 source_file 便于回溯 */
+    /**
+     * ODS：原始订单落地表，只追加不做更新。
+     *
+     * <p>run_id 记录本条数据由哪次 ingest 写入，可直接 join {@code ops.batch_runs} 回溯批次；
+     * 早期版本的表没有该列，由 IngestJob 首次运行时 ADD COLUMNS 补上并清掉无法归属的旧行。</p>
+     */
     public static String createBronzeOrders(PlatformConfig cfg) {
         TableRef t = TableRef.of(cfg, BRONZE_ORDERS);
         return "CREATE TABLE IF NOT EXISTS " + t.fqn() + " (\n"
@@ -99,7 +104,8 @@ public final class LakeTables {
                 + "  status       STRING      COMMENT 'PAID/REFUNDED/CANCELLED',\n"
                 + "  event_time   TIMESTAMP   COMMENT '业务发生时间(分区字段来源)',\n"
                 + "  ingest_time  TIMESTAMP   COMMENT '入湖时间',\n"
-                + "  source_file  STRING      COMMENT '来源文件'\n"
+                + "  source_file  STRING      COMMENT '来源文件',\n"
+                + "  run_id       STRING      COMMENT '入湖批次运行ID（对应 ops.batch_runs.run_id）'\n"
                 + ")\n"
                 + "USING iceberg\n"
                 + "PARTITIONED BY (days(event_time))\n"

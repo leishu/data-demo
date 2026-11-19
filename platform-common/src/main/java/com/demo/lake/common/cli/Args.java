@@ -49,6 +49,11 @@ public final class Args {
         return values.getOrDefault(key, def);
     }
 
+    /** 入口解析出的结果回填给作业侧（如 run-id），保证同一进程内读到同一个值 */
+    public void put(String key, String value) {
+        values.put(key, value);
+    }
+
     public int getInt(String key, int def) {
         String v = values.get(key);
         return v == null ? def : Integer.parseInt(v);

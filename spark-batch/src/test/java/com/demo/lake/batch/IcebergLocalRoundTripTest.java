@@ -1,5 +1,6 @@
 package com.demo.lake.batch;
 
+import com.demo.lake.batch.job.IngestJob;
 import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.catalog.TransformSql;
@@ -50,6 +51,7 @@ class IcebergLocalRoundTripTest {
         System.setProperty("platform.catalog.type", "hadoop");
         System.setProperty("platform.database", "lake_test");
         System.setProperty("platform.spark.shuffle.partitions", "2");
+        System.setProperty("platform.raw.dir", tempDir.resolve("raw").toString());
         cfg = PlatformConfig.load();
 
         spark = SparkSessionFactory.create(cfg, "iceberg-roundtrip-test");
@@ -75,18 +77,20 @@ class IcebergLocalRoundTripTest {
         spark.sql("INSERT INTO " + bronze.fqn() + " VALUES "
                 + "('O1','U1','M1','3C',   CAST(100.00 AS DECIMAL(12,2)), 'CNY', 'PAID',"
                 + " to_timestamp(concat(cast(date_sub(current_date(), 1) AS string), ' 10:00:00')),"
-                + " current_timestamp(), 'f1'),"
+                + " current_timestamp(), 'f1', 'run-unit-1'),"
                 + "('O1','U1','M1','3C',   CAST(100.00 AS DECIMAL(12,2)), 'CNY', 'REFUNDED',"
                 + " to_timestamp(concat(cast(date_sub(current_date(), 1) AS string), ' 12:00:00')),"
-                + " current_timestamp(), 'f1'),"
+                + " current_timestamp(), 'f1', 'run-unit-1'),"
                 + "('O2','U2','M1','3C',   CAST(50.00  AS DECIMAL(12,2)), 'CNY', 'PAID',"
                 + " to_timestamp(concat(cast(date_sub(current_date(), 1) AS string), ' 11:00:00')),"
-                + " current_timestamp(), 'f1'),"
+                + " current_timestamp(), 'f1', 'run-unit-1'),"
                 + "('O3','U3','M2','HOME', CAST(30.00  AS DECIMAL(12,2)), 'CNY', 'CANCELLED',"
                 + " to_timestamp(concat(cast(date_sub(current_date(), 2) AS string), ' 09:00:00')),"
-                + " current_timestamp(), 'f1')");
+                + " current_timestamp(), 'f1', 'run-unit-1')");
 
         assertEquals(4L, spark.table(bronze.fqn()).count());
+        assertEquals(4L, spark.sql("SELECT count(*) FROM " + bronze.fqn()
+                + " WHERE run_id = 'run-unit-1'").head().getLong(0), "每行都应带写入批次");
         assertEquals(1L, spark.sql("SELECT count(*) FROM " + bronze.metadata("snapshots")).head().getLong(0));
         // 分区由 Iceberg 按 days(event_time) 路由，应至少有 2 个分区
         assertTrue(spark.sql("SELECT count(*) FROM " + bronze.metadata("partitions")).head().getLong(0) >= 2);
@@ -160,5 +164,30 @@ class IcebergLocalRoundTripTest {
         assertEquals("SUCCEEDED", row.getString(2));
         assertEquals(0, row.getInt(3));
         assertTrue(row.isNullAt(4), "命令行跑的作业没有日志文件");
+    }
+
+    @Test
+    @Order(6)
+    void ingestBackfillsRunIdAndDropsLegacyRows() throws Exception {
+        // 模拟升级前的老表：没有 run_id 列，且已有一行历史数据
+        spark.sql("DROP TABLE IF EXISTS " + bronze.fqn());
+        spark.sql("CREATE TABLE " + bronze.fqn() + " ("
+                + "order_id STRING, user_id STRING, merchant_id STRING, category STRING,"
+                + "amount DECIMAL(12,2), currency STRING, status STRING, event_time TIMESTAMP,"
+                + "ingest_time TIMESTAMP, source_file STRING)"
+                + " USING iceberg PARTITIONED BY (days(event_time))");
+        spark.sql("INSERT INTO " + bronze.fqn() + " VALUES ('LEGACY','U0','M0','3C',"
+                + " CAST(1.00 AS DECIMAL(12,2)), 'CNY', 'PAID', current_timestamp(), current_timestamp(), 'old')");
+
+        Args args = Args.parse(new String[]{"--days", "1", "--orders-per-day", "20",
+                "--run-id", "run-legacy-upgrade"});
+        new IngestJob().run(spark, cfg, args);
+
+        assertTrue(List.of(spark.table(bronze.fqn()).columns()).contains("run_id"), "旧表应被补上 run_id 列");
+        assertEquals(0L, spark.sql("SELECT count(*) FROM " + bronze.fqn()
+                + " WHERE order_id = 'LEGACY'").head().getLong(0), "补列前的历史行应被清掉");
+        assertTrue(spark.sql("SELECT count(*) FROM " + bronze.fqn()
+                + " WHERE run_id = 'run-legacy-upgrade'").head().getLong(0) > 0, "本次写入的行应带同一个 run_id");
+        assertEquals(0L, spark.table(bronze.fqn()).filter("run_id IS NULL").count(), "表里不应残留无法归属的行");
     }
 }

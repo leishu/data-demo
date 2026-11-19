@@ -1,6 +1,7 @@
 package com.demo.lake.batch.job;
 
 import com.demo.lake.common.batch.LakeJobs;
+import com.demo.lake.common.batch.RunIds;
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.batch.LakeJob;
 import com.demo.lake.common.catalog.TableRef;
@@ -16,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -33,6 +35,9 @@ import java.util.List;
  * <p>order_id 里带业务日期、随机种子也按日期取，保证同一批落地数据在 --orders-per-day 不变时重跑
  * 得到相同的 ID 和数据。</p>
  *
+ * <p>每行带 run_id（与 {@code ops.batch_runs.run_id} 同一个值），可据此判断数据是哪次任务导入的。
+ * 老仓库首次跑本作业时会先 ADD COLUMNS 补列，并删掉无法归属批次的旧行（run_id 为空）。</p>
+ *
  * 故意注入两类脏数据：
  * - 约 3% 的 PAID 单（约占总行数 2.7%）有"重复记录"（先 PAID 后 REFUNDED），
  *   交给 DWD 的 MERGE 收敛；
@@ -49,10 +54,12 @@ public class IngestJob implements LakeJob {
     public void run(SparkSession spark, PlatformConfig cfg, Args args) throws Exception {
         int days = args.getInt("days", 7);
         int perDay = args.getInt("orders-per-day", 2000);
+        String runId = RunIds.resolve(args);
         Path rawRoot = Paths.get(cfg.get("platform.raw.dir", "data/raw"), "orders").toAbsolutePath();
         Files.createDirectories(rawRoot);
 
         System.out.println("[ingest] 落地目录: " + rawRoot);
+        System.out.println("[ingest] run_id=" + runId);
         System.out.println("[ingest] 生成 " + days + " 天 x " + perDay + " 单的模拟落地文件");
 
         List<String> generated = new ArrayList<>();
@@ -67,19 +74,42 @@ public class IngestJob implements LakeJob {
 
         System.out.println("[ingest] 读取本次落地文件并写入 Iceberg（按 event_time 重新分区）");
         TableRef bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
+        prepareBronze(spark, bronze);
         Dataset<Row> raw = spark.read().option("mergeSchema", "true")
                 .parquet(generated.toArray(new String[0]));
-        raw.createOrReplaceTempView("raw_orders");
+        raw.withColumn("run_id", functions.lit(runId)).createOrReplaceTempView("raw_orders");
 
         // 纯追加：重跑会把同一批日期再叠一份，幂等去重交给 DWD 的 MERGE
         spark.sql("INSERT INTO " + bronze.fqn() + " "
+                + "(order_id, user_id, merchant_id, category, amount, currency, status, "
+                + " event_time, ingest_time, source_file, run_id) "
                 + "SELECT order_id, user_id, merchant_id, category, amount, currency, status, "
-                + "       event_time, current_timestamp() AS ingest_time, input_file_name() AS source_file "
+                + "       event_time, current_timestamp() AS ingest_time, input_file_name() AS source_file, run_id "
                 + "FROM raw_orders");
 
         System.out.println("[ingest] bronze 总行数 = " + spark.table(bronze.fqn()).count());
         spark.sql("SELECT cast(event_time AS date) AS dt, count(*) AS cnt, count(DISTINCT order_id) AS distinct_orders "
                 + "FROM " + bronze.fqn() + " GROUP BY 1 ORDER BY 1").show(false);
+    }
+
+    /**
+     * 老仓库升级：run_id 是后加的列，旧表先 ADD COLUMNS 补上（纯元数据变更），
+     * 再加列前写入的历史行没有 run_id，按「旧数据删除」清掉，保证表里每行都能追到批次。
+     */
+    private void prepareBronze(SparkSession spark, TableRef bronze) {
+        if (!spark.catalog().tableExists(bronze.fqn())) {
+            return; // 表还没建：init 会按最新 DDL 建好，这里不越权
+        }
+        if (!Arrays.asList(spark.table(bronze.fqn()).columns()).contains("run_id")) {
+            System.out.println("[ingest] 旧表结构缺少 run_id，ADD COLUMNS 补列（仅元数据变更）");
+            spark.sql("ALTER TABLE " + bronze.fqn()
+                    + " ADD COLUMNS (run_id STRING COMMENT '入湖批次运行ID（对应 ops.batch_runs.run_id）')");
+        }
+        long legacy = spark.table(bronze.fqn()).filter("run_id IS NULL").count();
+        if (legacy > 0) {
+            System.out.println("[ingest] 删除无法归属批次的旧数据 " + legacy + " 行（run_id IS NULL）");
+            spark.sql("DELETE FROM " + bronze.fqn() + " WHERE run_id IS NULL");
+        }
     }
 
     /** 生成单天落地数据（含重复与迟到记录）；同一天重跑必须得到同一份数据 */

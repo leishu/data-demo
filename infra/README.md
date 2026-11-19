@@ -113,11 +113,12 @@ docker tag  docker.m.daocloud.io/library/alpine:latest alpine:latest
 bin/infra.sh up            # 起 Postgres + MinIO + HMS（首次会构建 HMS、拉镜像）
 bin/infra.sh up presto     # 额外起 Presto（即席查询才需要，常驻 ~0.8 GB）
 bin/infra.sh up tools      # 额外起 Adminer（Postgres 网页客户端），可与 presto 组合
+bin/infra.sh stop presto   # 只停 Presto（省 ~0.8 GB），Postgres/MinIO/HMS 继续跑
 bin/infra.sh ps            # 看健康状态
 bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 ```
 
-首次验收就这四条。`logs` / `restart` / `psql` / `down` / `clean` 的完整语义和日常运维见第 3 章。
+首次验收就这几条。`stop` / `logs` / `restart` / `psql` / `down` / `clean` 的完整语义和日常运维见第 3 章。
 
 `up` 结束后会打印端口清单：
 
@@ -145,7 +146,7 @@ bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 | 命令 | 作用 | 说明 |
 |---|---|---|
 | `bin/infra.sh up` | 起 Postgres + MinIO + HMS | **默认不含 Presto**（省 ~0.8 GB）；自带 `--build`，改过 `infra/hive/Dockerfile` 会自动重建 HMS 镜像 |
-| `bin/infra.sh up presto` | 额外起 Presto（:8080） | 即席查询 / `lake-service` 查数时需要；`all` 等价。不用时 `docker stop lake-presto` 立刻回收 |
+| `bin/infra.sh up presto` | 额外起 Presto（:8080） | 即席查询 / `lake-service` 查数时需要；`all` 等价。不用时 `bin/infra.sh stop presto` 立刻回收 |
 | `bin/infra.sh up tools` | 额外起 Adminer（:8081） | 走 `--profile tools`，可写成 `up tools presto` |
 | `bin/infra.sh core` | 同 `up` | 旧命令名，保留兼容 |
 | `bin/infra.sh ps` | 容器 + 健康状态 | 出问题时的第一步 |
@@ -153,6 +154,7 @@ bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 | `bin/infra.sh restart [服务...]` | 重启容器 | 只改了挂载文件或环境变量时够用，不必重建镜像 |
 | `bin/infra.sh psql [参数]` | 进 HMS 的 Postgres | 等价于 `docker exec -it lake-postgres psql -U hive -d metastore` |
 | `bin/infra.sh doctor` | 端口 / HTTP / Presto 端到端检查 | 检查清单见第 2 章 |
+| `bin/infra.sh stop [服务...]` | 停容器（默认全部） | 与 `up` 对称，容器和数据卷都保留，`up` 或 `docker start` 秒起；日常只关 Presto 用它 |
 | `bin/infra.sh down` | 停容器，**保留数据卷** | 第二天 `up` 接着用 |
 | `bin/infra.sh clean` | 停容器 + **删数据卷** | 不可恢复，见 3.3 |
 
@@ -166,7 +168,7 @@ bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 |---|---|
 | 看容器 / 镜像 / 卷 / 磁盘占用 | `docker ps -a`、`docker images`、`docker volume ls`、`docker system df` |
 | 进容器 | `docker exec -it lake-hms bash`、`docker exec -it lake-presto ls /opt/presto-server/etc/catalog` |
-| 单个容器起停 | `docker stop lake-presto`、`docker start lake-presto` |
+| 单个容器起停 | `bin/infra.sh stop presto`、`bin/infra.sh up presto`（或 `docker start lake-presto`） |
 | 实时资源占用 | `docker stats`（`Ctrl-C` 只退查看，不停容器） |
 | 看端口映射 | `docker port lake-presto` |
 | 看 compose 展开后的最终配置 | `docker compose -f infra/docker-compose.yml config` |
@@ -184,6 +186,7 @@ bin/infra.sh doctor        # 端口 / HTTP / Presto 端到端检查
 | 想做的事 | 用哪个 | 注意 |
 |---|---|---|
 | 下班关环境 | `bin/infra.sh down` | 数据全在 |
+| 只关 Presto 省内存 | `bin/infra.sh stop presto` | 其余三件套不受影响，`up presto` 秒起 |
 | 改了 Dockerfile 想重来 | `bin/infra.sh up` | 只重建镜像，卷不动 |
 | 元数据 / 对象存储要归零 | `bin/infra.sh clean` | 删完必须重跑 `MVN_PROFILE=s3 bin/dev-batch.sh --job all` |
 | 只清构建缓存 | `docker builder prune` | 不动镜像和卷 |

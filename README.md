@@ -194,7 +194,7 @@ cp conf/platform.properties.example conf/platform.properties
 bin/dev-batch.sh --job all       # 脚本看 warehouse 是 s3a:// 就自动带 -Ps3（iceberg-aws-bundle + hadoop-aws）
                                  # 想指定别的 profile 时用 MVN_PROFILE=xxx 覆盖，脚本就不再自动判断
 
-# 3. Presto 即席查询（默认不起 Presto，常驻约 0.8 GB，用完可 docker stop lake-presto）
+# 3. Presto 即席查询（默认不起 Presto，常驻约 0.8 GB，用完 bin/infra.sh stop presto 回收）
 bin/infra.sh up presto
 bin/presto-query.sh --list
 bin/presto-query.sh --sql-file sql/adhoc/01_daily_revenue.sql
@@ -244,7 +244,7 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 | job | 做什么 | 关键点 |
 |---|---|---|
 | `init` | 建库 + 三层表 + `ops.batch_runs` | 幂等；表属性含 `format-version=2`、CoW 写模式；运行历史表放独立 `ops` namespace，不进业务表清单 |
-| `ingest` | 生成落地文件 → 写入 ODS | 只读本次生成的 `dt=` 目录；`order_id` 带业务日期，同一天重跑数据稳定；故意的重复单(3%)和迟到数据(10%)验证按事件时间入分区 |
+| `ingest` | 生成落地文件 → 写入 ODS | 只读本次生成的 `dt=` 目录；`order_id` 带业务日期，同一天重跑数据稳定；每行带 `run_id` 可回溯批次；故意的重复单(3%)和迟到数据(10%)验证按事件时间入分区 |
 | `transform` | ODS→DWD `MERGE`，DWD→ADS `INSERT OVERWRITE` | 只扫近 N 天分区；只更新变化的行 |
 | `evolve` | 加 `channel` 列并回填 | 纯元数据变更 + CoW 重写，用来演示 schema 演进 |
 | `maintain` | `rewrite_data_files` / `rewrite_manifests` / `expire_snapshots` | 建议按天调度 |
@@ -254,6 +254,9 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 每个 job 跑完（无论成功失败）都会往 `ops.batch_runs` 落一行终态：`run_id / job / status / 耗时 / 日志路径`。
 `run_id` 由 lake-service 生成并通过 `BATCH_RUN_ID` 环境变量注入，所以服务重启后从表里读回的记录
 还能和原来的日志文件对上；不想记账加 `--no-record`。
+
+`bronze_orders` 每行的 `run_id` 用的是同一个值，可以直接 join `ops.batch_runs` 定位数据是哪次任务导入的
+（`maintain` 清理快照后仍可查）。老仓库首次跑 `ingest` 会先 `ADD COLUMNS` 补列，并删掉 `run_id` 为空的历史行。
 
 作业名和页面文案只在 `platform-common` 的 `LakeJobs` 里定义一次：`BatchApp` 的注册键、`--job` 的取值、
 服务端 `lake.batch.allowed-jobs` 的默认白名单都取它；标题/描述/分组/是否仅命令行在 `LakeJobs.METAS`，

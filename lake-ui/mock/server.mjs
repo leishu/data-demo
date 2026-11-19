@@ -36,7 +36,8 @@ const TABLES = [
       ['status', 'varchar', 'PAID/REFUNDED/CANCELLED'],
       ['event_time', 'timestamp', '业务发生时间(分区字段来源)'],
       ['ingest_time', 'timestamp', '入湖时间'],
-      ['source_file', 'varchar', '来源文件']
+      ['source_file', 'varchar', '来源文件'],
+      ['run_id', 'varchar', '入湖批次运行ID（对应 ops.batch_runs.run_id）']
     ]
   },
   {

@@ -4,6 +4,8 @@
 #   bin/infra.sh up            # 起 Postgres + MinIO + HMS（默认，跑批够用）
 #   bin/infra.sh up presto     # 额外起 Presto（即席查询才需要，常驻 ~0.8G）
 #   bin/infra.sh up tools      # 额外起 Adminer（:8081），可和 presto 组合
+#   bin/infra.sh stop [svc]    # 停指定服务（如 stop presto），不带参数停全部
+#                                 # svc 取值：postgres / minio / hive-metastore / presto / adminer（脚本已自动带 --profile tools）
 #   bin/infra.sh down          # 停容器，保留数据卷
 #   bin/infra.sh clean         # 停容器并删数据卷（元数据、对象存储全清）
 #   bin/infra.sh ps            # 容器与健康状态
@@ -32,6 +34,7 @@ usage() {
 
   up [presto|tools|all]  起 Postgres + MinIO + HMS；带 presto（或 all）额外起 Presto，带 tools 额外起 Adminer
   core              同 up（保留兼容：默认就不起 Presto）
+  stop [服务...]    停容器（默认全部，与 up 对称），容器和数据卷都保留
   down              停容器，保留数据卷
   clean             停容器并删除数据卷（不可恢复）
   ps                容器与健康状态
@@ -109,7 +112,7 @@ EOF
     MVN_PROFILE=s3 bin/dev-batch.sh --job all
     bin/lake-service.sh build && bin/lake-service.sh start
 
-  要查 SQL 时再补起 Presto（常驻 ~0.8G，不用时 docker stop lake-presto）：
+  要查 SQL 时再补起 Presto（常驻 ~0.8G，不用时 bin/infra.sh stop presto）：
     bin/infra.sh up presto
 
 EOF
@@ -151,6 +154,14 @@ cmd_up() {
 # 保留旧命令名：up 默认行为已经就是 core
 cmd_core() {
   cmd_up
+}
+
+# 只停不停删：和 up 对称，日常关 Presto 省 ~0.8G 用它（容器还在，docker start 秒起）
+cmd_stop() {
+  need_docker
+  "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" stop "$@"
+  # 用 -a：停掉的服务仍在列表里，能直接看出是“停了”而不是“没了”
+  "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" ps -a
 }
 
 cmd_doctor() {
@@ -246,6 +257,7 @@ shift || true
 case "${cmd}" in
   up)       cmd_up "$@" ;;
   core)     cmd_core ;;
+  stop)     cmd_stop "$@" ;;
   down)     need_docker; "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" down ;;
   clean)
     need_docker
