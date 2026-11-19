@@ -6,6 +6,7 @@ import com.demo.lake.server.query.*;
 import com.demo.lake.server.query.model.Column;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
+import com.demo.lake.server.query.model.TableInfo;
 import com.facebook.presto.jdbc.PrestoResultSet;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -189,22 +190,31 @@ public class QueryService {
         }, FluxSink.OverflowStrategy.BUFFER).subscribeOn(blocking);
     }
 
-    /** information_schema 列元数据表，走 Presto 自己的系统表，不额外维护表清单 */
-    public Mono<List<Map<String, String>>> listTables() {
+    /**
+     * 表清单 + 字段清单，全部走 Presto 自己的 information_schema，不额外维护一份表结构。
+     *
+     * <p>一次 left join 把表和列一起捞回来：建表 DDL 里的 {@code COMMENT '订单号'} 就是
+     * {@code information_schema.columns.comment}，页面直接拿它当字段中文名。</p>
+     */
+    public Mono<List<TableInfo>> listTables() {
         return Mono.fromCallable(() -> {
-            String sql = "select table_schema, table_name, table_type from "
-                    + catalog() + ".information_schema.tables where table_schema = '" + database() + "'"
-                    + " order by table_name";
+            String sql = "select t.table_name, t.table_type, c.column_name, c.data_type, c.comment"
+                    + " from " + catalog() + ".information_schema.tables t"
+                    + " left join " + catalog() + ".information_schema.columns c"
+                    + " on c.table_schema = t.table_schema and c.table_name = t.table_name"
+                    + " where t.table_schema = '" + database() + "'"
+                    + " order by t.table_name, c.ordinal_position";
             QueryResult rs = execute(sql, null);
-            List<Map<String, String>> out = new ArrayList<>(rs.rows().size());
+            // 表名 → 表信息；left join 下没有列的表只出现一行，column_name 为 null
+            Map<String, TableInfo> byTable = new LinkedHashMap<>();
             for (List<String> row : rs.rows()) {
-                Map<String, String> m = new LinkedHashMap<>();
-                m.put("schema", row.get(0));
-                m.put("table", row.get(1));
-                m.put("type", row.get(2));
-                out.add(m);
+                TableInfo info = byTable.computeIfAbsent(row.get(0),
+                        name -> new TableInfo(database(), name, row.get(1), new ArrayList<>()));
+                if (row.get(2) != null) {
+                    info.columns().add(new Column(row.get(2), row.get(3), row.get(4)));
+                }
             }
-            return out;
+            return List.copyOf(byTable.values());
         }).subscribeOn(blocking);
     }
 

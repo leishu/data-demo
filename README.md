@@ -120,7 +120,7 @@ open http://localhost:8088/                # 内置查询控制台
 |---|---|
 | `POST /api/query` | `{"sql":"select ...","maxRows":100}` → 列定义 + 行 + 耗时 + `truncated` |
 | `POST /api/query/stream` | 同上，但走 SSE：`meta` → `rows`… → `done`，出错则发 `error` |
-| `GET /api/tables` | 当前库的表清单（读 Presto 的 `information_schema`） |
+| `GET /api/tables` | 当前库的表清单 + 字段清单（读 Presto 的 `information_schema`，字段 `comment` 即 DDL 里的中文名） |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单 |
@@ -156,7 +156,7 @@ open http://localhost:8088/                # 内置查询控制台
 | 页面 | 能做什么 |
 |---|---|
 | 查询台 `#/query` | SQL 编辑器（Ctrl/⌘+Enter 执行）、结果边到边渲染（SSE）、表格（类型标注、数值右对齐、NULL 置灰）、耗时/截断提示、QueryStats、复制 TSV |
-| 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行），一键「在查询台打开」 |
+| 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行，表头带字段中文名），一键「在查询台打开」 |
 | 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时用 SSE 实时跟） |
 | 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Presto 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
 

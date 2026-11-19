@@ -16,6 +16,8 @@ import org.apache.spark.sql.SparkSession;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -40,6 +42,9 @@ import java.util.UUID;
 public final class BatchApp {
 
     private static final Map<String, LakeJob> JOBS = new LinkedHashMap<>();
+    /** run id 的时间部分精确到分钟；固定 UTC，与 ops.batch_runs.started_at 同一时间基准 */
+    private static final DateTimeFormatter RUN_ID_TIME =
+            DateTimeFormatter.ofPattern("uuuu-MM-dd-HH-mm").withZone(ZoneOffset.UTC);
 
     static {
         register(new InitJob());
@@ -116,6 +121,9 @@ public final class BatchApp {
     /**
      * 运行 ID 优先级：--run-id &gt; 环境变量 BATCH_RUN_ID &gt; 本进程生成。
      * 被 lake-service 拉起时用服务端的 ID，两边才能按同一个主键合并。
+     *
+     * <p>本进程自编时形如 {@code run-2026-11-19-13:45-9a1aad}：分钟级时间戳只是给人看的，
+     * 唯一性靠后面 6 位随机后缀（同一分钟内多次运行也不会撞）。</p>
      */
     private static String runId(Args args) {
         String given = args.get("run-id");
@@ -126,7 +134,7 @@ public final class BatchApp {
         if (fromEnv != null) {
             return fromEnv;
         }
-        return "run-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
+        return "run-" + RUN_ID_TIME.format(Instant.now()) + "-" + UUID.randomUUID().toString().substring(0, 6);
     }
 
     private static List<String> resolvePlan(Args args) {

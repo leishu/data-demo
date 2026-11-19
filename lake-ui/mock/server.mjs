@@ -19,6 +19,63 @@ const PORT = Number(process.argv[process.argv.indexOf('--port') + 1]) || 4173
 const CATALOG = 'iceberg'
 const DATABASE = 'lake'
 
+/**
+ * 镜像 platform-common 的 LakeTables：字段中文名就是建表 DDL 里的 COMMENT，
+ * 真实后端从 iceberg.information_schema.columns.comment 读，这里照抄一份给 mock 用。
+ */
+const TABLES = [
+  {
+    table: 'bronze_orders',
+    columns: [
+      ['order_id', 'varchar', '订单号'],
+      ['user_id', 'varchar', '用户号'],
+      ['merchant_id', 'varchar', '商户号'],
+      ['category', 'varchar', '品类'],
+      ['amount', 'decimal(12,2)', '订单金额'],
+      ['currency', 'varchar', '币种'],
+      ['status', 'varchar', 'PAID/REFUNDED/CANCELLED'],
+      ['event_time', 'timestamp', '业务发生时间(分区字段来源)'],
+      ['ingest_time', 'timestamp', '入湖时间'],
+      ['source_file', 'varchar', '来源文件']
+    ]
+  },
+  {
+    table: 'gold_daily_revenue',
+    columns: [
+      ['dt', 'date', '业务日期'],
+      ['merchant_id', 'varchar', '商户号'],
+      ['category', 'varchar', '品类'],
+      ['order_cnt', 'bigint', '有效订单数'],
+      ['buyer_cnt', 'bigint', '本商户+品类下的下单用户数(跨行不可相加)'],
+      ['gmv', 'decimal(18,2)', '成交总额'],
+      ['refund_amount', 'decimal(18,2)', '退款金额'],
+      ['net_revenue', 'decimal(18,2)', '净收入=GMV-退款'],
+      ['updated_at', 'timestamp', '最后更新时间']
+    ]
+  },
+  {
+    table: 'silver_orders',
+    columns: [
+      ['order_id', 'varchar', '订单号(主键)'],
+      ['user_id', 'varchar', '用户号'],
+      ['merchant_id', 'varchar', '商户号'],
+      ['category', 'varchar', '品类'],
+      ['amount', 'decimal(12,2)', '订单金额'],
+      ['currency', 'varchar', '币种'],
+      ['status', 'varchar', 'PAID/REFUNDED/CANCELLED'],
+      ['is_refund', 'boolean', '是否退款'],
+      ['dt', 'date', '业务日期(UTC)'],
+      ['event_time', 'timestamp', '业务发生时间'],
+      ['updated_at', 'timestamp', '最后更新时间']
+    ]
+  }
+].map((t) => ({
+  schema: DATABASE,
+  table: t.table,
+  type: 'BASE TABLE',
+  columns: t.columns.map(([name, type, comment]) => ({ name, type, comment }))
+}))
+
 const DAILY = [
   ['2026-11-16', 412, 186320.5, 7420.0, 178900.5],
   ['2026-11-15', 398, 173880.0, 6980.5, 166899.5],
@@ -207,11 +264,7 @@ const server = http.createServer((req, res) => {
   if (p === '/api/config') return send(res, 200, config)
 
   if (p === '/api/tables') {
-    return send(res, 200, [
-      { schema: DATABASE, table: 'bronze_orders', type: 'BASE TABLE' },
-      { schema: DATABASE, table: 'gold_daily_revenue', type: 'BASE TABLE' },
-      { schema: DATABASE, table: 'silver_orders', type: 'BASE TABLE' }
-    ])
+    return send(res, 200, TABLES)
   }
 
   if (p.startsWith('/api/tables/') && p.endsWith('/sample')) {

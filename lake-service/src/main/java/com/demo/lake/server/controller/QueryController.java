@@ -7,6 +7,7 @@ import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.exception.ErrorMapper;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
+import com.demo.lake.server.query.model.TableInfo;
 import com.demo.lake.server.query.service.QueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -64,7 +65,7 @@ public class QueryController {
     }
 
     @GetMapping("/tables")
-    public Mono<List<Map<String, String>>> tables() {
+    public Mono<List<TableInfo>> tables() {
         return queryService.listTables();
     }
 

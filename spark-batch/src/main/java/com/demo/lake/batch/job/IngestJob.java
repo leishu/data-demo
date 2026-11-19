@@ -20,14 +20,22 @@ import java.util.List;
 
 /**
  * ODS 入湖：
- * 1) 先在 data/raw/orders/dt=YYYY-MM-DD/ 生成"上游落地文件"（Parquet），模拟数据到达；
+ * 1) 先在 platform.raw.dir（默认 data/raw）/orders/dt=YYYY-MM-DD/ 生成"上游落地文件"（Parquet），
+ *    模拟数据到达；每个 dt 目录是整目录覆盖写，窗口以运行当天为终点往前推 --days 天（含今天），
+ *    所以隔天再跑会与上一次重叠 days-1 天；
  * 2) 只读取本次生成的那些 dt 目录，按 event_time 写入 Iceberg bronze 表 —— 分区由 Iceberg
  *    自己路由，上游文件目录和 Iceberg 分区不一致也没关系（这正是表格式层带来的解耦）。
  *
- * <p>order_id 里带业务日期、随机种子也按日期取，保证同一批落地数据重跑时 ID 和数据稳定。</p>
+ * <p>注意两层语义不同：raw 目录是覆盖，bronze 是 INSERT INTO 纯追加。同一批日期重跑（或每天调度
+ * 时窗口重叠）会在 bronze 里叠出重复行，去重靠 DWD 的 MERGE 按 order_id 收敛；ODS 自身只追加、
+ * 不保证幂等。</p>
+ *
+ * <p>order_id 里带业务日期、随机种子也按日期取，保证同一批落地数据在 --orders-per-day 不变时重跑
+ * 得到相同的 ID 和数据。</p>
  *
  * 故意注入两类脏数据：
- * - 约 3% 订单有"重复记录"（先 PAID 后 REFUNDED），交给 DWD 的 MERGE 去重；
+ * - 约 3% 的 PAID 单（约占总行数 2.7%）有"重复记录"（先 PAID 后 REFUNDED），
+ *   交给 DWD 的 MERGE 收敛；
  * - 约 10% 记录 event_time 落在前一天（迟到数据），验证按事件时间分区而非按文件分区。
  */
 public class IngestJob implements LakeJob {
@@ -63,6 +71,7 @@ public class IngestJob implements LakeJob {
                 .parquet(generated.toArray(new String[0]));
         raw.createOrReplaceTempView("raw_orders");
 
+        // 纯追加：重跑会把同一批日期再叠一份，幂等去重交给 DWD 的 MERGE
         spark.sql("INSERT INTO " + bronze.fqn() + " "
                 + "SELECT order_id, user_id, merchant_id, category, amount, currency, status, "
                 + "       event_time, current_timestamp() AS ingest_time, input_file_name() AS source_file "

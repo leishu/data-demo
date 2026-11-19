@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Loading } from '@element-plus/icons-vue'
 import { api } from '@/api'
@@ -20,6 +20,14 @@ const sample = ref(null)
 const sampleError = ref(null)
 const sampleLoading = ref(false)
 const limit = ref(50)
+
+/** 字段名 → 中文名（建表 DDL 里的 COMMENT）；采样表的表头直接用它 */
+const columnComments = computed(() => {
+  const info = tables.value.find((t) => t.table === selected.value)
+  const map = {}
+  for (const c of info?.columns || []) if (c.comment) map[c.name] = c.comment
+  return map
+})
 
 async function loadTables() {
   loading.value = true
@@ -141,6 +149,7 @@ onMounted(async () => {
       <ResultTable
         v-else-if="sample"
         :result="sample"
+        :comments="columnComments"
         :max-height="420"
         title="采样结果"
       />

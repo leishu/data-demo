@@ -8,7 +8,9 @@ const props = defineProps({
   maxHeight: { type: Number, default: 460 },
   /** 嵌在自己的卡片里时可以关掉这条头部，由外层卡片提供 */
   showMeta: { type: Boolean, default: true },
-  title: { type: String, default: '结果' }
+  title: { type: String, default: '结果' },
+  /** 字段名 → 中文名：表浏览时传进来，表头就用中文名（即席查询没有这份字典） */
+  comments: { type: Object, default: () => ({}) }
 })
 
 /** el-table-column 是组件，得在模板里 v-for，这里只准备行数据 */
@@ -27,6 +29,11 @@ function colMinWidth(type) {
 
 function isNull(v) {
   return v === null || v === undefined
+}
+
+/** 有中文名就用中文名当主标题，英文名退到副标题 */
+function colLabel(c) {
+  return (props.comments && props.comments[c.name]) || c.name
 }
 </script>
 
@@ -63,7 +70,7 @@ function isNull(v) {
       <el-table-column
         v-for="(c, i) in columns"
         :key="i"
-        :label="c.name"
+        :label="colLabel(c)"
         :min-width="colMinWidth(c.type)"
         :align="isNumericType(c.type) ? 'right' : 'left'"
         :header-align="isNumericType(c.type) ? 'right' : 'left'"
@@ -71,9 +78,9 @@ function isNull(v) {
       >
         <template #header>
           <div class="col-head">
-            <span class="col-name">{{ c.name }}</span>
-            <!-- 类型作为副标题：Presto 返回的类型偶尔和直觉不一致，标出来省得猜 -->
-            <span class="col-type">{{ c.type }}</span>
+            <span class="col-name">{{ colLabel(c) }}</span>
+            <!-- 副标题默认放类型；有中文名时把英文名也带上，不然用户不知道对应的字段 -->
+            <span class="col-type">{{ colLabel(c) === c.name ? c.type : `${c.name} · ${c.type}` }}</span>
           </div>
         </template>
 
