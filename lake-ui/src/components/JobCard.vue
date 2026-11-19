@@ -74,10 +74,13 @@ defineEmits(['run'])
   font-size: 11.5px;
   line-height: 1.55;
   color: var(--muted);
-  min-height: 36px;
+  /* 至少 3 行：描述长短不一时同排卡片高度不会差太多 */
+  min-height: 54px;
 }
 
 .block-btn {
   width: 100%;
+  /* 贴底：同一排卡片描述行数不一致时按钮仍对齐 */
+  margin-top: auto;
 }
 </style>

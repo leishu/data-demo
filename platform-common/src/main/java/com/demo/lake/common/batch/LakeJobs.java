@@ -41,14 +41,30 @@ public final class LakeJobs {
      * 不会出现前端按旧名字查不到、把卡片默默丢掉的情况。</p>
      */
     public static final List<JobMeta> METAS = List.of(
-            JobMeta.pipeline(INIT, "建库建表", "Iceberg DDL：库 + ODS/DWD/ADS 三张表与表属性"),
-            JobMeta.pipeline(INGEST, "数据入湖", "生成上游落地文件并写入 bronze（含 3% 重复 + 10% 迟到）"),
-            JobMeta.pipeline(TRANSFORM, "加工汇总", "MERGE 去重进 silver，再重算 gold 汇总"),
-            JobMeta.other(EVOLVE, "Schema 演进", "新增 channel 列并回填，演示 ADD COLUMN 与元数据升级"),
-            JobMeta.pipeline(MAINTAIN, "表维护", "rewrite_data_files 合并小文件 + expire_snapshots"),
-            JobMeta.pipeline(SHOW, "数据概览", "打印三层行数与分区分布"),
-            JobMeta.other(VERIFY_SQL, "SQL 校验", "用 Spark 执行 Presto 脚本，需要 --sql-file 参数").withCliOnly(),
-            JobMeta.other(ALL, "全链路", "init → ingest → transform → maintain → show").withFeatured());
+            JobMeta.pipeline(INIT, "建库建表",
+                    "建业务库、三层 Iceberg 表（bronze/silver/gold）与 ops.batch_runs；"
+                            + "全部 IF NOT EXISTS，幂等可重跑，不改已有表结构"),
+            JobMeta.pipeline(INGEST, "数据入湖",
+                    "按 --days(默认 7) × --orders-per-day(默认 2000) 生成 Parquet 落地文件到 data/raw/orders，"
+                            + "再写入 bronze；内含约 3% 重复单与 10% 迟到数据"),
+            JobMeta.pipeline(TRANSFORM, "加工汇总",
+                    "bronze 近 N 天按 order_id 取最新事件 MERGE 进 silver（只更新变化的行），"
+                            + "再 INSERT OVERWRITE 重算 gold 的 GMV / 退款 / 净收入"),
+            JobMeta.other(EVOLVE, "Schema 演进",
+                    "给 silver 增加 channel 列（APP/MINI_APP/WEB）并 UPDATE 回填；"
+                            + "ADD COLUMNS 只改元数据，列已存在时自动跳过"),
+            JobMeta.pipeline(MAINTAIN, "表维护",
+                    "对三张业务表合并小文件、重写 manifest、清理过期快照"
+                            + "（--retain-last 默认保留 5 个）；建议按天调度"),
+            JobMeta.pipeline(SHOW, "数据概览",
+                    "只读巡检：三层行数、gold 最近快照、bronze 提交历史与分区布局，"
+                            + "外加 silver/gold 数据抽样"),
+            JobMeta.other(VERIFY_SQL, "SQL 校验",
+                    "用 Spark 执行 --sql-file 指定的 ad-hoc 脚本（默认 01_daily_revenue.sql）；"
+                            + "跳过 @presto-only 语句，其余做最小方言适配，有失败即作业失败").withCliOnly(),
+            JobMeta.other(ALL, "全链路",
+                    "按 init → ingest → transform → maintain → show 顺序跑完整链路"
+                            + "（加 --evolve 会插入 evolve），全程复用同一个 SparkSession").withFeatured());
 
     /**
      * 白名单 → 页面要渲染的卡片。
