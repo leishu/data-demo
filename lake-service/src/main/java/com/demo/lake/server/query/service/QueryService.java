@@ -57,12 +57,23 @@ public class QueryService {
     }
 
     /**
+     * 周期性轮询（如运行历史列表）走这条：SQL 固定、几秒一次，INFO 会刷满日志，降到 debug 保留可查性。
+     */
+    public QueryResult executeQuiet(String sql, Integer maxRows) {
+        return execute(sql, maxRows, true);
+    }
+
+    /**
      * 同步执行的实现，只允许在 blocking 调度器线程里调用。
      *
      * <p>public 是为了给 {@code BatchHistoryService} 这类内部调用方复用：错误翻译与
      * {@code SqlGuard} 都在这里，重写一遍 JDBC 只会把同一个坑再踩一次。</p>
      */
     public QueryResult execute(String sql, Integer maxRows) {
+        return execute(sql, maxRows, false);
+    }
+
+    private QueryResult execute(String sql, Integer maxRows, boolean quiet) {
         String safeSql = SqlGuard.requireReadOnly(sql, props.getQuery().isAllowWrites());
         int cap = props.getQuery().getMaxRows();
         int limit = (maxRows == null || maxRows <= 0) ? cap : Math.min(maxRows, cap);
@@ -94,7 +105,11 @@ public class QueryService {
                 }
 
                 long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-                log.info("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+                if (quiet) {
+                    log.debug("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+                } else {
+                    log.info("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+                }
                 return new QueryResult(columns, rows, rows.size(), truncated, elapsedMs, stats(rs));
             }
         } catch (SQLException e) {

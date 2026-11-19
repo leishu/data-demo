@@ -50,6 +50,44 @@ class LogTailCursorTest {
     }
 
     @Test
+    void 预热只回放末尾指定行数() throws Exception {
+        Path file = Files.createTempFile("lake-log", ".log");
+        Files.writeString(file, "1\n2\n3\n4\n5\n");
+
+        LogTailCursor cursor = new LogTailCursor();
+        cursor.primeTail(file, 2);
+        assertEquals(List.of("4", "5"), cursor.poll(file, 100));
+        assertTrue(cursor.poll(file, 100).isEmpty(), "预热过的不该重复吐");
+
+        Files.writeString(file, "6\n", StandardOpenOption.APPEND);
+        assertEquals(List.of("6"), cursor.poll(file, 100));
+    }
+
+    @Test
+    void 预热不包含末尾未换行的半行() throws Exception {
+        Path file = Files.createTempFile("lake-log", ".log");
+        Files.writeString(file, "a\nb\npart");
+
+        LogTailCursor cursor = new LogTailCursor();
+        cursor.primeTail(file, 10);
+        assertEquals(List.of("a", "b"), cursor.poll(file, 100), "半行等下一轮补齐");
+
+        Files.writeString(file, "ial\n", StandardOpenOption.APPEND);
+        assertEquals(List.of("partial"), cursor.poll(file, 100));
+    }
+
+    @Test
+    void 预热从大文件中间开始时丢弃被截断的首行() throws Exception {
+        Path file = Files.createTempFile("lake-log", ".log");
+        String big = "x".repeat(4000) + "\n";
+        Files.writeString(file, big.repeat(100) + "last-1\nlast-2\n");
+
+        LogTailCursor cursor = new LogTailCursor();
+        cursor.primeTail(file, 2);
+        assertEquals(List.of("last-1", "last-2"), cursor.poll(file, 10));
+    }
+
+    @Test
     void 文件被截断后从头重读() throws Exception {
         Path file = Files.createTempFile("lake-log", ".log");
         Files.writeString(file, "old-1\nold-2\n");

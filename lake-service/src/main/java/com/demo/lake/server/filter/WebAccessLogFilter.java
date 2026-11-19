@@ -47,7 +47,8 @@ public class WebAccessLogFilter implements WebFilter {
 
     /** 不记录访问日志的路径前缀：监控端点、在线接口文档与静态资源 */
     private static final List<String> EXCLUDED_PATH_PREFIXES =
-            List.of("/actuator", "/v3/api-docs", "/swagger-ui", "/webjars", "/favicon.ico");
+            List.of("/actuator", "/v3/api-docs", "/swagger-ui", "/webjars", "/favicon.ico",
+                    "/api/batch/runs");
 
     /** 单条日志最多记录的 URL 长度，避免超长查询串撑爆日志 */
     private static final int MAX_LOGGED_LENGTH = 200;

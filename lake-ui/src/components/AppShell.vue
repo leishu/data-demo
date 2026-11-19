@@ -48,11 +48,23 @@ async function check() {
 }
 
 let timer = null
+
+/** 后台标签页不刷健康检查：多开页面时别把 select 1 放大成 N 倍 */
+function onVisibility() {
+  if (!document.hidden) refreshHealth()
+}
+
 onMounted(() => {
   refreshHealth()
-  timer = setInterval(refreshHealth, 30000)
+  timer = setInterval(() => {
+    if (!document.hidden) refreshHealth()
+  }, 30000)
+  document.addEventListener('visibilitychange', onVisibility)
 })
-onUnmounted(() => timer && clearInterval(timer))
+onUnmounted(() => {
+  timer && clearInterval(timer)
+  document.removeEventListener('visibilitychange', onVisibility)
+})
 </script>
 
 <template>

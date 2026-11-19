@@ -59,11 +59,12 @@ public class BatchController {
 
     /**
      * 作业监控流：status（状态变化）/ log（日志增量）/ ping（心跳）/ end（终态，随后关闭）。
-     * 前端一条 EventSource 顶掉原来的 2.5s 轮询。
+     * 前端一条 EventSource 顶掉原来的 2.5s 轮询；tail 是首帧回放的历史日志行数。
      */
     @GetMapping(value = "/runs/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<BatchEvent>> events(@PathVariable String id) {
-        return watcher.watch(id)
+    public Flux<ServerSentEvent<BatchEvent>> events(@PathVariable String id,
+                                                   @RequestParam(defaultValue = "80") int tail) {
+        return watcher.watch(id, tail)
                 .map(ev -> ServerSentEvent.builder(ev).event(ev.type()).build());
     }
 }

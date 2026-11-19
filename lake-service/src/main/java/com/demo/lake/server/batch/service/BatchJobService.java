@@ -131,6 +131,8 @@ public class BatchJobService {
     private void update(BatchRun run, String status, Integer exitCode, long elapsedMs, String message) {
         BatchRun done = run.finished(status, exitCode, message, elapsedMs);
         runs.put(done.id(), done);
+        // 终态可能刚写进湖表：别让轮询缓存挡住它（顺带重探一次表是否存在）
+        history.invalidate();
         log.info("批作业 {} {} -> {} ({}ms)", run.job(), run.id(), status, elapsedMs);
     }
 

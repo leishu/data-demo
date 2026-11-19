@@ -18,6 +18,7 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 /**
@@ -31,6 +32,9 @@ import java.util.regex.Pattern;
  *       不能每次都去问 information_schema，也不能让「刚跑完 init」等太久。</li>
  * </ol>
  *
+ * <p>读列表的结果本身也缓存 {@value #CACHE_TTL_SECONDS}s 并单飞：多开几个页面时，
+ * 6s 的轮询会被放大成 N 倍，缓存把同一时间窗内的重复读合并成一次 Presto 查询。</p>
+ *
  * <p>方法都是阻塞 JDBC，调用方保证跑在 blocking 调度器上（{@link BatchJobService} 负责）。</p>
  */
 @Service
@@ -40,6 +44,9 @@ public class BatchHistoryService {
 
     private static final long PROBE_TTL_SECONDS = 15;
     private static final long PROBE_TTL_NANOS = TimeUnit.SECONDS.toNanos(PROBE_TTL_SECONDS);
+    /** 轮询缓存：略小于页面 6s 节拍，同一拍里只回源一次；内存记录实时合并，不受此缓存影响 */
+    private static final long CACHE_TTL_SECONDS = 5;
+    private static final long CACHE_TTL_NANOS = TimeUnit.SECONDS.toNanos(CACHE_TTL_SECONDS);
     /** run id 来自路径变量，拼进 SQL 前必须卡死字符集 */
     private static final Pattern RUN_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:-]{0,79}");
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
@@ -48,22 +55,58 @@ public class BatchHistoryService {
     private final QueryService queries;
     private final PlatformConfig cfg;
 
+    /** 虚拟线程上用 ReentrantLock 而不是 synchronized：锁内是阻塞 JDBC，synchronized 会 pin 住 carrier */
+    private final ReentrantLock cacheLock = new ReentrantLock();
+    private volatile Snapshot cached;
+
     private volatile long probedAtNanos;
     private volatile boolean present;
 
     public record Result(List<BatchRun> runs, RunsView.History history) {
     }
 
+    /** 最近一次读到的列表；limit 变了就重查（页面固定 20，实际只有一种） */
+    private record Snapshot(long atNanos, int limit, Result result) {
+    }
+
     /** 最近 limit 条历史；任何失败都降级成空列表 + 状态说明 */
     public Result recent(int limit) {
         int n = Math.max(1, Math.min(limit, MAX_LIMIT));
+        Result hit = fresh(n);
+        if (hit != null) {
+            return hit;
+        }
+        // 多页面同时到：只让第一个回源，其余等它填完缓存直接复用
+        cacheLock.lock();
+        try {
+            hit = fresh(n);
+            if (hit != null) {
+                return hit;
+            }
+            Result loaded = load(n);
+            cached = new Snapshot(System.nanoTime(), n, loaded);
+            return loaded;
+        } finally {
+            cacheLock.unlock();
+        }
+    }
+
+    private Result fresh(int limit) {
+        Snapshot snapshot = cached;
+        if (snapshot == null || snapshot.limit() != limit) {
+            return null;
+        }
+        return System.nanoTime() - snapshot.atNanos() < CACHE_TTL_NANOS ? snapshot.result() : null;
+    }
+
+    private Result load(int n) {
         String table = table();
         try {
             if (!present()) {
                 return new Result(List.of(), new RunsView.History(RunsView.History.NOT_INITIALIZED,
                         "运行历史表 " + table + " 还没建（先跑一次 init），当前只显示本进程的记录", table));
             }
-            return new Result(select(" order by started_at desc limit " + n),
+            return new Result(List.copyOf(select(" order by started_at desc limit " + n)),
                     new RunsView.History(RunsView.History.OK, null, table));
         } catch (PrestoUnavailableException e) {
             invalidateProbe();
@@ -76,6 +119,12 @@ public class BatchHistoryService {
             return new Result(List.of(), new RunsView.History(RunsView.History.ERROR,
                     "读运行历史失败：" + e.getMessage(), table));
         }
+    }
+
+    /** 作业状态变化后调用：下次读列表立刻回源，也重新探测表在不在 */
+    public void invalidate() {
+        cached = null;
+        invalidateProbe();
     }
 
     /** 服务重启后按 id 找回一条历史；找不到或读不到都返回 null，由调用方给 404 */
@@ -99,7 +148,7 @@ public class BatchHistoryService {
     private List<BatchRun> select(String suffix) {
         String sql = "select run_id, job, command, status, exit_code, started_at, finished_at,"
                 + " duration_ms, log_file, message from " + table() + suffix;
-        QueryResult result = queries.execute(sql, null);
+        QueryResult result = queries.executeQuiet(sql, null);
         List<BatchRun> runs = new ArrayList<>(result.rows().size());
         for (List<String> row : result.rows()) {
             runs.add(toRun(row));
@@ -117,7 +166,7 @@ public class BatchHistoryService {
         String sql = "select count(*) from " + catalog() + ".information_schema.tables"
                 + " where table_schema = '" + LakeTables.OPS_SCHEMA + "'"
                 + " and table_name = '" + LakeTables.BATCH_RUNS + "'";
-        QueryResult result = queries.execute(sql, null);
+        QueryResult result = queries.executeQuiet(sql, null);
         boolean found = !result.rows().isEmpty() && !"0".equals(result.rows().get(0).get(0));
         present = found;
         probedAtNanos = now;

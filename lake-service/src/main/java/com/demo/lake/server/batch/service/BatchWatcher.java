@@ -9,6 +9,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Scheduler;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -28,23 +29,34 @@ public class BatchWatcher {
     private static final long POLL_MILLIS = 500;
     private static final Duration PING_EVERY = Duration.ofSeconds(10);
     private static final int MAX_LINES_PER_POLL = 200;
+    /** 首帧只回放这么多历史行：长日志从头刷一遍会让详情面板等好几秒 */
+    private static final int MAX_TAIL_LINES = 1000;
 
     private final BatchJobService jobs;
     private final Scheduler blocking;
 
-    public Flux<BatchEvent> watch(String id) {
+    public Flux<BatchEvent> watch(String id, int tailLines) {
+        int tail = Math.max(1, Math.min(tailLines, MAX_TAIL_LINES));
         // defer：id 不存在时在这里抛 404，而不是先建一条空流再报错
         return Flux.defer(() -> {
             jobs.get(id);
-            return Flux.<BatchEvent>create(sink -> loop(id, sink), FluxSink.OverflowStrategy.BUFFER)
+            return Flux.<BatchEvent>create(sink -> loop(id, tail, sink), FluxSink.OverflowStrategy.BUFFER)
                     .subscribeOn(blocking);
         });
     }
 
-    private void loop(String id, FluxSink<BatchEvent> sink) {
+    private void loop(String id, int tailLines, FluxSink<BatchEvent> sink) {
         LogTailCursor cursor = new LogTailCursor();
         // 历史记录可能没有日志文件（命令行跑的 / 别的机器），tail 一律当空处理
         Path logFile = BatchJobService.logFile(jobs.get(id));
+        if (logFile != null) {
+            try {
+                // 连着上次看到的尾部开始看，而不是从文件头回放
+                cursor.primeTail(logFile, tailLines);
+            } catch (IOException e) {
+                log.debug("预读作业日志尾部失败: {}", logFile, e);
+            }
+        }
         BatchRun last = null;
         long lastEmit = 0;
         while (!sink.isCancelled()) {

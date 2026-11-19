@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { Loading } from '@element-plus/icons-vue'
-import { api } from '@/api'
+import { api, watchRun } from '@/api'
 import { loadConfig, store } from '@/store'
 import { fmtDuration, fmtJobStatus, fmtTime, statusTone, tagType } from '@/utils'
 import ErrorNotice from '@/components/ErrorNotice.vue'
@@ -20,9 +20,20 @@ const submitting = ref(null)
 const activeRun = ref(null)
 const logTail = ref([])
 const logWrap = ref(null)
+/** SSE 链路是否在跟着：断线退避期间为 false，模板上显示「重连中」 */
+const watching = ref(false)
 
 let listTimer = null
-let pollTimer = null
+let runsLoading = false
+
+/** SSE 监控流与断线重连状态（不放到 ref：它们不参与渲染） */
+let watch = null
+let watchSeq = 0
+let retryTimer = null
+let retryDelay = 1000
+
+/** 详情面板最多留多少行日志：SSE 是增量推送，不截断会一直涨 */
+const MAX_LOG_LINES = 400
 
 // 卡片内容全部由服务端下发（源头是 platform-common 的 LakeJobs.METAS），这里只分组
 const jobCards = computed(() => store.config?.batch?.jobs || [])
@@ -48,6 +59,9 @@ async function scrollLogBottom() {
 }
 
 async function loadRuns() {
+  // 上一轮还没回来就跳过：Presto 慢的时候别让请求排队叠加
+  if (runsLoading) return
+  runsLoading = true
   try {
     const res = await api.runs(20)
     runs.value = res?.runs || []
@@ -55,6 +69,8 @@ async function loadRuns() {
     runsError.value = null
   } catch (e) {
     runsError.value = e
+  } finally {
+    runsLoading = false
   }
 }
 
@@ -66,7 +82,7 @@ async function submit(job) {
     activeRun.value = run
     logTail.value = []
     ElMessage.success(`已提交 ${job}，运行 ID ${run.id}`)
-    poll(run.id)
+    follow(run.id)
     await loadRuns()
   } catch (e) {
     runError.value = e
@@ -76,32 +92,99 @@ async function submit(job) {
   }
 }
 
-async function poll(id) {
-  clearTimeout(pollTimer)
-  try {
-    const detail = await api.run(id, 60)
-    activeRun.value = detail.run
-    logTail.value = detail.tail || []
-    if (detail.run.status === 'RUNNING') {
-      pollTimer = setTimeout(() => poll(id), 2500)
-    } else {
-      const ok = detail.run.status === 'SUCCEEDED'
-      const text = `${detail.run.job} ${fmtJobStatus(detail.run.status)}` +
-        `（耗时 ${fmtDuration(detail.run.durationMs)}）`
-      ok ? ElMessage.success(text) : ElMessage.error(text)
-      await loadRuns()
-    }
-    await scrollLogBottom()
-  } catch (e) {
-    runError.value = e
+/** 停掉当前监控流与待执行的重连 */
+function stopFollow() {
+  watchSeq++ // 让旧流的迟到回调失效
+  watching.value = false
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
   }
+  if (watch) {
+    watch.close()
+    watch = null
+  }
+}
+
+/**
+ * 跟随一次运行的 SSE：status 推状态、log 推日志增量、end 推终态。
+ *
+ * 断线按 1s/2s/4s/5s 退避重连；重连后服务端会重发尾部 80 行日志，
+ * 所以首个 status 到达时先清空日志，避免与断线前的内容重复。
+ */
+function follow(id) {
+  stopFollow()
+  if (document.hidden) return // 后台标签页不建流，切回前台由 visibilitychange 拉起
+  const seq = ++watchSeq
+  retryDelay = 1000
+  let firstStatus = true
+  watch = watchRun(id, {
+    tail: 80,
+    onStatus(run) {
+      if (seq !== watchSeq) return
+      activeRun.value = run
+      watching.value = true
+      retryDelay = 1000 // 收到帧说明链路通，下次断线从 1s 重新退避
+      if (firstStatus) {
+        firstStatus = false
+        logTail.value = []
+      }
+    },
+    onLog(lines) {
+      if (seq !== watchSeq || !lines.length) return
+      logTail.value.push(...lines)
+      if (logTail.value.length > MAX_LOG_LINES) {
+        logTail.value.splice(0, logTail.value.length - MAX_LOG_LINES)
+      }
+      scrollLogBottom()
+    },
+    onEnd(run) {
+      if (seq !== watchSeq) return
+      watch = null
+      watching.value = false
+      watchSeq++ // 终态后不再重连，也不接受迟到事件
+      finishRun(run)
+    },
+    onError() {
+      if (seq !== watchSeq) return
+      watch = null
+      watching.value = false
+      scheduleReconnect(id, seq)
+    }
+  })
+}
+
+/** 终态：详情定格，提示结果并刷新列表 */
+function finishRun(run) {
+  activeRun.value = run
+  const ok = run.status === 'SUCCEEDED'
+  const text = `${run.job} ${fmtJobStatus(run.status)}` +
+    `（耗时 ${fmtDuration(run.durationMs)}）`
+  ok ? ElMessage.success(text) : ElMessage.error(text)
+  loadRuns()
+}
+
+/** 断线重连：后台标签页不重试，切回前台由 visibilitychange 拉起 */
+function scheduleReconnect(id, seq) {
+  if (document.hidden || retryTimer) return
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    if (document.hidden || seq !== watchSeq) return
+    if (!isRunning.value) {
+      // 断线期间作业已经结束：补一次详情即可，不再建流
+      showDetail(id)
+      return
+    }
+    follow(id)
+  }, retryDelay)
+  retryDelay = Math.min(retryDelay * 2, 5000)
 }
 
 async function inspect(run) {
   activeRun.value = run
   logTail.value = []
   if (run.status === 'RUNNING') {
-    poll(run.id)
+    follow(run.id)
     return
   }
   await showDetail(run.id)
@@ -114,9 +197,31 @@ async function showDetail(id) {
     activeRun.value = detail.run
     logTail.value = detail.tail || []
     await scrollLogBottom()
-    if (detail.run.status === 'RUNNING') poll(detail.run.id)
+    if (detail.run.status === 'RUNNING') follow(detail.run.id)
   } catch (e) {
     runError.value = e
+  }
+}
+
+/** 一个轮询节拍：后台标签页跳过；详情由 SSE 推，这里只刷列表 */
+function tick() {
+  if (document.hidden) return
+  loadRuns()
+}
+
+function onVisibility() {
+  if (document.hidden) {
+    // 后台不占用 SSE 连接，也不重连
+    stopFollow()
+    return
+  }
+  tick()
+  if (!activeRun.value) return
+  if (isRunning.value) {
+    follow(activeRun.value.id)
+  } else {
+    // 隐藏期间作业可能已经结束：补一次详情，SSE 就不必再建
+    showDetail(activeRun.value.id)
   }
 }
 
@@ -129,15 +234,14 @@ onMounted(async () => {
     if (hit) await inspect(hit)
     else await showDetail(String(target))
   }
-  listTimer = setInterval(() => {
-    loadRuns()
-    if (isRunning.value) poll(activeRun.value.id)
-  }, 6000)
+  listTimer = setInterval(tick, 6000)
+  document.addEventListener('visibilitychange', onVisibility)
 })
 
 onUnmounted(() => {
   clearInterval(listTimer)
-  clearTimeout(pollTimer)
+  stopFollow()
+  document.removeEventListener('visibilitychange', onVisibility)
 })
 </script>
 
@@ -312,7 +416,9 @@ onUnmounted(() => {
 
         <div class="log-head">
           <span class="faint note">日志尾部（{{ logTail.length }} 行）</span>
-          <el-tag v-if="isRunning" size="small" type="warning" effect="light">跟踪中 · 2.5s</el-tag>
+          <el-tag v-if="isRunning" size="small" type="warning" effect="light">
+            {{ watching ? '实时跟踪' : '连接中断，重连中…' }}
+          </el-tag>
         </div>
         <div ref="logWrap">
           <pre class="log">{{ logText }}</pre>

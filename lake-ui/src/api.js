@@ -144,11 +144,12 @@ function parseFrame(frame) {
 /**
  * 作业监控流：status / log / ping / end。
  *
+ * tail 是首帧回放的历史日志行数：服务端只从文件末尾往前读这么多，不从文件头回放。
  * EventSource 断线后会自己重连，而作业结束后那条连接重连毫无意义，
- * 所以收到 end 或出错就显式 close()，交给调用方决定要不要回退成一次性查询。
+ * 所以收到 end 或出错就显式 close()，交给调用方决定要不要重连。
  */
-export function watchRun(id, { onStatus, onLog, onEnd, onError } = {}) {
-  const es = new EventSource(`${BASE}/api/batch/runs/${encodeURIComponent(id)}/events`)
+export function watchRun(id, { tail = 80, onStatus, onLog, onEnd, onError } = {}) {
+  const es = new EventSource(`${BASE}/api/batch/runs/${encodeURIComponent(id)}/events?tail=${tail}`)
   let closed = false
   const close = () => {
     if (!closed) {

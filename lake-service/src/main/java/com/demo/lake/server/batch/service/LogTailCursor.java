@@ -29,6 +29,8 @@ import java.util.List;
 final class LogTailCursor {
 
     private static final int MAX_CHUNK_BYTES = 64 * 1024;
+    /** 首帧预热只读文件末尾这么多字节：凑不够行数就算了，再往前读会拖慢首屏 */
+    private static final int TAIL_CHUNK_BYTES = 256 * 1024;
     private static final int MAX_LINE_CHARS = 2000;
     private static final int MAX_BACKLOG = 2000;
 
@@ -37,6 +39,85 @@ final class LogTailCursor {
     private byte[] carry = new byte[0];
 
     /**
+     * 打开连接时的预热：只留文件末尾 maxLines 行，offset 直接停在文件尾，
+     * 避免已经有几 MB 的 spark 日志被从头回放一遍。
+     *
+     * <p>块首被截断的半行直接丢弃；块尾未换行的尾巴留在 carry，等下一次 poll 补全。</p>
+     */
+    void primeTail(Path file, int maxLines) throws IOException {
+        if (maxLines <= 0 || !Files.isReadable(file)) {
+            return;
+        }
+        try (SeekableByteChannel channel = Files.newByteChannel(file, StandardOpenOption.READ)) {
+            long size = channel.size();
+            if (size == 0) {
+                return;
+            }
+            int want = (int) Math.min(TAIL_CHUNK_BYTES, size);
+            long from = size - want;
+            channel.position(from);
+            ByteBuffer buffer = ByteBuffer.allocate(want);
+            while (buffer.hasRemaining() && channel.read(buffer) > 0) {
+                // 读满尾部块
+            }
+            byte[] chunk = Arrays.copyOf(buffer.array(), buffer.position());
+            offset = from + chunk.length;
+            carry = new byte[0];
+
+            int start = 0;
+            if (from > 0) {
+                // 从文件中间开始，第一行大概率是被截断的，从下一个换行之后算起
+                int newline = indexOfNewline(chunk);
+                if (newline < 0) {
+                    // 整块只是半行：先攒着，下一轮和新增内容拼成完整行
+                    carry = chunk;
+                    return;
+                }
+                start = newline + 1;
+            }
+            keepTailLines(chunk, start, maxLines);
+        }
+    }
+
+    private static int indexOfNewline(byte[] chunk) {
+        for (int i = 0; i < chunk.length; i++) {
+            if (chunk[i] == '\n') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** 从 start 开始按行切，deque 只留最后 maxLines 行；末尾未换行的半行留在 carry */
+    private void keepTailLines(byte[] chunk, int start, int maxLines) {
+        int lineStart = start;
+        for (int i = start; i < chunk.length; i++) {
+            if (chunk[i] != '\n') {
+                continue;
+            }
+            int length = i - lineStart;
+            if (length > 0 && chunk[i - 1] == '\r') {
+                length--;
+            }
+            backlog.addLast(truncate(new String(chunk, lineStart, length, StandardCharsets.UTF_8)));
+            while (backlog.size() > maxLines) {
+                backlog.pollFirst();
+            }
+            lineStart = i + 1;
+        }
+        carry = Arrays.copyOfRange(chunk, lineStart, chunk.length);
+        if (carry.length > MAX_LINE_CHARS * 4) {
+            backlog.addLast(truncate(new String(carry, StandardCharsets.UTF_8)));
+            while (backlog.size() > maxLines) {
+                backlog.pollFirst();
+            }
+            carry = new byte[0];
+        }
+    }
+
+    /**
+     * 增量读取：只吐上次之后新增的行（按字节找换行，避免多字节字符被切坏）。
+     *
      * @param maxLines 本次最多返回多少行；一次读进来的行更多时，余下的留在 backlog，下次接着吐
      */
     List<String> poll(Path file, int maxLines) throws IOException {
