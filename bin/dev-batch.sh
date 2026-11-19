@@ -17,14 +17,31 @@ if [[ -d "${HOME}/.m2/repository" ]]; then
   REPO_ARGS+=("-Dmaven.repo.local=${HOME}/.m2/repository")
 fi
 
-# 仓库是 s3a:// 时必须激活 s3 profile（iceberg-aws-bundle + hadoop-aws 只在这个 profile 里，
-# 不激活会报找不到 S3FileIO / s3a）：
-#   MVN_PROFILE=s3 bin/dev-batch.sh --job all
-# 被 lake-service 的作业编排拉起时，子进程继承父进程环境变量，所以要么给服务进程挂上
-# MVN_PROFILE=s3，要么把 command-template 写成 env MVN_PROFILE=s3 bin/dev-batch.sh --job {job}
+# 仓库是 s3a:// / s3:// 时必须激活 s3 profile（iceberg-aws-bundle + hadoop-aws 只在这个 profile 里，
+# 不激活会报 NoClassDefFoundError: software/amazon/awssdk/services/s3/model/S3Exception）。
+# 这里按「生效的 warehouse」自动判断，取法跟 PlatformConfig 一致：LAKE_WAREHOUSE 环境变量优先，
+# 其次 conf/platform.properties。显式给了 MVN_PROFILE 则以它为准，不再自动猜。
+# 被 lake-service 的作业编排拉起时走的就是自动判断，不需要给服务进程挂环境变量。
+effective_warehouse() {
+  local w="${LAKE_WAREHOUSE:-}"
+  if [[ -z "$w" && -r conf/platform.properties ]]; then
+    w="$(sed -n 's/^[[:space:]]*platform\.warehouse[[:space:]]*=[[:space:]]*//p' conf/platform.properties \
+      | tail -n 1 | tr -d '\r' | sed -e 's/[[:space:]]*$//')"
+  fi
+  printf '%s' "$w"
+}
+
 PROFILE_ARGS=()
 if [[ -n "${MVN_PROFILE:-}" ]]; then
   PROFILE_ARGS+=("-P${MVN_PROFILE}")
+else
+  WAREHOUSE="$(effective_warehouse)"
+  case "$WAREHOUSE" in
+    s3://*|s3a://*)
+      PROFILE_ARGS+=("-Ps3")
+      echo "warehouse=${WAREHOUSE} 是对象存储，自动激活 s3 profile"
+      ;;
+  esac
 fi
 
 # 先 package 再 exec：同一个 Maven 会话里 platform-common 才能被解析到

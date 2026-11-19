@@ -24,7 +24,8 @@ const logWrap = ref(null)
 const watching = ref(false)
 
 let listTimer = null
-let runsLoading = false
+/** 列表请求是否在飞：轮询与手动刷新共用，刷新按钮的 loading 也绑它 */
+const runsLoading = ref(false)
 
 /** SSE 监控流与断线重连状态（不放到 ref：它们不参与渲染） */
 let watch = null
@@ -60,8 +61,8 @@ async function scrollLogBottom() {
 
 async function loadRuns() {
   // 上一轮还没回来就跳过：Presto 慢的时候别让请求排队叠加
-  if (runsLoading) return
-  runsLoading = true
+  if (runsLoading.value) return
+  runsLoading.value = true
   try {
     const res = await api.runs(20)
     runs.value = res?.runs || []
@@ -70,7 +71,7 @@ async function loadRuns() {
   } catch (e) {
     runsError.value = e
   } finally {
-    runsLoading = false
+    runsLoading.value = false
   }
 }
 
@@ -305,7 +306,7 @@ onUnmounted(() => {
             <span class="card-title">运行记录</span>
             <el-tag size="small" effect="light" type="info">最近 20 次</el-tag>
           </div>
-          <el-button size="small" text @click="loadRuns">刷新</el-button>
+          <el-button size="small" text :loading="runsLoading" @click="loadRuns">刷新</el-button>
         </div>
       </template>
 

@@ -12,9 +12,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -146,7 +143,12 @@ public class BatchHistoryService {
     }
 
     private List<BatchRun> select(String suffix) {
-        String sql = "select run_id, job, command, status, exit_code, started_at, finished_at,"
+        // 时间列取 epoch 毫秒：Presto 的 timestamp 不带时区，cast 成 varchar 或驱动转成
+        // java.sql.Timestamp 都会按会话时区重排（同一行在 UTC 会话与 Asia/Shanghai 会话下差 8 小时），
+        // 只有 to_unixtime 这种绝对时刻换算与连接时区无关。
+        String sql = "select run_id, job, command, status, exit_code,"
+                + " cast(round(to_unixtime(started_at) * 1000) as bigint) as started_ms,"
+                + " cast(round(to_unixtime(finished_at) * 1000) as bigint) as finished_ms,"
                 + " duration_ms, log_file, message from " + table() + suffix;
         QueryResult result = queries.executeQuiet(sql, null);
         List<BatchRun> runs = new ArrayList<>(result.rows().size());
@@ -197,8 +199,8 @@ public class BatchHistoryService {
                 text(row, 2),
                 text(row, 3),
                 toInt(text(row, 4)),
-                toInstant(text(row, 5)),
-                toInstant(text(row, 6)),
+                toInstantMillis(text(row, 5)),
+                toInstantMillis(text(row, 6)),
                 toLong(text(row, 7)),
                 text(row, 8),
                 text(row, 9));
@@ -209,19 +211,12 @@ public class BatchHistoryService {
     }
 
     /**
-     * Presto 的 timestamp 不带时区，写入侧会话时区固定 UTC（platform.spark.timezone），
-     * 读回来的字面量就是 UTC 墙钟，按 UTC 解释即可。
+     * 入参是 SQL 里算出来的 epoch 毫秒。不能直接取 timestamp：无论 cast 成字符串还是驱动转成
+     * java.sql.Timestamp，都会按会话时区/ JVM 时区重排，同一时刻在不同时区下得到不同值。
      */
-    private static Instant toInstant(String text) {
-        if (text == null || text.isBlank()) {
-            return null;
-        }
-        try {
-            return LocalDateTime.parse(text.trim().replace(' ', 'T')).toInstant(ZoneOffset.UTC);
-        } catch (DateTimeParseException e) {
-            log.warn("历史记录时间解析失败: {}", text);
-            return null;
-        }
+    private static Instant toInstantMillis(String text) {
+        Long millis = toLong(text);
+        return millis == null ? null : Instant.ofEpochMilli(millis);
     }
 
     private static Integer toInt(String text) {

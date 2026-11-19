@@ -191,7 +191,8 @@ bin/infra.sh doctor               # 端口 / HTTP / Presto 端到端自检
 
 # 2. 用集群配置跑批（Hive catalog + s3a 仓库）
 cp conf/platform.properties.example conf/platform.properties
-MVN_PROFILE=s3 bin/dev-batch.sh --job all      # s3 profile 带上 iceberg-aws-bundle + hadoop-aws
+bin/dev-batch.sh --job all       # 脚本看 warehouse 是 s3a:// 就自动带 -Ps3（iceberg-aws-bundle + hadoop-aws）
+                                 # 想指定别的 profile 时用 MVN_PROFILE=xxx 覆盖，脚本就不再自动判断
 
 # 3. Presto 即席查询
 bin/presto-query.sh --list
