@@ -27,7 +27,7 @@ Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的
 | JDK | 11（批处理）/ 21（服务层） | Spark 3.5 官方支持到 17，所以批处理模块产出 Java 11 字节码；`lake-service` 用 21 |
 | Spark | 3.5.1 (Scala 2.12) | 批处理 |
 | Iceberg | 1.5.2 | `iceberg-spark-runtime-3.5_2.12` |
-| Trino | 476 | 服务端镜像 `trinodb/trino:476` + `trino-jdbc` 客户端 |
+| Trino | 476 | 服务端镜像 `trinodb/trino:476` + 官方 `trino-jdbc`（lake-service 查询与 lake-adhoc 即席查询共用） |
 | Spring Boot | 4.1.2 | WebFlux + Actuator，Spring Framework 7 / Reactor Netty / Jakarta EE 11 |
 | 控制台 | Vue 3.5 + vue-router 4 + Vite 7 | 独立工程 `lake-ui/`，构建产物进 `static/ui/` |
 | 日志 | log4j2（批处理）/ logback（服务层） | Spark 发行版绑死 log4j2；Web 服务用 Boot 默认的 logback |
@@ -46,9 +46,10 @@ lakehouse-demo/
 │       ├── catalog/TransformSql.java     MERGE / 汇总 SQL
 │       ├── catalog/TableRef.java         catalog.db.table
 │       ├── sql/SqlScript.java            读脚本、按分号切分
-│       └── cli/Args.java                 极简参数解析
+│       ├── cli/Args.java                 极简参数解析
+│       └── cli/SqlParams.java            即席查询 ${var} 替换 + 缺参跳过（供 lake-adhoc 调用）
 ├── spark-batch/              批处理：init / ingest / transform / evolve / maintain / show / verify-sql
-├── trino-adhoc/              即席查询 CLI：JDBC 客户端 + 表格化输出 + QueryStats
+├── lake-adhoc/               即席查询：官方 trino-jdbc 薄封装 + SqlParams 预处理 + 表格输出
 ├── lake-service/             Spring Boot 4 服务层：查询/作业 REST + SSE 流 + 控制台页面
 ├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 配置
 ├── sql/adhoc/                可以直接丢给 Trino 的查询脚本
@@ -229,7 +230,13 @@ bin/infra.sh up trino
 bin/trino-query.sh --list
 bin/trino-query.sh --sql-file sql/adhoc/01_daily_revenue.sql
 bin/trino-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
+# 占位符参数化：${var} 由 platform-common:SqlParams 预处理，缺参的语句自动跳过
+bin/trino-query.sh --sql-file sql/adhoc/04_time_travel.sql --params snapshot_id=123456
 ```
+
+> 即席查询由 `lake-adhoc` 模块承载：协议层用**官方 `trino-jdbc`**（与 lake-service 同一套 client，只要 JDBC URL，不依赖 `trino` 命令或 `docker exec`），
+> 项目只保留 `${var}` 预处理（`platform-common` 的 `SqlParams`，复用 `SqlScript.split()` 切句）和表格显示层（`TableFormatter`，处理中文对齐）。
+> 一次 `mvn exec:java` 完成预处理 + 执行 + 输出；`--limit`（默认 200）做客户端截断。
 
 > 安装、镜像加速、端口、扩展新依赖（Kafka/ClickHouse/Redis……）和排错，全部见
 > **[`infra/README.md`](infra/README.md)**。

@@ -18,6 +18,8 @@ public final class SemanticCatalog {
                     LakeTables.GOLD_DAILY_REVENUE, "sum(buyer_cnt)", GOLD_DIMENSIONS),
             new MetricDefinition("net_revenue", "净收入", "GMV 扣掉退款后的金额之和",
                     LakeTables.GOLD_DAILY_REVENUE, "sum(net_revenue)", GOLD_DIMENSIONS),
+            // 权威口径：sql/adhoc/01_daily_revenue.sql 的 refund_rate 须与此保持一致
+            // （退款金额/GMV、nullif 防除零、返回比例 0~1），改动此处时请同步该脚本。
             new MetricDefinition("refund_rate", "退款率", "退款金额 / GMV",
                     LakeTables.GOLD_DAILY_REVENUE, "sum(refund_amount) / nullif(sum(gmv), 0)", GOLD_DIMENSIONS));
 

@@ -1,37 +1,31 @@
-package com.demo.lake.trino;
+package com.demo.lake.adhoc;
 
 import com.demo.lake.common.cli.Args;
+import com.demo.lake.common.cli.SqlParams;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.common.sql.SqlScript;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Trino 即席查询 CLI。
+ * 即席查询入口：一次 JVM 内完成「SQL 预处理（SqlParams）→ 官方 trino-jdbc 执行 → 表格输出」。
  *
- * <pre>
- * mvn -pl trino-adhoc exec:java -Dexec.args="--sql-file sql/adhoc/01_daily_revenue.sql"
- * mvn -pl trino-adhoc exec:java -Dexec.args="--sql \"select count(*) from iceberg.lake.silver_orders\""
- * mvn -pl trino-adhoc exec:java -Dexec.args="--list"
- * </pre>
+ * <p>协议层完全交给官方 trino-jdbc，项目只保留 ${var} 参数化这一层业务约定，
+ * 不重复实现客户端。配置（catalog/database/trino 地址）来自 platform-common 的 PlatformConfig。
  */
-public final class TrinoAdhocRunner {
+public final class TrinoQuery {
 
     private static final Path SCRIPT_DIR = Paths.get("sql", "adhoc");
-    private static final Pattern VAR = Pattern.compile("\\$\\{([a-zA-Z0-9_.-]+)}");
 
     public static void main(String[] argv) {
         Args args = Args.parse(argv);
@@ -56,10 +50,10 @@ public final class TrinoAdhocRunner {
             return;
         }
 
-        List<String> statements;
+        String script;
         String title;
         if (inlineSql != null) {
-            statements = SqlScript.split(inlineSql);
+            script = inlineSql;
             title = "inline";
         } else {
             Path path = Paths.get(file);
@@ -68,48 +62,45 @@ public final class TrinoAdhocRunner {
                 System.exit(2);
                 return;
             }
-            statements = SqlScript.split(SqlScript.read(path));
+            script = SqlScript.read(path);
             title = path.getFileName().toString();
         }
 
-        Map<String, String> params = parseParams(args.get("params"));
-        boolean printOnly = args.flag("print-only");
         boolean explain = args.flag("explain");
-        int limit = args.getInt("limit", 200);
+        boolean printOnly = args.flag("print-only");
         boolean showStats = args.flag("stats");
+        boolean failFast = args.flag("fail-fast");
+        int limit = args.getInt("limit", 200);
         int timeout = args.getInt("timeout", 300);
+        Map<String, String> params = parseParams(args.get("params"));
 
-        PlatformConfig cfg = PlatformConfig.load(args.has("conf") ? Paths.get(args.get("conf")) : null);
-        String url = args.get("url", cfg.trinoJdbcUrl());
-        String user = args.get("user", cfg.trinoUser());
-
-        System.out.println("Trino: " + url + "  (user=" + user + ", script=" + title
-                + ", statements=" + statements.size() + ")");
-
-        List<String> runnable = new ArrayList<>();
-        for (String stmt : statements) {
-            String resolved = substitute(stmt, params);
-            if (VAR.matcher(resolved).find()) {
-                System.out.println("-- 跳过（缺少参数）: " + SqlScript.oneLine(stmt, 90));
-                continue;
-            }
-            runnable.add(explain && !resolved.trim().toUpperCase().startsWith("EXPLAIN")
-                    ? "EXPLAIN " + resolved : resolved);
+        // 预处理：SqlParams 复用 SqlScript.split() 精确切句，替换 ${var}，缺参跳过
+        List<String> statements = SqlParams.prepare(script, params, explain);
+        if (statements.isEmpty()) {
+            System.err.println("[!] 预处理后没有可执行的 SQL（可能全部语句都缺参数）");
+            System.exit(1);
+            return;
         }
 
         if (printOnly) {
-            for (int i = 0; i < runnable.size(); i++) {
+            for (int i = 0; i < statements.size(); i++) {
                 System.out.println("\n-- [" + (i + 1) + "]");
-                System.out.println(runnable.get(i).trim() + ";");
+                System.out.println(statements.get(i));
             }
             return;
         }
 
+        PlatformConfig cfg = PlatformConfig.load(args.has("conf") ? Paths.get(args.get("conf")) : null);
+        String url = resolveUrl(args, cfg);
+        String user = args.get("user", cfg.trinoUser());
+
+        System.out.println("Trino: " + url + " (user=" + user + ", script=" + title
+                + ", statements=" + statements.size() + ")");
+
         try (TrinoClient client = TrinoClient.connect(url, user, cfg.trinoSource(), timeout)) {
-            int index = 0;
-            for (String sql : runnable) {
-                index++;
-                System.out.println("\n--- [" + index + "/" + runnable.size() + "] "
+            for (int i = 0; i < statements.size(); i++) {
+                String sql = statements.get(i);
+                System.out.println("\n--- [" + (i + 1) + "/" + statements.size() + "] "
                         + SqlScript.oneLine(sql, 120));
                 try {
                     TrinoClient.QueryResult result = client.execute(sql, limit);
@@ -121,7 +112,7 @@ public final class TrinoAdhocRunner {
                     }
                 } catch (SQLException e) {
                     System.err.println("[失败] " + e.getMessage());
-                    if (args.flag("fail-fast")) {
+                    if (failFast) {
                         System.exit(1);
                     }
                 }
@@ -129,18 +120,27 @@ public final class TrinoAdhocRunner {
         } catch (SQLException e) {
             System.err.println("无法连接 Trino: " + url);
             System.err.println("  原因: " + e.getMessage());
-            System.err.println();
-            System.err.println("排查建议:");
-            System.err.println("  1) 启动 Trino + HMS + MinIO:  bin/infra.sh up trino");
-            System.err.println("  2) 或先不装 Trino，用 Spark 校验同一份 SQL:");
-            System.err.println("     mvn -pl spark-batch -am exec:java "
-                    + "-Dexec.args=\"--job verify-sql --sql-file " + (file == null ? "sql/adhoc/01_daily_revenue.sql" : file) + "\"");
+            System.err.println("  提示: 先执行 bin/infra.sh up trino，或检查 --server / conf/platform.properties");
             System.exit(3);
         }
     }
 
+    /** URL 优先级：--url（完整 JDBC）> --server（http://host:port）> PlatformConfig.trinoJdbcUrl() */
+    private static String resolveUrl(Args args, PlatformConfig cfg) {
+        String explicit = args.get("url");
+        if (explicit != null && !explicit.isBlank()) {
+            return explicit;
+        }
+        String server = args.get("server");
+        if (server != null && !server.isBlank()) {
+            String base = server.replaceFirst("^https?://", "").replaceAll("/$", "");
+            return "jdbc:trino://" + base + "/" + cfg.catalogName() + "/" + cfg.database();
+        }
+        return cfg.trinoJdbcUrl();
+    }
+
     private static Map<String, String> parseParams(String raw) {
-        Map<String, String> map = new HashMap<>();
+        Map<String, String> map = new LinkedHashMap<>();
         if (raw == null || raw.trim().isEmpty()) {
             return map;
         }
@@ -151,21 +151,6 @@ public final class TrinoAdhocRunner {
             }
         }
         return map;
-    }
-
-    private static String substitute(String sql, Map<String, String> params) {
-        if (params.isEmpty()) {
-            return sql;
-        }
-        Matcher m = VAR.matcher(sql);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String key = m.group(1);
-            String value = params.get(key);
-            m.appendReplacement(sb, Matcher.quoteReplacement(value == null ? m.group(0) : value));
-        }
-        m.appendTail(sb);
-        return sb.toString();
     }
 
     private static void listScripts() {
@@ -179,10 +164,9 @@ public final class TrinoAdhocRunner {
                     .sorted(Comparator.comparing(p -> p.getFileName().toString()))
                     .collect(Collectors.toList());
             for (Path p : files) {
-                String first = firstComment(p);
-                System.out.printf("  %-28s %s%n", p.getFileName(), first);
+                System.out.printf("  %-28s %s%n", p.getFileName(), firstComment(p));
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.err.println("列目录失败: " + e.getMessage());
         }
     }
@@ -193,29 +177,30 @@ public final class TrinoAdhocRunner {
                     .filter(l -> l.trim().startsWith("--"))
                     .map(l -> l.replaceFirst("^\\s*--\\s?", ""))
                     .findFirst().orElse("");
-        } catch (IOException e) {
+        } catch (Exception e) {
             return "";
         }
     }
 
     private static void printUsage() {
-        System.out.println("Trino 即席查询 CLI");
+        System.out.println("即席查询（SqlParams 预处理 + 官方 trino-jdbc 执行）");
         System.out.println();
-        System.out.println("用法:");
-        System.out.println("  --sql-file <path>    执行 SQL 文件（可含多条语句）");
+        System.out.println("用法: bin/trino-query.sh [选项]");
+        System.out.println("  --sql-file <path>    执行 SQL 文件（可含多条语句、${var} 占位符）");
         System.out.println("  --sql \"<sql>\"         直接执行一条 SQL");
         System.out.println("  --list               列出 sql/adhoc 下的脚本");
-        System.out.println("  --url <jdbc url>     默认取自配置: jdbc:trino://host:port/catalog/schema");
-        System.out.println("  --user <user>        默认 demo");
+        System.out.println("  --params k1=v1,k2=v2 替换 SQL 里的 ${k1}（缺参的语句自动跳过）");
+        System.out.println("  --explain            自动给语句加 EXPLAIN 前缀");
+        System.out.println("  --print-only         只打印预处理后的 SQL，不连服务");
+        System.out.println("  --server <url>       http://host:port，默认取自 PlatformConfig");
+        System.out.println("  --url <jdbc url>     完整 JDBC URL（优先级最高）");
+        System.out.println("  --user <user>        默认取自 PlatformConfig");
         System.out.println("  --limit <n>          最多显示行数，默认 200");
         System.out.println("  --timeout <sec>      查询超时，默认 300");
-        System.out.println("  --params k1=v1,k2=v2 替换 SQL 里的 ${k1}");
-        System.out.println("  --explain            自动加 EXPLAIN 前缀");
-        System.out.println("  --print-only         只打印要执行的语句，不连服务");
         System.out.println("  --stats              打印 Trino QueryStats");
         System.out.println("  --fail-fast          某条语句失败即退出");
     }
 
-    private TrinoAdhocRunner() {
+    private TrinoQuery() {
     }
 }

@@ -1,11 +1,7 @@
-package com.demo.lake.trino;
+package com.demo.lake.adhoc;
 
 import io.trino.jdbc.QueryStats;
 import io.trino.jdbc.TrinoResultSet;
-import lombok.AccessLevel;
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-import lombok.experimental.Accessors;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -20,8 +16,8 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * Trino JDBC 薄封装：连一个 coordinator，跑一条语句，拿回列/行/耗时。
- * 不缓存连接池——即席查询 CLI 一次一个会话，够了。
+ * 官方 trino-jdbc 的薄封装：连一个 coordinator，跑一条语句，拿回列/行/耗时/stats。
+ * 不缓存连接池——即席查询一次一个会话，够了；协议层完全由官方驱动负责，这里只是调用与结果整形。
  */
 public final class TrinoClient implements AutoCloseable {
 
@@ -39,7 +35,6 @@ public final class TrinoClient implements AutoCloseable {
         props.setProperty("user", user);
         // 会话时区固定 UTC：湖表里的 timestamp 是 UTC 墙钟，用机器时区解释会整体偏移
         props.setProperty("timezone", "UTC");
-        // source 是驱动认的连接属性，会作为查询来源上报到 coordinator
         if (source != null && !source.isBlank()) {
             props.setProperty("source", source);
         }
@@ -82,7 +77,6 @@ public final class TrinoClient implements AutoCloseable {
 
                 long elapsedMs = (System.nanoTime() - start) / 1_000_000;
                 String stats = null;
-                // QueryStats 没有重写 toString，直接打会得到类名@hash；这里只挑稳定且对排查有用的字段
                 if (rs instanceof TrinoResultSet) {
                     QueryStats s = ((TrinoResultSet) rs).getStats();
                     if (s != null) {
@@ -106,8 +100,7 @@ public final class TrinoClient implements AutoCloseable {
             return ((BigDecimal) value).toPlainString();
         }
         if (value instanceof Timestamp) {
-            // Timestamp.toString() 按 JVM 默认时区渲染（本机 UTC+8，会把 UTC 时刻显示成 +8），
-            // 这里输出 ISO-8601 绝对时刻，display 和 session 时区都无关
+            // Timestamp.toString() 按 JVM 默认时区渲染，这里输出 ISO-8601 绝对时刻
             return ((Timestamp) value).toInstant().toString();
         }
         if (value instanceof java.sql.Date || value instanceof java.sql.Time) {
@@ -129,14 +122,26 @@ public final class TrinoClient implements AutoCloseable {
     }
 
     /** 一次查询的结果快照 */
-    @Getter
-    @Accessors(fluent = true)
-    @RequiredArgsConstructor(access = AccessLevel.PACKAGE)
     public static final class QueryResult {
         private final List<String> headers;
         private final List<List<String>> rows;
         private final boolean truncated;
         private final long elapsedMs;
         private final String stats;
+
+        QueryResult(List<String> headers, List<List<String>> rows, boolean truncated,
+                    long elapsedMs, String stats) {
+            this.headers = headers;
+            this.rows = rows;
+            this.truncated = truncated;
+            this.elapsedMs = elapsedMs;
+            this.stats = stats;
+        }
+
+        public List<String> headers() { return headers; }
+        public List<List<String>> rows() { return rows; }
+        public boolean truncated() { return truncated; }
+        public long elapsedMs() { return elapsedMs; }
+        public String stats() { return stats; }
     }
 }

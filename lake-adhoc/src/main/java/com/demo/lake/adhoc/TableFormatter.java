@@ -1,9 +1,9 @@
-package com.demo.lake.trino;
+package com.demo.lake.adhoc;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** 把结果集渲染成带边框的文本表格（终端里看 ad-hoc 结果够用了，不导出 CSV） */
+/** 把结果集渲染成带边框的文本表格（纯显示层，处理 CJK 宽字符对齐） */
 public final class TableFormatter {
 
     private static final int MAX_CELL = 60;
@@ -76,14 +76,14 @@ public final class TableFormatter {
         return (cp >= 0x1100 && cp <= 0x115F)            // 韩文字母
                 || cp == 0x2329 || cp == 0x232A
                 || (cp >= 0x2E80 && cp <= 0xA4CF && cp != 0x303F) // CJK 部首、假名、汉字等
-                || (cp >= 0xAC00 && cp <= 0xD7A3)        // 韩文音节
-                || (cp >= 0xF900 && cp <= 0xFAFF)        // CJK 兼容汉字
-                || (cp >= 0xFE10 && cp <= 0xFE19)        // 竖排标点
-                || (cp >= 0xFE30 && cp <= 0xFE6F)        // CJK 兼容形式
-                || (cp >= 0xFF00 && cp <= 0xFF60)        // 全角字符
-                || (cp >= 0xFFE0 && cp <= 0xFFE6)
-                || (cp >= 0x1F300 && cp <= 0x1FAFF)      // emoji
-                || (cp >= 0x20000 && cp <= 0x3FFFD);     // CJK 扩展区
+                || cp >= 0xAC00 && cp <= 0xD7A3            // 韩文音节
+                || cp >= 0xF900 && cp <= 0xFAFF            // CJK 兼容汉字
+                || cp >= 0xFE10 && cp <= 0xFE19            // 竖排标点
+                || cp >= 0xFE30 && cp <= 0xFE6F            // CJK 兼容形式
+                || cp >= 0xFF00 && cp <= 0xFF60            // 全角字符
+                || cp >= 0xFFE0 && cp <= 0xFFE6
+                || cp >= 0x1F300 && cp <= 0x1FAFF          // emoji
+                || cp >= 0x20000 && cp <= 0x3FFFD;         // CJK 扩展区
     }
 
     private static void appendLine(StringBuilder sb, int[] widths) {

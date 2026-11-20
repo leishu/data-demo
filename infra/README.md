@@ -241,6 +241,8 @@ bin/infra.sh doctor
 # 即席查询（Trino 默认没起，先拉起来）
 bin/infra.sh up trino
 bin/trino-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
+# ${var} 占位符由 SqlParams 预处理，缺参语句跳过；执行用 lake-adhoc 的官方 trino-jdbc
+bin/trino-query.sh --sql-file sql/adhoc/04_time_travel.sql --params snapshot_id=123456
 ```
 
 要点：

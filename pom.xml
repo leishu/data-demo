@@ -15,7 +15,7 @@
   <modules>
     <module>platform-common</module>
     <module>spark-batch</module>
-    <module>trino-adhoc</module>
+    <module>lake-adhoc</module>
     <module>lake-service</module>
   </modules>
 
