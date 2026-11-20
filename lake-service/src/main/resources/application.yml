@@ -11,6 +11,17 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 20s
 
+# 接口文档：OpenAPI JSON + Swagger UI。路径显式写在这里，改反代规则时一眼能看到
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+  # 已有 @RestControllerAdvice 统一错误体，别再给每个接口塞一个泛化的 500 响应
+  override-with-generic-response: false
+
 management:
   endpoints:
     web:

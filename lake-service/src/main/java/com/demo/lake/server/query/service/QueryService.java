@@ -290,15 +290,20 @@ public class QueryService {
     }
 
     private static String format(Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof BigDecimal decimal) {
-            return decimal.toPlainString();
-        }
-        if (value instanceof Timestamp timestamp) {
-            // 不能用 Timestamp.toString()：它按 JVM 默认时区渲染，会把 UTC 时刻显示成 +8
-            return timestamp.toInstant().toString();
+        switch (value) {
+            case null -> {
+                return null;
+            }
+            case BigDecimal decimal -> {
+                return decimal.toPlainString();
+            }
+            case Timestamp timestamp -> {
+                // 不能用 Timestamp.toString()：它按 JVM 默认时区渲染，会把 UTC 时刻显示成 +8
+                return timestamp.toInstant().toString();
+                // 不能用 Timestamp.toString()：它按 JVM 默认时区渲染，会把 UTC 时刻显示成 +8
+            }
+            default -> {
+            }
         }
         if (value instanceof java.sql.Date || value instanceof java.sql.Time) {
             return value.toString();

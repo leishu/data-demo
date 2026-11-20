@@ -13,6 +13,12 @@ import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.model.TableInfo;
 import com.demo.lake.server.query.service.QueryQuotaService;
 import com.demo.lake.server.query.service.QueryService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
@@ -36,6 +42,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 @RequiredArgsConstructor
+@Tag(name = "即席查询", description = "Trino SQL 查询（同步 / SSE）、表清单与采样。需要 QUERY 角色")
 public class QueryController {
 
     private final QueryService queryService;
@@ -46,12 +53,23 @@ public class QueryController {
     private final PlatformConfig cfg;
     private final LakeProperties props;
 
-    public record QueryRequest(String sql, Integer maxRows) {
+    public record QueryRequest(
+            @Schema(description = "SQL 文本；只读白名单：select / with / show / describe / explain，必须单条语句",
+                    example = "select * from lake.default.orders limit 10") String sql,
+            @Schema(description = "最多返回行数；不传用 lake.query.max-rows", example = "100") Integer maxRows) {
     }
 
+    @Operation(summary = "同步执行 SQL", description = "返回列定义、行、耗时与 truncated 标记。受并发与每分钟配额约束")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "查询结果"),
+            @ApiResponse(responseCode = "400", description = "SQL 不合法或未通过只读白名单"),
+            @ApiResponse(responseCode = "429", description = "查询配额超限（并发数或每分钟次数）"),
+            @ApiResponse(responseCode = "503", description = "Trino 暂不可用")
+    })
     @PostMapping("/query")
-    public Mono<QueryResult> query(@RequestBody QueryRequest request, Principal principal,
-                                   ServerHttpRequest http) {
+    public Mono<QueryResult> query(@RequestBody QueryRequest request,
+                                   @Parameter(hidden = true) Principal principal,
+                                   @Parameter(hidden = true) ServerHttpRequest http) {
         // 配额只罩用户发起的查询：内部读运行历史走 QueryService，不占名额
         String actor = client(principal);
         String ip = clientIp(http);
@@ -91,9 +109,15 @@ public class QueryController {
      * <p>用 POST 而不是 GET（EventSource 只支持 GET）：SQL 放 query string 会被访问日志完整记下来，
      * 也容易被 URL 长度限制卡住；前端用 fetch + ReadableStream 解帧，代价只是几十行解析代码。</p>
      */
+    @Operation(summary = "流式执行 SQL（SSE）", description = """
+            同一条 SQL 的流式版本，事件依次是 meta → rows(多批) → done；失败发 error 事件。
+            用 POST 是为了把 SQL 放在 body 而不是 URL（避免访问日志记录原文和长度限制），
+            前端需 fetch + ReadableStream 解帧，EventSource 不适用。
+            """)
     @PostMapping(value = "/query/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request, Principal principal,
-                                                         ServerHttpRequest http) {
+    public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request,
+                                                         @Parameter(hidden = true) Principal principal,
+                                                         @Parameter(hidden = true) ServerHttpRequest http) {
         String actor = client(principal);
         String ip = clientIp(http);
         return Flux.usingWhen(quotas.acquire(actor),
@@ -119,17 +143,20 @@ public class QueryController {
                 });
     }
 
+    @Operation(summary = "表清单", description = "读 information_schema，返回当前库的表及字段（字段 comment 即 DDL 里的中文名）")
     @GetMapping("/tables")
-    public Mono<List<TableInfo>> tables(Principal principal) {
+    public Mono<List<TableInfo>> tables(@Parameter(hidden = true) Principal principal) {
         return Mono.usingWhen(quotas.acquire(client(principal)),
                 permit -> queryService.listTables(),
                 quotas::release);
     }
 
+    @Operation(summary = "表采样", description = "按 limit 采样一张表，返回结构与 /api/query 相同")
     @GetMapping("/tables/{table}/sample")
-    public Mono<QueryResult> sample(@PathVariable String table,
-                                    @RequestParam(defaultValue = "10") int limit,
-                                    Principal principal) {
+    public Mono<QueryResult> sample(
+            @Parameter(description = "表名", example = "orders") @PathVariable String table,
+            @Parameter(description = "采样行数，默认 10") @RequestParam(defaultValue = "10") int limit,
+            @Parameter(hidden = true) Principal principal) {
         return Mono.usingWhen(quotas.acquire(client(principal)),
                 permit -> queryService.sample(table, limit),
                 quotas::release);
@@ -141,6 +168,7 @@ public class QueryController {
     }
 
     /** 有效配置回显：只给非敏感项，S3 密钥用 PlatformConfig.describe() 打码后的结果 */
+    @Operation(summary = "生效配置回显", description = "只回显非敏感项；S3 密钥等由 PlatformConfig.describe() 打码")
     @GetMapping("/config")
     public Map<String, Object> config() {
         Map<String, Object> out = new LinkedHashMap<>();

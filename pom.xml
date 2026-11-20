@@ -47,6 +47,8 @@
       在模块内把 release 覆盖成 21；本文件保持 11 以适配 Spark 集群。
     -->
     <spring.boot.version>4.1.2</spring.boot.version>
+    <!-- springdoc 3.x 对应 Boot 4（2.x 只支持 Boot 3）；3.1.1 基于 Boot 4.1.0，与 4.1.2 兼容且本地仓库已有 -->
+    <springdoc.version>3.1.1</springdoc.version>
     <hikaricp.version>7.0.2</hikaricp.version>
 
     <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
@@ -175,6 +177,12 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-actuator</artifactId>
         <version>${spring.boot.version}</version>
+      </dependency>
+      <!-- OpenAPI / Swagger UI：WebFlux 版 starter（含 UI），只给 lake-service 用 -->
+      <dependency>
+        <groupId>org.springdoc</groupId>
+        <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+        <version>${springdoc.version}</version>
       </dependency>
       <dependency>
         <groupId>com.zaxxer</groupId>

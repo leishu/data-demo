@@ -4,6 +4,11 @@ import com.demo.lake.server.observability.AuditBuffer;
 import com.demo.lake.server.observability.AuditEvent;
 import com.demo.lake.server.observability.AuditService;
 import com.demo.lake.server.observability.AuditTextStore;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,22 +29,30 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/audit")
 @RequiredArgsConstructor
+@Tag(name = "审计", description = "最近审计事件与查询原文保险箱（原文读取需 AUDITOR 角色，且每次读取被再审计）")
 public class AuditController {
 
     private final AuditBuffer buffer;
     private final AuditTextStore texts;
     private final AuditService audit;
 
+    @Operation(summary = "最近审计事件", description = "环形缓冲里的近期事件（只含指纹等元数据，不含 SQL 原文）")
     @GetMapping
-    public List<AuditEvent> recent(@RequestParam(defaultValue = "100") int limit) {
+    public List<AuditEvent> recent(
+            @Parameter(description = "最多返回多少条，默认 100") @RequestParam(defaultValue = "100") int limit) {
         return buffer.recent(limit);
     }
 
-    /** 合规调查用：按 event_id 取回原文（脱敏情况由 redacted 字段标明） */
+    @Operation(summary = "按事件取回查询原文", description = "合规调查用；redacted 字段标明是否已脱敏。需要 AUDITOR 角色，每次读取都会再记一条审计")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "原文记录"),
+            @ApiResponse(responseCode = "404", description = "没有这条记录，或保险箱未开启")
+    })
     @GetMapping("/sql/{eventId}")
-    public ResponseEntity<Map<String, Object>> text(@PathVariable String eventId,
-                                                     @RequestParam(defaultValue = "compliance-review") String reason,
-                                                     Principal principal) {
+    public ResponseEntity<Map<String, Object>> text(
+            @Parameter(description = "审计事件 ID") @PathVariable String eventId,
+            @Parameter(description = "调阅理由，记为审计事件的属性") @RequestParam(defaultValue = "compliance-review") String reason,
+            @Parameter(hidden = true) Principal principal) {
         AuditTextStore.TextRecord record = texts.find(eventId).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这条查询原文，或保险箱未开启"));
         audit.record("audit.text_access", actor(principal),
@@ -59,11 +72,16 @@ public class AuditController {
                         "sql", record.sql()));
     }
 
-    /** 法律保全：置位后不按 TTL 清理 */
+    @Operation(summary = "法律保全开关", description = "置位后原文不按 TTL 清理。需要 AUDITOR 角色")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "操作成功"),
+            @ApiResponse(responseCode = "404", description = "没有这条查询原文")
+    })
     @PostMapping("/sql/{eventId}/hold")
-    public Map<String, Object> hold(@PathVariable String eventId,
-                                    @RequestParam(defaultValue = "true") boolean hold,
-                                    Principal principal) {
+    public Map<String, Object> hold(
+            @Parameter(description = "审计事件 ID") @PathVariable String eventId,
+            @Parameter(description = "true=置位保全，false=解除") @RequestParam(defaultValue = "true") boolean hold,
+            @Parameter(hidden = true) Principal principal) {
         boolean ok = texts.setLegalHold(eventId, hold);
         audit.record("audit.text_hold", actor(principal),
                 Map.of("event_id", eventId, "hold", String.valueOf(hold)));

@@ -40,7 +40,7 @@ public class BatchWatcher {
     private final Scheduler blocking;
 
     public Flux<BatchEvent> watch(String id, int tailLines) {
-        int tail = Math.max(1, Math.min(tailLines, MAX_TAIL_LINES));
+        int tail = Math.clamp(tailLines, 1, MAX_TAIL_LINES);
         // defer：id 不存在时在这里抛 404，而不是先建一条空流再报错
         return Flux.defer(() -> {
             jobs.get(id);
@@ -58,7 +58,7 @@ public class BatchWatcher {
         List<LogSink.LogLine> initial = logSink.tail(id, tailLines);
         boolean useShared = !initial.isEmpty();
         if (useShared) {
-            seqHolder[0] = initial.get(initial.size() - 1).seq();
+            seqHolder[0] = initial.getLast().seq();
             emit(sink, initial.stream().map(LogSink.LogLine::text).toList());
         } else if (logFile != null) {
             try {
@@ -113,7 +113,7 @@ public class BatchWatcher {
         if (useShared) {
             List<LogSink.LogLine> fresh = logSink.since(id, seqHolder[0], MAX_LINES_PER_POLL);
             if (!fresh.isEmpty()) {
-                seqHolder[0] = fresh.get(fresh.size() - 1).seq();
+                seqHolder[0] = fresh.getLast().seq();
                 return fresh.stream().map(LogSink.LogLine::text).toList();
             }
             return List.of();

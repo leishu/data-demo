@@ -115,7 +115,12 @@ export JAVA21_HOME=~/soft/jdk-21.0.12      # 也可以不设，脚本会自动�
 bin/lake-service.sh build                  # 打包（release 21）
 bin/lake-service.sh start                  # 后台启动，默认 8088
 open http://localhost:8088/                # 内置查询控制台
+open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger UI，可在线调试）
 ```
+
+接口文档：`/swagger-ui.html` 是可视化页面，OpenAPI JSON 在 `/v3/api-docs`（YAML 在 `/v3/api-docs.yaml`）。
+文档本身公开；点右上角 **Authorize** 填 `viewer / viewer`（或 `operator / operator`）后就能 Try it out，
+真正的 `/api/**` 仍走 Basic 认证与角色校验。
 
 | 接口 | 说明 |
 |---|---|
@@ -132,7 +137,9 @@ open http://localhost:8088/                # 内置查询控制台
 | `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
 | `GET /actuator/health` | 带 `trino` 组件的健康检查 |
 
-> 除静态页面与 `/actuator/health`、`/actuator/info` 外，所有接口都要 HTTP Basic 认证；配额超限返回 429。
+> 除静态页面、接口文档与 `/actuator/health`、`/actuator/info` 外，所有接口都要 HTTP Basic 认证；配额超限返回 429。
+> 生产环境由网关 / IdP 接管文档访问：设 `springdoc.api-docs.enabled=false` 与
+> `springdoc.swagger-ui.enabled=false` 即可关掉公开端点。
 > 指标、审计与 SLI/SLO 定义见 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)。
 
 几个刻意的设计：

@@ -193,7 +193,7 @@ final class LogTailCursor {
         if (backlog.isEmpty()) {
             return List.of();
         }
-        List<String> out = new ArrayList<>(Math.min(Math.max(maxLines, 1), backlog.size()));
+        List<String> out = new ArrayList<>(Math.clamp(maxLines, 1, backlog.size()));
         while (!backlog.isEmpty() && out.size() < maxLines) {
             out.add(backlog.pollFirst());
         }

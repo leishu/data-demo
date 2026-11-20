@@ -220,7 +220,7 @@ public class BatchJobService {
     /** 读日志尾部，够定位失败原因就行，别把整个 spark 日志甩给调用方 */
     public List<String> tail(String id, int lines) {
         BatchRun run = get(id);
-        int n = Math.max(1, Math.min(lines, MAX_TAIL_LINES));
+        int n = Math.clamp(lines, 1, MAX_TAIL_LINES);
         // 优先读共享日志（跨实例可用）；老记录/命令行直跑的作业没写库，再退回本地文件
         List<LogSink.LogLine> shared = logSink.tail(id, n);
         if (!shared.isEmpty()) {
@@ -269,7 +269,7 @@ public class BatchJobService {
             } else if (c == '\'' || c == '"') {
                 quote = c;
             } else if (Character.isWhitespace(c)) {
-                if (current.length() > 0) {
+                if (!current.isEmpty()) {
                     tokens.add(current.toString());
                     current.setLength(0);
                 }
@@ -277,7 +277,7 @@ public class BatchJobService {
                 current.append(c);
             }
         }
-        if (current.length() > 0) {
+        if (!current.isEmpty()) {
             tokens.add(current.toString());
         }
         if (tokens.isEmpty()) {

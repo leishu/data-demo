@@ -80,13 +80,18 @@ public class ApiAuthWebFilter implements WebFilter {
         return chain.filter(exchange.mutate().principal(Mono.just(principal)).build());
     }
 
-    /** 静态页面、健康检查、错误页公开；其余一律要认证 */
+    /** 静态页面、健康检查、错误页与接口文档公开；其余一律要认证 */
     static boolean isPublic(String path) {
         return path.equals("/") || path.equals("/index.html") || path.equals("/favicon.ico")
                 || path.equals("/error")
                 || path.equals("/ui") || path.startsWith("/ui/")
                 || path.equals("/actuator/health") || path.startsWith("/actuator/health/")
-                || path.equals("/actuator/info");
+                || path.equals("/actuator/info")
+                // Swagger UI 与 OpenAPI 描述：文档本身不暴露数据，先让人看得到；
+                // 真正的 /api/** 仍要认证，Describe 里声明了 basicAuth，可点 Authorize 后在线调试
+                || path.equals("/swagger-ui.html") || path.startsWith("/swagger-ui/")
+                || path.startsWith("/webjars/")
+                || path.equals("/v3/api-docs") || path.startsWith("/v3/api-docs/");
     }
 
     /** null 表示「认证通过即可」，不需要额外角色 */

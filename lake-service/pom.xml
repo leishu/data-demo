@@ -45,6 +45,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <!-- 接口文档：/v3/api-docs（OpenAPI JSON）+ /swagger-ui.html（可在线调试） -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webflux-ui</artifactId>
+    </dependency>
 
     <!-- 连接池 + Trino 驱动：即席查询并发复用连接，比 CLI 的「一次一连接」更接近生产形态 -->
     <dependency>
