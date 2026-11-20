@@ -6,10 +6,15 @@ import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -43,7 +48,7 @@ class BatchJobServiceTest {
     }
 
     private BatchJobService newService(LakeProperties p) {
-        return new BatchJobService(p, noHistory());
+        return new BatchJobService(p, noHistory(), new InMemoryRunStateStore(), Schedulers.immediate());
     }
 
     private BatchRun await(BatchJobService service, String id) throws InterruptedException {
@@ -114,7 +119,8 @@ class BatchJobServiceTest {
                 return "run-1".equals(id) ? persisted : null;
             }
         };
-        BatchJobService service = new BatchJobService(props("/bin/sh -c \"echo done; exit 0\""), history);
+        BatchJobService service = new BatchJobService(props("/bin/sh -c \"echo done; exit 0\""), history,
+                new InMemoryRunStateStore(), Schedulers.immediate());
         BatchRun done = await(service, service.submit(LakeJobs.INIT).id());
 
         assertEquals(2, service.list(20).runs().size());
@@ -131,5 +137,50 @@ class BatchJobServiceTest {
                 BatchJobService.tokenize("spark-submit --conf spark.driver.memory=2g --class a.B"));
         assertEquals(List.of("/bin/sh", "-c", "echo hello world"),
                 BatchJobService.tokenize("/bin/sh -c \"echo hello world\""));
+    }
+
+    /** 不连 Postgres 的测试替身：行为和 JdbcRunStateStore 一致，只是放在内存里 */
+    static class InMemoryRunStateStore implements RunStateStore {
+        private final Map<String, BatchRun> runs = new ConcurrentHashMap<>();
+
+        @Override
+        public void insert(BatchRun run, String owner) {
+            runs.put(run.id(), run);
+        }
+
+        @Override
+        public void finish(BatchRun run) {
+            runs.put(run.id(), run);
+        }
+
+        @Override
+        public Optional<BatchRun> find(String id) {
+            return Optional.ofNullable(runs.get(id));
+        }
+
+        @Override
+        public List<BatchRun> recent(int limit) {
+            return runs.values().stream()
+                    .sorted(Comparator.comparing(BatchRun::startedAt,
+                            Comparator.nullsLast(Comparator.<Instant>reverseOrder())))
+                    .limit(limit).toList();
+        }
+
+        @Override
+        public void heartbeat(String owner, Instant now) {
+        }
+
+        @Override
+        public List<BatchRun> staleRunning(Instant before) {
+            return List.of();
+        }
+
+        @Override
+        public void markLost(String id, String message, Instant now) {
+            BatchRun run = runs.get(id);
+            if (run != null) {
+                runs.put(id, run.finished(BatchRun.FAILED, 1, message, 0));
+            }
+        }
     }
 }

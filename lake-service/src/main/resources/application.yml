@@ -59,6 +59,15 @@ lake:
     work-dir: .
     log-dir: logs/batch
     timeout-seconds: 1800
+    # 运行状态库：复用 infra 的 Postgres，服务重启/多实例都能看到同一份 RUNNING 状态
+    state:
+      url: jdbc:postgresql://localhost:5432/metastore
+      user: hive
+      password: hive
+      pool-size: 4
+      heartbeat-seconds: 15
+      stale-after-seconds: 120
+      reconcile-seconds: 60
 
 logging:
   level:

@@ -3,18 +3,25 @@ package com.demo.lake.server.batch.service;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
+import reactor.core.Disposable;
+import reactor.core.Disposables;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -34,9 +41,9 @@ import java.util.concurrent.TimeUnit;
  * 作业挂了还会拖死服务。子进程方式边界清晰，也贴合生产里「服务调 spark-submit」的做法——
  * 换集群时只改 lake.batch.command-template 即可。</p>
  *
- * <p>运行历史分两份：内存里的 {@link #runs} 是本进程的权威状态（含 RUNNING），
- * 湖表 {@code ops.batch_runs} 是重启后还能看到的终态归档（由 BatchApp 写入，
- * 见 {@link BatchHistoryService}）。列表接口把两边按 id 合并，内存优先。</p>
+ * <p>运行态不在本进程内存里：{@link RunStateStore}（Postgres）是唯一权威，
+ * 服务只持有「本实例的子进程」用于停机清理。这样重启不丢 RUNNING，多实例也能看到同一份列表。
+ * 湖表 {@code ops.batch_runs} 仍是终态归档，两边按 id 合并、终态优先。</p>
  */
 @Service
 @Slf4j
@@ -53,9 +60,52 @@ public class BatchJobService {
 
     private final LakeProperties props;
     private final BatchHistoryService history;
-    private final Map<String, BatchRun> runs = new ConcurrentHashMap<>();
+    private final RunStateStore state;
+    private final Scheduler blocking;
+    /** 多实例下用实例 ID 区分心跳归属，避免 A 实例给 B 实例的僵死作业续命 */
+    private final String owner = "svc-" + UUID.randomUUID().toString().substring(0, 8);
     private final Map<String, Process> liveProcesses = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+    private final Disposable.Composite maintenance = Disposables.composite();
+
+    @PostConstruct
+    void startMaintenance() {
+        LakeProperties.Batch.State conf = props.getBatch().getState();
+        maintenance.add(Flux.interval(Duration.ofSeconds(Math.max(1, conf.getHeartbeatSeconds())))
+                .flatMap(tick -> Mono.fromCallable(() -> {
+                    state.heartbeat(owner, Instant.now());
+                    return true;
+                }).onErrorResume(e -> {
+                    log.warn("运行状态心跳失败: {}", e.getMessage());
+                    return Mono.empty();
+                }).subscribeOn(blocking))
+                .subscribe());
+
+        maintenance.add(Flux.interval(Duration.ofSeconds(Math.max(5, conf.getReconcileSeconds())))
+                .flatMap(tick -> Mono.fromCallable(() -> {
+                    reconcile();
+                    return true;
+                }).onErrorResume(e -> {
+                    log.warn("运行状态对账失败: {}", e.getMessage());
+                    return Mono.empty();
+                }).subscribeOn(blocking))
+                .subscribe());
+    }
+
+    /** 失联的 RUNNING：能从湖表拿到终态就采纳，否则落「实例失联」终态 */
+    private void reconcile() {
+        Instant cutoff = Instant.now().minusSeconds(Math.max(30, props.getBatch().getState().getStaleAfterSeconds()));
+        for (BatchRun stale : state.staleRunning(cutoff)) {
+            BatchRun archived = history.find(stale.id());
+            if (archived != null && !BatchRun.RUNNING.equals(archived.status())) {
+                state.finish(archived);
+                log.info("对账：{} 采纳湖表终态 {}", stale.id(), archived.status());
+            } else {
+                state.markLost(stale.id(), "运行实例失联（心跳超时），请查看作业日志", Instant.now());
+                log.warn("对账：{} 没有终态，标记实例失联", stale.id());
+            }
+        }
+    }
 
     public BatchRun submit(String job) {
         LakeProperties.Batch conf = props.getBatch();
@@ -78,7 +128,13 @@ public class BatchJobService {
 
         BatchRun run = new BatchRun(id, job, command, BatchRun.RUNNING, null,
                 Instant.now(), null, null, logFile.toString(), "已提交");
-        runs.put(id, run);
+        try {
+            // 先落运行态再起进程：进程刚起来就有另一实例能看到这条 RUNNING
+            state.insert(run, owner);
+        } catch (RuntimeException e) {
+            log.error("运行态写入失败，拒绝提交作业 {}", job, e);
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "运行状态库不可用，无法提交作业", e);
+        }
         log.info("提交批作业 {} -> {}", job, command);
         executor.submit(() -> execute(run, command, logFile));
         return run;
@@ -129,26 +185,33 @@ public class BatchJobService {
 
     private void update(BatchRun run, String status, Integer exitCode, long elapsedMs, String message) {
         BatchRun done = run.finished(status, exitCode, message, elapsedMs);
-        runs.put(done.id(), done);
+        try {
+            state.finish(done);
+        } catch (RuntimeException e) {
+            // 湖表归档仍会写；心跳对账兜底，别让记账失败改变作业的可见终态
+            log.error("运行态终态写入失败 {}", run.id(), e);
+        }
         // 终态可能刚写进湖表：别让轮询缓存挡住它（顺带重探一次表是否存在）
         history.invalidate();
         log.info("批作业 {} {} -> {} ({}ms)", run.job(), run.id(), status, elapsedMs);
     }
 
-    /**
-     * 内存记录 ∪ 湖表历史，按 id 去重（内存优先），再按开始时间倒序截断。
-     *
-     * <p>历史那份读不到不影响本接口：返回 {@link RunsView.History} 交给前端降级提示。</p>
-     */
+    /** 运行状态库 ∪ 湖表历史，按 id 去重（终态优先），再按开始时间倒序截断 */
     public RunsView list(int limit) {
         int n = Math.max(1, Math.min(limit, 100));
         Map<String, BatchRun> merged = new LinkedHashMap<>();
-        runs.values().stream().sorted(NEWEST_FIRST)
-                .forEach(run -> merged.put(run.id(), run));
+        try {
+            state.recent(n).forEach(run -> merged.put(run.id(), run));
+        } catch (RuntimeException e) {
+            log.warn("读运行状态失败（只显示湖表历史）: {}", e.getMessage());
+        }
 
         BatchHistoryService.Result persisted = history.recent(n);
         for (BatchRun run : persisted.runs()) {
-            merged.putIfAbsent(run.id(), run);
+            BatchRun current = merged.get(run.id());
+            if (current == null || (isTerminal(run.status()) && !isTerminal(current.status()))) {
+                merged.put(run.id(), run);
+            }
         }
 
         List<BatchRun> ordered = merged.values().stream()
@@ -158,17 +221,33 @@ public class BatchJobService {
         return new RunsView(ordered, persisted.history());
     }
 
-    /** 先看内存，再回落到湖表（服务重启后仍能点开旧记录） */
+    /**
+     * 先看运行状态库，命中就直接返回（SSE 每 500ms 调一次，不能每次都去打 Trino）；
+     * 只有状态库里没有的记录（命令行直跑、历史归档）才回落湖表。
+     * 崩溃后的终态采纳由 {@link #reconcile()} 负责，不在这里反复查湖表。
+     */
     public BatchRun get(String id) {
-        BatchRun run = runs.get(id);
-        if (run != null) {
-            return run;
+        try {
+            BatchRun live = state.find(id).orElse(null);
+            if (live != null) {
+                return live;
+            }
+        } catch (RuntimeException e) {
+            log.warn("读运行状态失败 {}: {}", id, e.getMessage());
         }
-        BatchRun persisted = history.find(id);
-        if (persisted != null) {
-            return persisted;
+        try {
+            BatchRun persisted = history.find(id);
+            if (persisted != null) {
+                return persisted;
+            }
+        } catch (RuntimeException e) {
+            log.warn("读湖表历史失败 {}: {}", id, e.getMessage());
         }
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这个运行记录: " + id);
+    }
+
+    private static boolean isTerminal(String status) {
+        return status != null && !BatchRun.RUNNING.equals(status);
     }
 
     /** 读日志尾部，够定位失败原因就行，别把整个 spark 日志甩给调用方 */
@@ -237,6 +316,7 @@ public class BatchJobService {
 
     @PreDestroy
     void shutdown() {
+        maintenance.dispose();
         liveProcesses.forEach((id, p) -> {
             log.warn("服务关闭，强制结束作业进程 {}", id);
             p.destroyForcibly();

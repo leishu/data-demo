@@ -2,6 +2,7 @@ package com.demo.lake.server.health;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 // Boot 4 把 actuator 的 health 抽到了独立模块 spring-boot-health，包名从 actuator.health 改为 health.contributor
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.ReactiveHealthIndicator;
@@ -28,6 +29,7 @@ import java.sql.Statement;
 @RequiredArgsConstructor
 public class TrinoHealthIndicator implements ReactiveHealthIndicator {
 
+    @Qualifier("trinoDataSource")
     private final DataSource dataSource;
     private final Scheduler blocking;
 

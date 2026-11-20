@@ -148,6 +148,10 @@ open http://localhost:8088/                # 内置查询控制台
   「先起 Trino」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
 - **批作业用子进程**，不在 Web 容器里养 SparkSession：内存、线程、崩溃隔离都更省心，
   换成 `spark-submit --master yarn ...` 也只改 `lake.batch.command-template`。
+- **服务无状态**。批作业的 RUNNING 状态不放内存，而是写进 infra 里已有的 Postgres
+  （`lake_batch.batch_runs`），由提交实例按 `owner` 续心跳；服务重启或开多个实例都能看到同一份列表。
+  心跳超时的僵死作业会先尝试从湖表终态归档恢复，否则落「实例失联」终态（对账周期默认 60s）。
+  湖表 `ops.batch_runs` 仍由 BatchApp 写终态，作为跨引擎的长期归档。
 - **服务层不侵入 Spark 代码**。Spring 只在 driver/服务侧；批处理 jar 要进 `spark-submit`、
   要能序列化到 executor，塞一个 `ApplicationContext` 只会让集群问题更难查。
 - **阻塞 IO 一律 offload**。WebFlux 的请求线程就是 Netty 事件循环，Hikari 取连接、`rs.next()`、

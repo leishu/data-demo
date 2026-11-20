@@ -62,8 +62,8 @@ public class LakeConfiguration {
      * Trino 连接池。初始化失败不阻止应用启动（initializationFailTimeout = -1）：
      * 服务要能在 Trino 没起来时先提供 /actuator/health 和明确的错误信息，而不是起不来。
      */
-    @Bean(destroyMethod = "close")
-    public DataSource dataSource(PlatformConfig cfg, LakeProperties props) {
+    @Bean(name = "trinoDataSource", destroyMethod = "close")
+    public DataSource trinoDataSource(PlatformConfig cfg, LakeProperties props) {
         HikariConfig hikari = new HikariConfig();
         hikari.setPoolName("trino");
         hikari.setJdbcUrl(cfg.trinoJdbcUrl());
@@ -79,6 +79,25 @@ public class LakeConfiguration {
         // to_unixtime 等换算会整体偏移 8 小时，历史记录还会和内存里的 Instant 错序
         hikari.addDataSourceProperty("timezone", "UTC");
         log.info("Trino 连接池 -> {} (pool={})", cfg.trinoJdbcUrl(), props.getQuery().getPoolSize());
+        return new HikariDataSource(hikari);
+    }
+
+    /**
+     * 运行状态库（Postgres）：批作业的运行态与心跳都放这里，服务本身无状态。
+     * 初始化失败不阻止启动：没起 infra 时服务仍能提供只读查询，批作业接口返回明确的 503。
+     */
+    @Bean(name = "stateDataSource", destroyMethod = "close")
+    public DataSource stateDataSource(LakeProperties props) {
+        LakeProperties.Batch.State state = props.getBatch().getState();
+        HikariConfig hikari = new HikariConfig();
+        hikari.setPoolName("batch-state");
+        hikari.setJdbcUrl(state.getUrl());
+        hikari.setUsername(state.getUser());
+        hikari.setPassword(state.getPassword());
+        hikari.setDriverClassName("org.postgresql.Driver");
+        hikari.setMaximumPoolSize(state.getPoolSize());
+        hikari.setInitializationFailTimeout(-1);
+        log.info("运行状态库 -> {} (pool={})", state.getUrl(), state.getPoolSize());
         return new HikariDataSource(hikari);
     }
 }

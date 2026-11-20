@@ -67,6 +67,24 @@ public class LakeProperties {
          * 默认值取 common 的作业名表，新增作业时不用回来再抄一遍。
          */
         private List<String> allowedJobs = LakeJobs.CHOICES;
+
+        /** 运行状态存储：复用 infra 的 Postgres，服务本身不再持有 RUNNING 状态 */
+        private final State state = new State();
+
+        @Getter
+        @Setter
+        public static class State {
+            private String url = "jdbc:postgresql://localhost:5432/metastore";
+            private String user = "hive";
+            private String password = "hive";
+            private int poolSize = 4;
+            /** 心跳周期：更新本实例名下 RUNNING 记录的心跳时间 */
+            private int heartbeatSeconds = 15;
+            /** 超过这个时间没心跳的 RUNNING 记录视为实例失联，进入对账 */
+            private int staleAfterSeconds = 120;
+            /** 对账周期 */
+            private int reconcileSeconds = 60;
+        }
     }
 
     /**

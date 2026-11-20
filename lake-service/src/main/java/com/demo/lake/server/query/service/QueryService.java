@@ -9,6 +9,7 @@ import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.model.TableInfo;
 import io.trino.jdbc.TrinoResultSet;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -47,6 +48,7 @@ public class QueryService {
     /** SSE 每批发多少行：太小帧数爆炸，太大首屏等得久 */
     private static final int STREAM_BATCH_ROWS = 200;
 
+    @Qualifier("trinoDataSource")
     private final DataSource dataSource;
     private final LakeProperties props;
     private final PlatformConfig cfg;

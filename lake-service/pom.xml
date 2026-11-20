@@ -55,6 +55,20 @@
       <groupId>io.trino</groupId>
       <artifactId>trino-jdbc</artifactId>
     </dependency>
+    <!-- 运行状态库：复用 infra 里的 Postgres，让服务无状态、多实例可共享运行态 -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.11</version>
+      <scope>runtime</scope>
+    </dependency>
+    <!-- H2 只在测试里当 Postgres 的轻量替身，验 RunStateStore 的 SQL 行为 -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <version>2.4.240</version>
+      <scope>test</scope>
+    </dependency>
 
     <dependency>
       <groupId>org.junit.jupiter</groupId>
