@@ -194,12 +194,23 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public int runningCount() {
+        return countByStatus("RUNNING");
+    }
+
+    @Override
+    public int queuedCount() {
+        return countByStatus("QUEUED");
+    }
+
+    private int countByStatus(String status) {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT count(*) FROM " + TABLE + " WHERE status='RUNNING'");
-             ResultSet rs = ps.executeQuery()) {
-            rs.next();
-            return rs.getInt(1);
+                     "SELECT count(*) FROM " + TABLE + " WHERE status=?")) {
+            ps.setString(1, status);
+            try (ResultSet rs = ps.executeQuery()) {
+                rs.next();
+                return rs.getInt(1);
+            }
         } catch (SQLException e) {
             throw new IllegalStateException("读运行状态失败: " + e.getMessage(), e);
         }

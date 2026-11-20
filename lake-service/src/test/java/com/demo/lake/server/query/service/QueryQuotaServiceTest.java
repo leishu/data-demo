@@ -1,7 +1,9 @@
 package com.demo.lake.server.query.service;
 
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.observability.LakeMetrics;
 import com.demo.lake.server.query.QueryQuotaExceededException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import reactor.core.scheduler.Schedulers;
 
@@ -16,7 +18,7 @@ class QueryQuotaServiceTest {
         props.getQuery().setMaxConcurrentQueries(concurrent);
         props.getQuery().setMaxQueriesPerMinute(perMinute);
         props.getQuery().setAcquireTimeoutMs(timeoutMs);
-        return new QueryQuotaService(props, Schedulers.immediate());
+        return new QueryQuotaService(props, Schedulers.immediate(), new LakeMetrics(new SimpleMeterRegistry()));
     }
 
     @Test

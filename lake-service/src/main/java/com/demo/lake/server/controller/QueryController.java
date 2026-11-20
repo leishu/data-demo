@@ -5,6 +5,8 @@ import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.batch.model.JobView;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.exception.ErrorMapper;
+import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.LakeMetrics;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.model.TableInfo;
@@ -36,6 +38,8 @@ public class QueryController {
 
     private final QueryService queryService;
     private final QueryQuotaService quotas;
+    private final AuditService audit;
+    private final LakeMetrics metrics;
     private final PlatformConfig cfg;
     private final LakeProperties props;
 
@@ -45,9 +49,27 @@ public class QueryController {
     @PostMapping("/query")
     public Mono<QueryResult> query(@RequestBody QueryRequest request, Principal principal) {
         // 配额只罩用户发起的查询：内部读运行历史走 QueryService，不占名额
-        return Mono.usingWhen(quotas.acquire(client(principal)),
-                permit -> queryService.query(request.sql(), request.maxRows()),
-                quotas::release);
+        String actor = client(principal);
+        return Mono.usingWhen(quotas.acquire(actor),
+                        permit -> queryService.query(request.sql(), request.maxRows()),
+                        quotas::release)
+                .doOnSuccess(result -> {
+                    metrics.queryExecuted(true, result.elapsedMs(), result.rows().size());
+                    auditQuery(actor, request.sql(), "success", result.rows().size());
+                })
+                .doOnError(e -> {
+                    metrics.queryExecuted(false, 0, 0);
+                    auditQuery(actor, request.sql(), "error", 0);
+                });
+    }
+
+    /** SQL 只留指纹和长度，不入审计正文 */
+    private void auditQuery(String actor, String sql, String outcome, int rows) {
+        audit.record("query.execute", actor, Map.of(
+                "sql_fp", AuditService.fingerprint(sql),
+                "sql_len", String.valueOf(sql == null ? 0 : sql.length()),
+                "outcome", outcome,
+                "rows", String.valueOf(rows)));
     }
 
     /**
@@ -58,7 +80,8 @@ public class QueryController {
      */
     @PostMapping(value = "/query/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request, Principal principal) {
-        return Flux.usingWhen(quotas.acquire(client(principal)),
+        String actor = client(principal);
+        return Flux.usingWhen(quotas.acquire(actor),
                         permit -> queryService.streamQuery(request.sql(), request.maxRows()),
                         quotas::release)
                 .map(ev -> ServerSentEvent.builder(ev).event(ev.type()).build())
@@ -69,6 +92,15 @@ public class QueryController {
                                     new QueryEvent.Error(mapped.status().value(), mapped.message(), mapped.hint()))
                             .event("error")
                             .build());
+                })
+                .doOnNext(sse -> {
+                    if (sse.data() instanceof QueryEvent.Done done) {
+                        metrics.queryExecuted(true, done.elapsedMs(), done.rowCount());
+                        auditQuery(actor, request.sql(), "success", done.rowCount());
+                    } else if (sse.data() instanceof QueryEvent.Error) {
+                        metrics.queryExecuted(false, 0, 0);
+                        auditQuery(actor, request.sql(), "error", 0);
+                    }
                 });
     }
 

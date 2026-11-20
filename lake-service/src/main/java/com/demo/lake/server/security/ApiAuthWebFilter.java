@@ -1,6 +1,8 @@
 package com.demo.lake.server.security;
 
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.LakeMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;
@@ -38,6 +40,8 @@ import java.util.List;
 public class ApiAuthWebFilter implements WebFilter {
 
     private final LakeProperties props;
+    private final AuditService audit;
+    private final LakeMetrics metrics;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
@@ -51,7 +55,7 @@ public class ApiAuthWebFilter implements WebFilter {
         Credentials credentials = parseBasic(exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
         if (credentials == null) {
             return deny(exchange, HttpStatus.UNAUTHORIZED, "需要登录",
-                    "用 viewer / operator 账号做 HTTP Basic 认证");
+                    "用 viewer / operator 账号做 HTTP Basic 认证", "missing-credentials");
         }
         LakeProperties.Security.Account account = conf.getAccounts().stream()
                 .filter(a -> constantEquals(a.getUsername(), credentials.username()))
@@ -59,12 +63,16 @@ public class ApiAuthWebFilter implements WebFilter {
                 .findFirst().orElse(null);
         if (account == null) {
             log.debug("认证失败: path={} user={}", path, credentials.username());
-            return deny(exchange, HttpStatus.UNAUTHORIZED, "用户名或密码错误", null);
+            audit.record("auth.failed", credentials.username(),
+                    java.util.Map.of("path", path, "reason", "bad-credentials"));
+            return deny(exchange, HttpStatus.UNAUTHORIZED, "用户名或密码错误", null, "bad-credentials");
         }
         if (role != null && !account.getRoles().contains(role)) {
             log.debug("权限不足: path={} user={} need={}", path, account.getUsername(), role);
+            audit.record("auth.denied", account.getUsername(),
+                    java.util.Map.of("path", path, "required_role", role));
             return deny(exchange, HttpStatus.FORBIDDEN, "账号没有 " + role + " 权限",
-                    "触发批作业请用 operator 账号");
+                    "触发批作业请用 operator 账号", "insufficient-role");
         }
 
         ApiPrincipal principal = new ApiPrincipal(account.getUsername(), List.copyOf(account.getRoles()));
@@ -90,7 +98,7 @@ public class ApiAuthWebFilter implements WebFilter {
             // 看列表/详情只读，触发作业才是特权操作
             return HttpMethod.GET.equals(method) ? "QUERY" : "BATCH";
         }
-        if (path.startsWith("/actuator/")) {
+        if (path.startsWith("/api/audit") || path.startsWith("/actuator/")) {
             return "BATCH";
         }
         return null;
@@ -132,7 +140,12 @@ public class ApiAuthWebFilter implements WebFilter {
         return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
     }
 
-    private Mono<Void> deny(ServerWebExchange exchange, HttpStatus status, String message, String hint) {
+    private Mono<Void> deny(ServerWebExchange exchange, HttpStatus status, String message, String hint, String reason) {
+        metrics.authDenied(reason);
+        if (status == HttpStatus.UNAUTHORIZED && "missing-credentials".equals(reason)) {
+            audit.record("auth.denied", "anonymous",
+                    java.util.Map.of("path", exchange.getRequest().getPath().value(), "reason", reason));
+        }
         ServerHttpResponse response = exchange.getResponse();
         response.setStatusCode(status);
         if (status == HttpStatus.UNAUTHORIZED) {

@@ -129,6 +129,7 @@ open http://localhost:8088/                # 内置查询控制台
 | `GET /actuator/health` | 带 `trino` 组件的健康检查 |
 
 > 除静态页面与 `/actuator/health`、`/actuator/info` 外，所有接口都要 HTTP Basic 认证；配额超限返回 429。
+> 指标、审计与 SLI/SLO 定义见 [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)。
 
 几个刻意的设计：
 

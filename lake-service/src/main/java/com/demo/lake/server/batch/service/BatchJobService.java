@@ -3,6 +3,8 @@ package com.demo.lake.server.batch.service;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.LakeMetrics;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +58,8 @@ public class BatchJobService {
     private final BatchHistoryService history;
     private final RunStateStore state;
     private final BatchIdentity identity;
+    private final AuditService audit;
+    private final LakeMetrics metrics;
     private final Scheduler blocking;
     private final Disposable.Composite maintenance = Disposables.composite();
 
@@ -144,6 +148,9 @@ public class BatchJobService {
             log.error("运行态写入失败，拒绝提交作业 {}", job, e);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "运行状态库不可用，无法提交作业", e);
         }
+        metrics.batchSubmitted(job);
+        audit.record("batch.submit", "batch-service", java.util.Map.of(
+                "run_id", id, "job", job, "idempotent", String.valueOf(key != null)));
         log.info("批作业已排队 {} -> {}", job, id);
         return run;
     }

@@ -2,6 +2,7 @@ package com.demo.lake.server.batch.service;
 
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.observability.LakeMetrics;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class JobDispatcher {
     private final Map<String, JobExecutor> executors;
     private final JobCompletionService completion;
     private final BatchIdentity identity;
+    private final LakeMetrics metrics;
     private final LakeProperties props;
     private final Scheduler blocking;
     private final Disposable.Composite timer = Disposables.composite();
@@ -52,6 +54,7 @@ public class JobDispatcher {
     }
 
     void dispatch() {
+        metrics.setQueueDepth(state.queuedCount());
         int max = Math.max(1, props.getBatch().getMaxConcurrentJobs());
         while (state.runningCount() < max) {
             BatchRun claimed = state.claimNext(identity.id());
@@ -64,6 +67,7 @@ public class JobDispatcher {
                         "未知执行器: " + props.getBatch().getExecutor());
                 continue;
             }
+            metrics.queueWait(claimed.job(), System.currentTimeMillis() - claimed.startedAt().toEpochMilli());
             try {
                 String handle = executor.start(claimed, completion);
                 state.setHandle(claimed.id(), handle);

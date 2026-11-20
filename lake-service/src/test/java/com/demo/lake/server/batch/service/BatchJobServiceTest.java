@@ -4,6 +4,10 @@ import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.observability.AuditBuffer;
+import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.LakeMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.scheduler.Schedulers;
@@ -57,8 +61,8 @@ class BatchJobServiceTest {
         identity = new BatchIdentity();
         BatchHistoryService history = noHistory();
         dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p)),
-                new JobCompletionService(store, history), identity, p, Schedulers.immediate());
-        return new BatchJobService(p, history, store, identity, Schedulers.immediate());
+                new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
+        return new BatchJobService(p, history, store, identity, audit(), metrics(), Schedulers.immediate());
     }
 
     /** 测试里手动触发一次调度扫描（生产由 @PostConstruct 的定时器驱动） */
@@ -169,8 +173,8 @@ class BatchJobServiceTest {
         store = new InMemoryRunStateStore();
         identity = new BatchIdentity();
         dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p)),
-                new JobCompletionService(store, history), identity, p, Schedulers.immediate());
-        BatchJobService service = new BatchJobService(p, history, store, identity, Schedulers.immediate());
+                new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
+        BatchJobService service = new BatchJobService(p, history, store, identity, audit(), metrics(), Schedulers.immediate());
         BatchRun submitted = service.submit(LakeJobs.INIT, null);
         dispatch();
         BatchRun done = await(service, submitted.id());
@@ -189,6 +193,14 @@ class BatchJobServiceTest {
                 BatchJobService.tokenize("spark-submit --conf spark.driver.memory=2g --class a.B"));
         assertEquals(List.of("/bin/sh", "-c", "echo hello world"),
                 BatchJobService.tokenize("/bin/sh -c \"echo hello world\""));
+    }
+
+    private static AuditService audit() {
+        return new AuditService(new AuditBuffer());
+    }
+
+    private static LakeMetrics metrics() {
+        return new LakeMetrics(new SimpleMeterRegistry());
     }
 
     /** 不连 Postgres 的测试替身：行为和 JdbcRunStateStore 一致，只是放在内存里 */
@@ -250,6 +262,11 @@ class BatchJobServiceTest {
         @Override
         public int runningCount() {
             return (int) runs.values().stream().filter(r -> BatchRun.RUNNING.equals(r.status())).count();
+        }
+
+        @Override
+        public int queuedCount() {
+            return (int) runs.values().stream().filter(r -> BatchRun.QUEUED.equals(r.status())).count();
         }
 
         @Override

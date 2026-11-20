@@ -40,6 +40,9 @@ public interface RunStateStore {
     /** 当前 RUNNING 数量，用于全局并发闸门 */
     int runningCount();
 
+    /** 当前 QUEUED 数量，作为队列深度指标 */
+    int queuedCount();
+
     /** 原子地把最早的一条 QUEUED 改成 RUNNING，并归本实例所有；没有可认领的返回 null */
     BatchRun claimNext(String owner);
 

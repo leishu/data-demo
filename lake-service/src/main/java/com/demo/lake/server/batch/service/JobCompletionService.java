@@ -1,6 +1,8 @@
 package com.demo.lake.server.batch.service;
 
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.LakeMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -13,6 +15,8 @@ public class JobCompletionService implements JobOutcomeListener {
 
     private final RunStateStore state;
     private final BatchHistoryService history;
+    private final AuditService audit;
+    private final LakeMetrics metrics;
 
     @Override
     public void completed(BatchRun run, String status, Integer exitCode, long elapsedMs, String message) {
@@ -24,6 +28,9 @@ public class JobCompletionService implements JobOutcomeListener {
             log.error("运行态终态写入失败 {}", run.id(), e);
         }
         history.invalidate();
+        metrics.batchCompleted(status, elapsedMs);
+        audit.record("batch.completed", "batch-service", java.util.Map.of(
+                "run_id", run.id(), "job", run.job(), "status", status, "duration_ms", String.valueOf(elapsedMs)));
         log.info("批作业 {} {} -> {} ({}ms)", run.job(), run.id(), status, elapsedMs);
     }
 }

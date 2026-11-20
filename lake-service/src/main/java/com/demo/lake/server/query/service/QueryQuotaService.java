@@ -1,6 +1,7 @@
 package com.demo.lake.server.query.service;
 
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.observability.LakeMetrics;
 import com.demo.lake.server.query.QueryQuotaExceededException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -32,12 +33,14 @@ public class QueryQuotaService {
 
     private final LakeProperties props;
     private final Scheduler blocking;
+    private final LakeMetrics metrics;
     private final Semaphore slots;
     private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
 
-    public QueryQuotaService(LakeProperties props, Scheduler blocking) {
+    public QueryQuotaService(LakeProperties props, Scheduler blocking, LakeMetrics metrics) {
         this.props = props;
         this.blocking = blocking;
+        this.metrics = metrics;
         this.slots = new Semaphore(Math.max(1, props.getQuery().getMaxConcurrentQueries()), true);
     }
 
@@ -54,6 +57,7 @@ public class QueryQuotaService {
                 throw new QueryQuotaExceededException("等待查询名额时被中断");
             }
             if (!acquired) {
+                metrics.quotaRejected("concurrency");
                 throw new QueryQuotaExceededException(
                         "并发查询已满（上限 " + props.getQuery().getMaxConcurrentQueries() + "），请稍后重试");
             }
@@ -70,6 +74,7 @@ public class QueryQuotaService {
         long now = System.currentTimeMillis();
         Window window = windows.computeIfAbsent(client == null ? "anonymous" : client, k -> new Window());
         if (!window.tryRecord(now, max)) {
+            metrics.quotaRejected("rate-limit");
             throw new QueryQuotaExceededException("查询太频繁：每分钟最多 " + max + " 次，请稍后再试");
         }
         if (windows.size() > CLEANUP_THRESHOLD) {
