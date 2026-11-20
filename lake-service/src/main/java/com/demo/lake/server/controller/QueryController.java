@@ -6,6 +6,7 @@ import com.demo.lake.server.batch.model.JobView;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.exception.ErrorMapper;
 import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.AuditTextStore;
 import com.demo.lake.server.observability.LakeMetrics;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
@@ -15,6 +16,7 @@ import com.demo.lake.server.query.service.QueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,6 +41,7 @@ public class QueryController {
     private final QueryService queryService;
     private final QueryQuotaService quotas;
     private final AuditService audit;
+    private final AuditTextStore auditText;
     private final LakeMetrics metrics;
     private final PlatformConfig cfg;
     private final LakeProperties props;
@@ -47,29 +50,39 @@ public class QueryController {
     }
 
     @PostMapping("/query")
-    public Mono<QueryResult> query(@RequestBody QueryRequest request, Principal principal) {
+    public Mono<QueryResult> query(@RequestBody QueryRequest request, Principal principal,
+                                   ServerHttpRequest http) {
         // 配额只罩用户发起的查询：内部读运行历史走 QueryService，不占名额
         String actor = client(principal);
+        String ip = clientIp(http);
         return Mono.usingWhen(quotas.acquire(actor),
                         permit -> queryService.query(request.sql(), request.maxRows()),
                         quotas::release)
                 .doOnSuccess(result -> {
                     metrics.queryExecuted(true, result.elapsedMs(), result.rows().size());
-                    auditQuery(actor, request.sql(), "success", result.rows().size());
+                    auditQuery(actor, ip, request.sql(), "success", result.rows().size());
                 })
                 .doOnError(e -> {
                     metrics.queryExecuted(false, 0, 0);
-                    auditQuery(actor, request.sql(), "error", 0);
+                    auditQuery(actor, ip, request.sql(), "error", 0);
                 });
     }
 
-    /** SQL 只留指纹和长度，不入审计正文 */
-    private void auditQuery(String actor, String sql, String outcome, int rows) {
-        audit.record("query.execute", actor, Map.of(
+    /** 审计日志只留指纹；原文（脱敏+加密）按需写进独立保险箱 */
+    private void auditQuery(String actor, String ip, String sql, String outcome, int rows) {
+        String eventId = audit.record("query.execute", actor, Map.of(
                 "sql_fp", AuditService.fingerprint(sql),
                 "sql_len", String.valueOf(sql == null ? 0 : sql.length()),
                 "outcome", outcome,
                 "rows", String.valueOf(rows)));
+        auditText.save(eventId, actor, ip, sql);
+    }
+
+    private static String clientIp(ServerHttpRequest http) {
+        if (http == null || http.getRemoteAddress() == null || http.getRemoteAddress().getAddress() == null) {
+            return null;
+        }
+        return http.getRemoteAddress().getAddress().getHostAddress();
     }
 
     /**
@@ -79,8 +92,10 @@ public class QueryController {
      * 也容易被 URL 长度限制卡住；前端用 fetch + ReadableStream 解帧，代价只是几十行解析代码。</p>
      */
     @PostMapping(value = "/query/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request, Principal principal) {
+    public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request, Principal principal,
+                                                         ServerHttpRequest http) {
         String actor = client(principal);
+        String ip = clientIp(http);
         return Flux.usingWhen(quotas.acquire(actor),
                         permit -> queryService.streamQuery(request.sql(), request.maxRows()),
                         quotas::release)
@@ -96,10 +111,10 @@ public class QueryController {
                 .doOnNext(sse -> {
                     if (sse.data() instanceof QueryEvent.Done done) {
                         metrics.queryExecuted(true, done.elapsedMs(), done.rowCount());
-                        auditQuery(actor, request.sql(), "success", done.rowCount());
+                        auditQuery(actor, ip, request.sql(), "success", done.rowCount());
                     } else if (sse.data() instanceof QueryEvent.Error) {
                         metrics.queryExecuted(false, 0, 0);
-                        auditQuery(actor, request.sql(), "error", 0);
+                        auditQuery(actor, ip, request.sql(), "error", 0);
                     }
                 });
     }

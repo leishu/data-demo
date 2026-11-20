@@ -24,10 +24,13 @@ public class AuditService {
     private static final Logger AUDIT = LoggerFactory.getLogger("AUDIT");
     private final AuditBuffer buffer;
 
-    public void record(String event, String actor, Map<String, Object> fields) {
+    /** @return 事件 ID，用于把原文保险箱记录关联回这条审计事件 */
+    public String record(String event, String actor, Map<String, Object> fields) {
         Instant at = Instant.now();
+        String eventId = java.util.UUID.randomUUID().toString();
         Map<String, String> clean = new LinkedHashMap<>();
         fields.forEach((key, value) -> clean.put(sanitize(key), sanitize(String.valueOf(value))));
+        clean.put("event_id", eventId);
 
         StringBuilder line = new StringBuilder("at=").append(at)
                 .append(" event=").append(sanitize(event))
@@ -36,6 +39,7 @@ public class AuditService {
         AUDIT.info(line.toString());
 
         buffer.add(new AuditEvent(at, sanitize(event), sanitize(actor), clean));
+        return eventId;
     }
 
     /** SQL / 敏感文本只留短指纹，既能关联同一条查询，又不泄露内容 */

@@ -7,6 +7,7 @@ import com.demo.lake.common.semantic.SemanticFilter;
 import com.demo.lake.common.semantic.SemanticSqlRenderer;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.AuditTextStore;
 import com.demo.lake.server.observability.LakeMetrics;
 import com.demo.lake.server.query.InvalidSemanticQueryException;
 import com.demo.lake.server.query.model.QueryResult;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import reactor.core.publisher.Mono;
 
 import java.security.Principal;
@@ -42,6 +44,7 @@ public class SemanticController {
     private final QueryService queries;
     private final QueryQuotaService quotas;
     private final AuditService audit;
+    private final AuditTextStore auditText;
     private final LakeMetrics metrics;
 
     public record Filter(String field, String op, String value) {
@@ -74,16 +77,20 @@ public class SemanticController {
 
     /** 执行：固定用 Trino 方言；查询同样走配额与审计 */
     @PostMapping("/query")
-    public Mono<QueryResult> query(@RequestBody SemanticRequest request, Principal principal) {
+    public Mono<QueryResult> query(@RequestBody SemanticRequest request, Principal principal,
+                                   ServerHttpRequest http) {
         String sql = sql(request, SemanticSqlRenderer.Dialect.TRINO);
         String actor = principal == null || principal.getName() == null ? "anonymous" : principal.getName();
+        String ip = http == null || http.getRemoteAddress() == null
+                ? null : http.getRemoteAddress().getAddress().getHostAddress();
         return Mono.usingWhen(quotas.acquire(actor), permit -> queries.query(sql, request.limit()), quotas::release)
                 .doOnSuccess(result -> {
                     metrics.queryExecuted(true, result.elapsedMs(), result.rows().size());
-                    audit.record("semantic.query", actor, Map.of(
+                    String eventId = audit.record("semantic.query", actor, Map.of(
                             "metric", String.valueOf(request.metric()),
                             "sql_fp", AuditService.fingerprint(sql),
                             "rows", String.valueOf(result.rows().size())));
+                    auditText.save(eventId, actor, ip, sql);
                 })
                 .doOnError(e -> {
                     metrics.queryExecuted(false, 0, 0);

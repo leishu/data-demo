@@ -6,6 +6,7 @@ import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.AuditBuffer;
 import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.AuditTextStore;
 import com.demo.lake.server.observability.LakeMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -67,7 +68,7 @@ class BatchJobServiceTest {
         BatchHistoryService history = noHistory();
         dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
                 new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
-        return new BatchJobService(p, history, store, logs, identity, audit(), metrics(), Schedulers.immediate());
+        return new BatchJobService(p, history, store, logs, identity, audit(), texts(), metrics(), Schedulers.immediate());
     }
 
     /** 测试里手动触发一次调度扫描（生产由 @PostConstruct 的定时器驱动） */
@@ -180,7 +181,7 @@ class BatchJobServiceTest {
         identity = new BatchIdentity();
         dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
                 new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
-        BatchJobService service = new BatchJobService(p, history, store, logs, identity, audit(), metrics(), Schedulers.immediate());
+        BatchJobService service = new BatchJobService(p, history, store, logs, identity, audit(), texts(), metrics(), Schedulers.immediate());
         BatchRun submitted = service.submit(LakeJobs.INIT, null);
         dispatch();
         BatchRun done = await(service, submitted.id());
@@ -207,6 +208,11 @@ class BatchJobServiceTest {
 
     private static LakeMetrics metrics() {
         return new LakeMetrics(new SimpleMeterRegistry());
+    }
+
+    /** 测试里保险箱默认关闭，不需要数据库也不需要密钥 */
+    private static AuditTextStore texts() {
+        return new AuditTextStore(new LakeProperties(), null);
     }
 
     @Test

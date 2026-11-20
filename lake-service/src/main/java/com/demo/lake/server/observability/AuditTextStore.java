@@ -1,0 +1,206 @@
+package com.demo.lake.server.observability;
+
+import com.demo.lake.server.config.LakeProperties;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
+
+import javax.sql.DataSource;
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.Optional;
+import java.util.regex.Pattern;
+
+/**
+ * 查询原文保险箱：普通审计日志只有指纹，这里单独存加密后的 SQL 文本。
+ *
+ * <p>按合规开关决定是否开启；开启但没有合法 AES-256 密钥时启动直接失败（fail closed），
+ * 绝不退化成明文。读取需要 AUDITOR 角色，且每次读取都会再写一条审计事件。</p>
+ */
+@Component
+@Slf4j
+public class AuditTextStore {
+
+    private static final String TABLE = "lake_audit.query_text";
+    private static final Pattern EVENT_ID = Pattern.compile("[A-Za-z0-9-]{1,64}");
+    private static final int NONCE_BYTES = 12;
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private final LakeProperties props;
+    private final DataSource dataSource;
+    private SecretKeySpec key;
+
+    public AuditTextStore(LakeProperties props, @Qualifier("stateDataSource") DataSource dataSource) {
+        this.props = props;
+        this.dataSource = dataSource;
+    }
+
+    @PostConstruct
+    public void init() {
+        if (!props.getAudit().isSqlCaptureEnabled()) {
+            log.info("查询原文保险箱未开启（lake.audit.sql-capture-enabled=false）");
+            return;
+        }
+        String encoded = props.getAudit().getKey();
+        if (encoded == null || encoded.isBlank()) {
+            throw new IllegalStateException("开启了查询原文保险箱但没配 LAKE_AUDIT_KEY，拒绝以明文启动");
+        }
+        byte[] raw;
+        try {
+            raw = Base64.getDecoder().decode(encoded.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("LAKE_AUDIT_KEY 不是合法 base64", e);
+        }
+        if (raw.length != 32) {
+            throw new IllegalStateException("LAKE_AUDIT_KEY 必须是 base64 编码的 32 字节 AES-256 密钥");
+        }
+        this.key = new SecretKeySpec(raw, "AES");
+        try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE SCHEMA IF NOT EXISTS lake_audit");
+            stmt.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
+                    + "  event_id VARCHAR(64) PRIMARY KEY,\n"
+                    + "  actor VARCHAR(80) NOT NULL,\n"
+                    + "  client_ip VARCHAR(64),\n"
+                    + "  at_ms BIGINT NOT NULL,\n"
+                    + "  expires_at BIGINT NOT NULL,\n"
+                    + "  legal_hold BOOLEAN NOT NULL DEFAULT FALSE,\n"
+                    + "  key_id VARCHAR(32) NOT NULL,\n"
+                    + "  redacted BOOLEAN NOT NULL,\n"
+                    + "  nonce BYTEA,\n"
+                    + "  payload BYTEA\n"
+                    + ")");
+            log.info("查询原文保险箱就绪: {} (retention={}d)", TABLE, props.getAudit().getRetentionDays());
+        } catch (SQLException e) {
+            throw new IllegalStateException("查询原文保险箱表初始化失败", e);
+        }
+    }
+
+    /** 审计事件落库后调用，eventId 用来把原文和普通审计事件关联起来 */
+    public void save(String eventId, String actor, String clientIp, String sql) {
+        if (!enabled() || eventId == null || !EVENT_ID.matcher(eventId).matches()) {
+            return;
+        }
+        try {
+            boolean redacted = props.getAudit().isRedact();
+            String text = redacted ? SqlRedactor.redact(sql) : sql;
+            byte[] nonce = new byte[NONCE_BYTES];
+            RANDOM.nextBytes(nonce);
+            byte[] payload = seal((text == null ? "" : text).getBytes(StandardCharsets.UTF_8), eventId, nonce);
+            long now = System.currentTimeMillis();
+            long expires = now + Math.max(1, props.getAudit().getRetentionDays()) * 86_400_000L;
+
+            try (Connection conn = dataSource.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                         "INSERT INTO " + TABLE + " (event_id, actor, client_ip, at_ms, expires_at,"
+                                 + " legal_hold, key_id, redacted, nonce, payload) VALUES (?,?,?,?,?,?,?,?,?,?)")) {
+                ps.setString(1, eventId);
+                ps.setString(2, actor == null ? "-" : actor);
+                ps.setString(3, clientIp);
+                ps.setLong(4, now);
+                ps.setLong(5, expires);
+                ps.setBoolean(6, false);
+                ps.setString(7, props.getAudit().getKeyId());
+                ps.setBoolean(8, redacted);
+                ps.setBytes(9, nonce);
+                ps.setBytes(10, payload);
+                ps.executeUpdate();
+            }
+        } catch (Exception e) {
+            // 保险箱是合规能力，但不能让一次审计写入把用户查询搞挂
+            log.error("查询原文写入保险箱失败 event={}: {}", eventId, e.getMessage());
+        }
+    }
+
+    public Optional<TextRecord> find(String eventId) {
+        if (!enabled() || eventId == null || !EVENT_ID.matcher(eventId).matches()) {
+            return Optional.empty();
+        }
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT actor, client_ip, at_ms, expires_at, legal_hold, key_id, redacted, nonce, payload"
+                             + " FROM " + TABLE + " WHERE event_id=?")) {
+            ps.setString(1, eventId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                byte[] nonce = rs.getBytes("nonce");
+                byte[] payload = rs.getBytes("payload");
+                String sql = new String(open(payload, eventId, nonce), StandardCharsets.UTF_8);
+                return Optional.of(new TextRecord(eventId, rs.getString("actor"), rs.getString("client_ip"),
+                        rs.getLong("at_ms"), rs.getLong("expires_at"), rs.getBoolean("legal_hold"),
+                        rs.getString("key_id"), rs.getBoolean("redacted"), sql));
+            }
+        } catch (Exception e) {
+            log.warn("读取查询原文失败 event={}: {}", eventId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** 法律保全：置位后不再按 TTL 清理 */
+    public boolean setLegalHold(String eventId, boolean hold) {
+        if (!enabled() || eventId == null || !EVENT_ID.matcher(eventId).matches()) {
+            return false;
+        }
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "UPDATE " + TABLE + " SET legal_hold=? WHERE event_id=?")) {
+            ps.setBoolean(1, hold);
+            ps.setString(2, eventId);
+            return ps.executeUpdate() > 0;
+        } catch (SQLException e) {
+            log.warn("设置法律保全失败 event={}: {}", eventId, e.getMessage());
+            return false;
+        }
+    }
+
+    /** 由既有对账循环调用 */
+    public int purge(Instant now) {
+        if (!enabled()) {
+            return 0;
+        }
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "DELETE FROM " + TABLE + " WHERE expires_at<? AND NOT legal_hold")) {
+            ps.setLong(1, now.toEpochMilli());
+            return ps.executeUpdate();
+        } catch (SQLException e) {
+            log.warn("清理过期查询原文失败: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    public boolean enabled() {
+        return props.getAudit().isSqlCaptureEnabled();
+    }
+
+    private byte[] seal(byte[] text, String eventId, byte[] nonce) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(eventId.getBytes(StandardCharsets.UTF_8));
+        return cipher.doFinal(text);
+    }
+
+    private byte[] open(byte[] payload, String eventId, byte[] nonce) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, nonce));
+        cipher.updateAAD(eventId.getBytes(StandardCharsets.UTF_8));
+        return cipher.doFinal(payload);
+    }
+
+    /** 审计员看到的原文记录；redacted=true 表示字符串字面量已被掩码 */
+    public record TextRecord(String eventId, String actor, String clientIp, long atMs, long expiresAt,
+                             boolean legalHold, String keyId, boolean redacted, String sql) {
+    }
+}

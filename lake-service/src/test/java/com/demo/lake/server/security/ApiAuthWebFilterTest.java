@@ -45,6 +45,7 @@ class ApiAuthWebFilterTest {
         assertEquals("QUERY", ApiAuthWebFilter.requiredRole("/api/batch/runs", HttpMethod.GET));
         assertEquals("BATCH", ApiAuthWebFilter.requiredRole("/api/batch/init", HttpMethod.POST));
         assertEquals("BATCH", ApiAuthWebFilter.requiredRole("/actuator/metrics", HttpMethod.GET));
+        assertEquals("AUDITOR", ApiAuthWebFilter.requiredRole("/api/audit/sql/abc", HttpMethod.GET));
         assertNull(ApiAuthWebFilter.requiredRole("/api/unknown", HttpMethod.GET));
     }
 

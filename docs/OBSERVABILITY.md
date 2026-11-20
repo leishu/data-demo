@@ -57,6 +57,37 @@ Spring Boot 自带 `http.server.requests`、`jvm.*`、`hikari.*` 等基础指标
 **隐私约定**：SQL 只写 SHA-256 前 16 位指纹（`sql_fp`）和长度，不写原文、参数或结果；
 口令和 Authorization 头永不入审计。字段值里的空白收敛成 `_`，避免伪造出额外的 key=value。
 
+### 查询原文保险箱（合规可选）
+
+普通审计只有指纹，无法回答"那条查询到底写了什么"。需要逐字回溯时，开启独立保险箱：
+
+```yaml
+lake:
+  audit:
+    sql-capture-enabled: true
+    redact: true          # 字符串字面量掩码，日期/短数字/短 ID 保留
+    retention-days: 30
+    key-id: v1
+```
+密钥通过环境变量 `LAKE_AUDIT_KEY`（base64 的 32 字节 AES-256 密钥）注入。**开启了却没配密钥时服务启动失败**，
+不会悄悄写明文。开启后每次查询在审计表里多出一个 `event_id`，原文经脱敏 + AES-GCM 加密后写入
+`lake_audit.query_text`，与日志层通过 `event_id` 关联。
+
+读取需要 **`AUDITOR` 角色**（`auditor/auditor`）：
+
+```bash
+curl -u auditor:auditor 'http://localhost:8088/api/audit/sql/<event_id>?reason=INCIDENT-123'
+curl -u auditor:auditor -X POST 'http://localhost:8088/api/audit/sql/<event_id>/hold?hold=true'
+```
+
+每条原文记录带 `redacted` 字段说明是否脱敏；`legal_hold=true` 的记录不会被 TTL 清理。
+**每次读取原文也会再写一条 `audit.text_access` 审计事件**（含 reason），响应带 `Cache-Control: no-store`。
+
+> 脱敏是启发式规则：保留表/列/函数和日期、短数字、短字母 ID，掩码其它字符串字面量，
+> 遇到 password/token/phone/id_card 等上下文一律掩码。如果法规要求逐字原文，
+> 把 `redact` 设为 false，并按最高敏感级管理保险箱（独立数据库角色、不进备份、不进日志采集）。
+> 更完整的生产方案是 Trino Event Listener：在引擎侧统一捕获所有客户端的查询事件。
+
 ## 怎么验证
 
 ```bash

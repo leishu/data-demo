@@ -4,6 +4,7 @@ import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.AuditTextStore;
 import com.demo.lake.server.observability.LakeMetrics;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -60,6 +61,7 @@ public class BatchJobService {
     private final LogSink logSink;
     private final BatchIdentity identity;
     private final AuditService audit;
+    private final AuditTextStore auditText;
     private final LakeMetrics metrics;
     private final Scheduler blocking;
     private final Disposable.Composite maintenance = Disposables.composite();
@@ -90,6 +92,7 @@ public class BatchJobService {
 
     /** 失联的 RUNNING：能从湖表拿到终态就采纳，否则落「实例失联」终态；顺带清理过期日志行 */
     private void reconcile() {
+        auditText.purge(Instant.now());
         int removed = logSink.purge(Instant.now().minus(
                 Math.max(1, props.getBatch().getState().getLogRetentionDays()), java.time.temporal.ChronoUnit.DAYS));
         if (removed > 0) {

@@ -99,6 +99,10 @@ public class ApiAuthWebFilter implements WebFilter {
             // 看列表/详情只读，触发作业才是特权操作
             return HttpMethod.GET.equals(method) ? "QUERY" : "BATCH";
         }
+        // 原文保险箱是特权数据：普通 BATCH 角色也不够，必须 AUDITOR
+        if (path.startsWith("/api/audit/sql")) {
+            return "AUDITOR";
+        }
         if (path.startsWith("/api/audit") || path.startsWith("/actuator/")) {
             return "BATCH";
         }

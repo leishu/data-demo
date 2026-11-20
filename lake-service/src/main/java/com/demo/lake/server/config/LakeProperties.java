@@ -28,6 +28,7 @@ public class LakeProperties {
     private final Query query = new Query();
     private final Batch batch = new Batch();
     private final Security security = new Security();
+    private final Audit audit = new Audit();
 
     @Getter
     @Setter
@@ -111,6 +112,22 @@ public class LakeProperties {
     }
 
     /**
+     * 合规用的查询原文保险箱：默认关闭。开启后原文经脱敏 + AES-GCM 加密单独存，
+     * 普通审计日志里仍然只有指纹；没有密钥时启动失败（fail closed）。
+     */
+    @Getter
+    @Setter
+    public static class Audit {
+        private boolean sqlCaptureEnabled = false;
+        /** 写入前脱敏：字符串字面量掩码，日期/数字保留 */
+        private boolean redact = true;
+        private int retentionDays = 30;
+        /** AES-256 密钥（base64，32 字节），从环境变量注入，不进配置文件 */
+        private String key = null;
+        private String keyId = "v1";
+    }
+
+    /**
      * demo 级鉴权：静态账号 + HTTP Basic，无会话、无外部依赖。
      *
      * <p>生产环境请关掉这里的 enabled，改由前面的网关/IdP 做认证和授权；
@@ -124,7 +141,8 @@ public class LakeProperties {
         /** viewer 只读；operator 额外可以触发批作业、看 actuator 指标 */
         private List<Account> accounts = List.of(
                 new Account("viewer", "{noop}viewer", List.of("QUERY")),
-                new Account("operator", "{noop}operator", List.of("QUERY", "BATCH")));
+                new Account("operator", "{noop}operator", List.of("QUERY", "BATCH")),
+                new Account("auditor", "{noop}auditor", List.of("AUDITOR")));
 
         @Getter
         @Setter
