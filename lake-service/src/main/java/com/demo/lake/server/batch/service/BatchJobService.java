@@ -57,6 +57,7 @@ public class BatchJobService {
     private final LakeProperties props;
     private final BatchHistoryService history;
     private final RunStateStore state;
+    private final LogSink logSink;
     private final BatchIdentity identity;
     private final AuditService audit;
     private final LakeMetrics metrics;
@@ -87,8 +88,13 @@ public class BatchJobService {
                 .subscribe());
     }
 
-    /** 失联的 RUNNING：能从湖表拿到终态就采纳，否则落「实例失联」终态 */
+    /** 失联的 RUNNING：能从湖表拿到终态就采纳，否则落「实例失联」终态；顺带清理过期日志行 */
     private void reconcile() {
+        int removed = logSink.purge(Instant.now().minus(
+                Math.max(1, props.getBatch().getState().getLogRetentionDays()), java.time.temporal.ChronoUnit.DAYS));
+        if (removed > 0) {
+            log.debug("清理过期作业日志 {} 行", removed);
+        }
         Instant cutoff = Instant.now().minusSeconds(Math.max(30, props.getBatch().getState().getStaleAfterSeconds()));
         for (BatchRun stale : state.staleRunning(cutoff)) {
             BatchRun archived = history.find(stale.id());
@@ -212,6 +218,11 @@ public class BatchJobService {
     public List<String> tail(String id, int lines) {
         BatchRun run = get(id);
         int n = Math.max(1, Math.min(lines, MAX_TAIL_LINES));
+        // 优先读共享日志（跨实例可用）；老记录/命令行直跑的作业没写库，再退回本地文件
+        List<LogSink.LogLine> shared = logSink.tail(id, n);
+        if (!shared.isEmpty()) {
+            return shared.stream().map(LogSink.LogLine::text).toList();
+        }
         Path file = logFile(run);
         if (file == null || !Files.isReadable(file)) {
             // 历史记录可能来自别的机器/已被清理，没日志就返回空，不报错

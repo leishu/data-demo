@@ -18,6 +18,9 @@ import java.util.Objects;
 /**
  * 把一次作业运行「盯」成一条 SSE 流：状态变了发 status，日志有新行发 log，跑完发 end 并关连接。
  *
+ * <p>日志优先从共享 LogSink 读（执行器边跑边搬进状态库），所以请求落到哪台实例都能看到；
+ * 老记录没写库时才退回本地文件游标。</p>
+ *
  * <p>实现是「虚拟线程里 sleep + 轮询」的朴素循环，没走 {@code Flux.interval}：日志读取是阻塞 IO，
  * 用定时器驱动反而要额外处理背压与线程切换。一条流一个虚拟线程，代价可以忽略。</p>
  */
@@ -33,6 +36,7 @@ public class BatchWatcher {
     private static final int MAX_TAIL_LINES = 1000;
 
     private final BatchJobService jobs;
+    private final LogSink logSink;
     private final Scheduler blocking;
 
     public Flux<BatchEvent> watch(String id, int tailLines) {
@@ -47,16 +51,23 @@ public class BatchWatcher {
 
     private void loop(String id, int tailLines, FluxSink<BatchEvent> sink) {
         LogTailCursor cursor = new LogTailCursor();
-        // 历史记录可能没有日志文件（命令行跑的 / 别的机器），tail 一律当空处理
         Path logFile = BatchJobService.logFile(jobs.get(id));
-        if (logFile != null) {
+
+        // 首帧：共享库里有日志就从那里回放，否则用本地文件尾部
+        long[] seqHolder = new long[1];
+        List<LogSink.LogLine> initial = logSink.tail(id, tailLines);
+        boolean useShared = !initial.isEmpty();
+        if (useShared) {
+            seqHolder[0] = initial.get(initial.size() - 1).seq();
+            emit(sink, initial.stream().map(LogSink.LogLine::text).toList());
+        } else if (logFile != null) {
             try {
-                // 连着上次看到的尾部开始看，而不是从文件头回放
                 cursor.primeTail(logFile, tailLines);
             } catch (IOException e) {
                 log.debug("预读作业日志尾部失败: {}", logFile, e);
             }
         }
+
         BatchRun last = null;
         long lastEmit = 0;
         while (!sink.isCancelled()) {
@@ -66,19 +77,19 @@ public class BatchWatcher {
                 last = run;
                 lastEmit = System.nanoTime();
             }
-            try {
-                List<String> lines = logFile == null
-                        ? List.of()
-                        : cursor.poll(logFile, MAX_LINES_PER_POLL);
-                if (!lines.isEmpty()) {
-                    sink.next(new BatchEvent.Log(lines));
-                    lastEmit = System.nanoTime();
-                }
-            } catch (Exception e) {
-                log.debug("读取作业日志失败: {}", logFile, e);
-                sink.next(new BatchEvent.Log(List.of("（日志读取失败：" + e.getMessage() + "）")));
+
+            List<String> lines = pollLogs(id, useShared, cursor, logFile, seqHolder);
+            if (!lines.isEmpty()) {
+                emit(sink, lines);
+                lastEmit = System.nanoTime();
             }
-            if (!BatchRun.RUNNING.equals(run.status())) {
+
+            if (!BatchRun.RUNNING.equals(run.status()) && !BatchRun.QUEUED.equals(run.status())) {
+                // 终态前再抽干一次，避免最后几行日志被 end 事件抢跑
+                List<String> finalLines = pollLogs(id, useShared, cursor, logFile, seqHolder);
+                if (!finalLines.isEmpty()) {
+                    emit(sink, finalLines);
+                }
                 sink.next(new BatchEvent.End(run));
                 sink.complete();
                 return;
@@ -94,6 +105,33 @@ public class BatchWatcher {
                 sink.complete();
                 return;
             }
+        }
+    }
+
+    /** seqHolder[0] 是本条流已读到的最大序号，按引用更新，互不影响 */
+    private List<String> pollLogs(String id, boolean useShared, LogTailCursor cursor, Path logFile, long[] seqHolder) {
+        if (useShared) {
+            List<LogSink.LogLine> fresh = logSink.since(id, seqHolder[0], MAX_LINES_PER_POLL);
+            if (!fresh.isEmpty()) {
+                seqHolder[0] = fresh.get(fresh.size() - 1).seq();
+                return fresh.stream().map(LogSink.LogLine::text).toList();
+            }
+            return List.of();
+        }
+        if (logFile == null) {
+            return List.of();
+        }
+        try {
+            return cursor.poll(logFile, MAX_LINES_PER_POLL);
+        } catch (Exception e) {
+            log.debug("读取作业日志失败: {}", logFile, e);
+            return List.of("（日志读取失败：" + e.getMessage() + "）");
+        }
+    }
+
+    private static void emit(FluxSink<BatchEvent> sink, List<String> lines) {
+        if (!lines.isEmpty()) {
+            sink.next(new BatchEvent.Log(lines));
         }
     }
 }

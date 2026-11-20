@@ -12,8 +12,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.scheduler.Schedulers;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -53,16 +56,18 @@ class BatchJobServiceTest {
     }
 
     private InMemoryRunStateStore store;
+    private InMemoryLogSink logs;
     private JobDispatcher dispatcher;
     private BatchIdentity identity;
 
     private BatchJobService newService(LakeProperties p) {
         store = new InMemoryRunStateStore();
+        logs = new InMemoryLogSink();
         identity = new BatchIdentity();
         BatchHistoryService history = noHistory();
-        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p)),
+        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
                 new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
-        return new BatchJobService(p, history, store, identity, audit(), metrics(), Schedulers.immediate());
+        return new BatchJobService(p, history, store, logs, identity, audit(), metrics(), Schedulers.immediate());
     }
 
     /** 测试里手动触发一次调度扫描（生产由 @PostConstruct 的定时器驱动） */
@@ -171,10 +176,11 @@ class BatchJobServiceTest {
         };
         LakeProperties p = props("/bin/sh -c \"echo done; exit 0\"");
         store = new InMemoryRunStateStore();
+        logs = new InMemoryLogSink();
         identity = new BatchIdentity();
-        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p)),
+        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
                 new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
-        BatchJobService service = new BatchJobService(p, history, store, identity, audit(), metrics(), Schedulers.immediate());
+        BatchJobService service = new BatchJobService(p, history, store, logs, identity, audit(), metrics(), Schedulers.immediate());
         BatchRun submitted = service.submit(LakeJobs.INIT, null);
         dispatch();
         BatchRun done = await(service, submitted.id());
@@ -201,6 +207,49 @@ class BatchJobServiceTest {
 
     private static LakeMetrics metrics() {
         return new LakeMetrics(new SimpleMeterRegistry());
+    }
+
+    @Test
+    void tail优先读共享日志再退回本地文件() throws Exception {
+        BatchJobService service = newService(props("/bin/echo never-dispatched"));
+        BatchRun run = service.submit(LakeJobs.INIT, null);
+        // 共享库有新行，本地文件故意写成不同内容
+        logs.append(run.id(), List.of("shared-1", "shared-2"));
+        Files.writeString(Path.of("target/test-logs", run.id() + ".log"), "local-only\n");
+
+        List<String> tail = service.tail(run.id(), 10);
+        assertEquals(List.of("shared-1", "shared-2"), tail);
+    }
+
+    /** 内存版共享日志，用于验证 tail / watcher 的读取顺序 */
+    static class InMemoryLogSink implements LogSink {
+        private final Map<String, List<LogLine>> lines = new ConcurrentHashMap<>();
+
+        @Override
+        public synchronized void append(String runId, List<String> newLines) {
+            List<LogLine> all = lines.computeIfAbsent(runId, k -> new ArrayList<>());
+            long seq = all.isEmpty() ? 0 : all.get(all.size() - 1).seq();
+            for (String line : newLines) {
+                all.add(new LogLine(++seq, line));
+            }
+        }
+
+        @Override
+        public List<LogLine> tail(String runId, int limit) {
+            List<LogLine> all = lines.getOrDefault(runId, List.of());
+            return List.copyOf(all.subList(Math.max(0, all.size() - limit), all.size()));
+        }
+
+        @Override
+        public List<LogLine> since(String runId, long afterSeq, int limit) {
+            return lines.getOrDefault(runId, List.of()).stream()
+                    .filter(l -> l.seq() > afterSeq).limit(limit).toList();
+        }
+
+        @Override
+        public int purge(Instant before) {
+            return 0;
+        }
     }
 
     /** 不连 Postgres 的测试替身：行为和 JdbcRunStateStore 一致，只是放在内存里 */

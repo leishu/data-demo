@@ -105,6 +105,8 @@ public class LakeProperties {
             private int staleAfterSeconds = 120;
             /** 对账周期 */
             private int reconcileSeconds = 60;
+            /** 状态库里日志行的保留天数 */
+            private int logRetentionDays = 7;
         }
     }
 

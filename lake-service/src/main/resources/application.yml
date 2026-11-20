@@ -80,6 +80,7 @@ lake:
       heartbeat-seconds: 15
       stale-after-seconds: 120
       reconcile-seconds: 60
+      log-retention-days: 7
 
 logging:
   level:

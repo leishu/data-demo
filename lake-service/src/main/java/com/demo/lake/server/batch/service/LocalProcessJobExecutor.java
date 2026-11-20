@@ -8,6 +8,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -24,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 public class LocalProcessJobExecutor implements JobExecutor {
 
     private final LakeProperties props;
+    private final LogSink logSink;
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
 
     @Override
@@ -53,27 +57,53 @@ public class LocalProcessJobExecutor implements JobExecutor {
 
         processes.put(run.id(), process);
         Thread.ofVirtual().name("job-" + run.id()).start(() -> {
+            LogTailCursor cursor = new LogTailCursor();
+            Path logFile = run.logFile() == null || run.logFile().isBlank()
+                    ? null : Path.of(run.logFile());
+            int timeout = props.getBatch().getTimeoutSeconds();
             try {
-                int timeout = props.getBatch().getTimeoutSeconds();
-                boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
-                long elapsed = System.currentTimeMillis() - start;
-                if (!finished) {
-                    process.destroyForcibly();
-                    listener.completed(run, BatchRun.TIMEOUT, null, elapsed,
-                            "超过 " + timeout + "s 未结束，已强制结束");
-                    return;
+                for (;;) {
+                    // 边等边搬运日志：500ms 一次，SSE 和 tail 从状态库读，不再依赖本机磁盘
+                    boolean finished = process.waitFor(500, TimeUnit.MILLISECONDS);
+                    flush(logFile, cursor, run.id());
+                    long elapsed = System.currentTimeMillis() - start;
+                    if (finished) {
+                        int exit = process.exitValue();
+                        listener.completed(run, exit == 0 ? BatchRun.SUCCEEDED : BatchRun.FAILED, exit, elapsed,
+                                exit == 0 ? "完成" : "退出码 " + exit + "，看日志尾部");
+                        break;
+                    }
+                    if (elapsed >= timeout * 1000L) {
+                        process.destroyForcibly();
+                        listener.completed(run, BatchRun.TIMEOUT, null, elapsed,
+                                "超过 " + timeout + "s 未结束，已强制结束");
+                        break;
+                    }
                 }
-                int exit = process.exitValue();
-                listener.completed(run, exit == 0 ? BatchRun.SUCCEEDED : BatchRun.FAILED, exit, elapsed,
-                        exit == 0 ? "完成" : "退出码 " + exit + "，看日志尾部");
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 listener.completed(run, BatchRun.FAILED, null, System.currentTimeMillis() - start, "被中断");
             } finally {
+                // 进程退出后可能还有几行没捞到，最后补一次
+                flush(logFile, cursor, run.id());
                 processes.remove(run.id());
             }
         });
         return "pid:" + process.pid();
+    }
+
+    private void flush(Path logFile, LogTailCursor cursor, String runId) {
+        if (logFile == null) {
+            return;
+        }
+        try {
+            List<String> lines = cursor.poll(logFile, 500);
+            if (!lines.isEmpty()) {
+                logSink.append(runId, lines);
+            }
+        } catch (IOException e) {
+            log.debug("读取作业日志失败 run={}: {}", runId, e.getMessage());
+        }
     }
 
     @Override

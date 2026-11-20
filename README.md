@@ -164,6 +164,8 @@ open http://localhost:8088/                # 内置查询控制台
   （`lake_batch.batch_runs`），由提交实例按 `owner` 续心跳；服务重启或开多个实例都能看到同一份列表。
   心跳超时的僵死作业会先尝试从湖表终态归档恢复，否则落「实例失联」终态（对账周期默认 60s）。
   湖表 `ops.batch_runs` 仍由 BatchApp 写终态，作为跨引擎的长期归档。
+  本地执行器还会把日志行实时搬进状态库的 `lake_batch.batch_log_lines`（每 run 只留尾部 2000 行，
+  默认保留 7 天），所以跨实例点开运行详情也能看到日志；老记录仍可退回本机日志文件。
 - **服务层不侵入 Spark 代码**。Spring 只在 driver/服务侧；批处理 jar 要进 `spark-submit`、
   要能序列化到 executor，塞一个 `ApplicationContext` 只会让集群问题更难查。
 - **阻塞 IO 一律 offload**。WebFlux 的请求线程就是 Netty 事件循环，Hikari 取连接、`rs.next()`、
