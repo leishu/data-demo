@@ -10,7 +10,6 @@ import org.springframework.context.annotation.Configuration;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
-import javax.sql.DataSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -63,7 +62,7 @@ public class LakeConfiguration {
      * 服务要能在 Trino 没起来时先提供 /actuator/health 和明确的错误信息，而不是起不来。
      */
     @Bean(name = "trinoDataSource", destroyMethod = "close")
-    public DataSource trinoDataSource(PlatformConfig cfg, LakeProperties props) {
+    public HikariDataSource trinoDataSource(PlatformConfig cfg, LakeProperties props) {
         HikariConfig hikari = new HikariConfig();
         hikari.setPoolName("trino");
         hikari.setJdbcUrl(cfg.trinoJdbcUrl());
@@ -87,7 +86,7 @@ public class LakeConfiguration {
      * 初始化失败不阻止启动：没起 infra 时服务仍能提供只读查询，批作业接口返回明确的 503。
      */
     @Bean(name = "stateDataSource", destroyMethod = "close")
-    public DataSource stateDataSource(LakeProperties props) {
+    public HikariDataSource stateDataSource(LakeProperties props) {
         LakeProperties.Batch.State state = props.getBatch().getState();
         HikariConfig hikari = new HikariConfig();
         hikari.setPoolName("batch-state");
