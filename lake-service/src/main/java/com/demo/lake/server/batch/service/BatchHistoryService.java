@@ -71,7 +71,7 @@ public class BatchHistoryService {
 
     /** 最近 limit 条历史；任何失败都降级成空列表 + 状态说明 */
     public Result recent(int limit) {
-        int n = Math.max(1, Math.min(limit, MAX_LIMIT));
+        int n = Math.clamp(limit, 1, MAX_LIMIT);
         Result hit = fresh(n);
         if (hit != null) {
             return hit;
@@ -137,7 +137,7 @@ public class BatchHistoryService {
                 return null;
             }
             List<BatchRun> hits = select(" where run_id = '" + id + "' limit 1");
-            return hits.isEmpty() ? null : hits.get(0);
+            return hits.isEmpty() ? null : hits.getFirst();
         } catch (RuntimeException e) {
             invalidateProbe();
             log.warn("按 id 读运行历史失败 {}: {}", id, e.getMessage());
@@ -170,7 +170,7 @@ public class BatchHistoryService {
                 + " where table_schema = '" + LakeTables.OPS_SCHEMA + "'"
                 + " and table_name = '" + LakeTables.BATCH_RUNS + "'";
         QueryResult result = queries.executeQuiet(sql, null);
-        boolean found = !result.rows().isEmpty() && !"0".equals(result.rows().get(0).get(0));
+        boolean found = !result.rows().isEmpty() && !"0".equals(result.rows().getFirst().getFirst());
         present = found;
         probedAtNanos = now;
         return found;
