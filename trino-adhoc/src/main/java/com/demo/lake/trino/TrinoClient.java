@@ -37,6 +37,8 @@ public final class TrinoClient implements AutoCloseable {
             throws SQLException {
         Properties props = new Properties();
         props.setProperty("user", user);
+        // 会话时区固定 UTC：湖表里的 timestamp 是 UTC 墙钟，用机器时区解释会整体偏移
+        props.setProperty("timezone", "UTC");
         // source 是驱动认的连接属性，会作为查询来源上报到 coordinator
         if (source != null && !source.isBlank()) {
             props.setProperty("source", source);
@@ -103,7 +105,12 @@ public final class TrinoClient implements AutoCloseable {
         if (value instanceof BigDecimal) {
             return ((BigDecimal) value).toPlainString();
         }
-        if (value instanceof Timestamp || value instanceof java.sql.Date || value instanceof java.sql.Time) {
+        if (value instanceof Timestamp) {
+            // Timestamp.toString() 按 JVM 默认时区渲染（本机 UTC+8，会把 UTC 时刻显示成 +8），
+            // 这里输出 ISO-8601 绝对时刻，display 和 session 时区都无关
+            return ((Timestamp) value).toInstant().toString();
+        }
+        if (value instanceof java.sql.Date || value instanceof java.sql.Time) {
             return value.toString();
         }
         if (value instanceof byte[]) {

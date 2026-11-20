@@ -9,6 +9,12 @@ cd "$(dirname "$0")/.."
 
 PORT="${PORT:-8088}"
 JAR_PATTERN="lake-service/target/lake-service-*.jar"
+PID_FILE="logs/lake-service.pid"
+
+# 统一用绝对路径：pid 文件与兜底 pkill 都靠它精确定位本仓库的实例，避免误杀机器上同名进程
+abs_jar() {
+  (cd "$(dirname "$1")" && printf '%s/%s' "$(pwd)" "$(basename "$1")")
+}
 
 find_jdk21() {
   if [[ -n "${JAVA21_HOME:-}" && -x "${JAVA21_HOME}/bin/java" ]]; then
@@ -43,7 +49,7 @@ case "${cmd}" in
     JAVA21_HOME="$(find_jdk21)" || { echo "需要 JDK 21：设 JAVA21_HOME 指到 jdk-21 目录" >&2; exit 1; }
     jar="$(ls -1 ${JAR_PATTERN} 2>/dev/null | grep -v sources | head -1)"
     [[ -n "${jar}" ]] || { echo "先执行 bin/lake-service.sh build" >&2; exit 1; }
-    exec "${JAVA21_HOME}/bin/java" -jar "${jar}" --server.port="${PORT}"
+    exec "${JAVA21_HOME}/bin/java" -jar "$(abs_jar "${jar}")" --server.port="${PORT}"
     ;;
 
   start)
@@ -51,13 +57,35 @@ case "${cmd}" in
     jar="$(ls -1 ${JAR_PATTERN} 2>/dev/null | grep -v sources | head -1)"
     [[ -n "${jar}" ]] || { echo "先执行 bin/lake-service.sh build" >&2; exit 1; }
     mkdir -p logs
-    nohup "${JAVA21_HOME}/bin/java" -jar "${jar}" --server.port="${PORT}" \
+    nohup "${JAVA21_HOME}/bin/java" -jar "$(abs_jar "${jar}")" --server.port="${PORT}" \
       > logs/lake-service.out 2>&1 &
+    echo "$!" > "${PID_FILE}"
     echo "pid=$! port=${PORT} log=logs/lake-service.out"
     ;;
 
   stop)
-    pkill -f "lake-service-.*\.jar" && echo "已停止" || echo "没有在跑的实例"
+    stopped=0
+    if [[ -f "${PID_FILE}" ]]; then
+      pid="$(cat "${PID_FILE}" 2>/dev/null || true)"
+      if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+        # 先 SIGTERM 让 Spring 优雅关闭，最多等 10s，再兜底 SIGKILL
+        kill "${pid}" 2>/dev/null && stopped=1
+        for _ in {1..50}; do
+          kill -0 "${pid}" 2>/dev/null || break
+          sleep 0.2
+        done
+        kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
+      fi
+      rm -f "${PID_FILE}"
+    fi
+    if [[ "${stopped}" == "0" ]]; then
+      # 兼容没有 pid 文件的旧实例：只匹配本仓库 target 下 jar 的绝对路径
+      jar="$(ls -1 ${JAR_PATTERN} 2>/dev/null | grep -v sources | head -1)"
+      if [[ -n "${jar}" ]] && pkill -f "$(abs_jar "${jar}")"; then
+        stopped=1
+      fi
+    fi
+    [[ "${stopped}" == "1" ]] && echo "已停止" || echo "没有在跑的实例"
     ;;
 
   *)

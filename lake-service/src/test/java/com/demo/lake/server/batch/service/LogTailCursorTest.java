@@ -88,6 +88,15 @@ class LogTailCursorTest {
     }
 
     @Test
+    void readTail只读文件末尾且不超过行数上限() throws Exception {
+        Path file = Files.createTempFile("lake-log", ".log");
+        Files.writeString(file, "1\n2\n3\n4\n5\n");
+
+        assertEquals(List.of("4", "5"), LogTailCursor.readTail(file, 2));
+        assertEquals(List.of("1", "2", "3", "4", "5"), LogTailCursor.readTail(file, 100));
+    }
+
+    @Test
     void 文件被截断后从头重读() throws Exception {
         Path file = Files.createTempFile("lake-log", ".log");
         Files.writeString(file, "old-1\nold-2\n");

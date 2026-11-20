@@ -27,6 +27,7 @@ public class LakeProperties {
     // final：只允许改内层字段，不允许整体替换掉已绑定的对象
     private final Query query = new Query();
     private final Batch batch = new Batch();
+    private final Security security = new Security();
 
     @Getter
     @Setter
@@ -40,6 +41,12 @@ public class LakeProperties {
         private int connectionTimeoutMs = 5000;
         /** 是否允许执行 DDL/DML —— 即席查询场景默认只读 */
         private boolean allowWrites = false;
+        /** 全局并发查询上限：Hikari 池只是连接数，这里限制「排队等连接」的请求数 */
+        private int maxConcurrentQueries = 4;
+        /** 单账号每分钟最多提交多少次查询（含 SSE 与表采样），滑动窗口 */
+        private int maxQueriesPerMinute = 60;
+        /** 并发名额最长等待时间，超时直接 429，不让请求一直挂在事件循环上 */
+        private int acquireTimeoutMs = 3000;
     }
 
     @Getter
@@ -60,5 +67,39 @@ public class LakeProperties {
          * 默认值取 common 的作业名表，新增作业时不用回来再抄一遍。
          */
         private List<String> allowedJobs = LakeJobs.CHOICES;
+    }
+
+    /**
+     * demo 级鉴权：静态账号 + HTTP Basic，无会话、无外部依赖。
+     *
+     * <p>生产环境请关掉这里的 enabled，改由前面的网关/IdP 做认证和授权；
+     * 明文口令只适合本机演示（{noop} 前缀表示没有哈希）。</p>
+     */
+    @Getter
+    @Setter
+    public static class Security {
+        private boolean enabled = true;
+        private String realm = "lakehouse";
+        /** viewer 只读；operator 额外可以触发批作业、看 actuator 指标 */
+        private List<Account> accounts = List.of(
+                new Account("viewer", "{noop}viewer", List.of("QUERY")),
+                new Account("operator", "{noop}operator", List.of("QUERY", "BATCH")));
+
+        @Getter
+        @Setter
+        public static class Account {
+            private String username;
+            private String password;
+            private List<String> roles = List.of();
+
+            public Account() {
+            }
+
+            public Account(String username, String password, List<String> roles) {
+                this.username = username;
+                this.password = password;
+                this.roles = roles;
+            }
+        }
     }
 }

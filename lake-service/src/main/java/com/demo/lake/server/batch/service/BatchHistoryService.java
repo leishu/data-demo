@@ -41,8 +41,11 @@ public class BatchHistoryService {
 
     private static final long PROBE_TTL_SECONDS = 15;
     private static final long PROBE_TTL_NANOS = TimeUnit.SECONDS.toNanos(PROBE_TTL_SECONDS);
-    /** 轮询缓存：略小于页面 6s 节拍，同一拍里只回源一次；内存记录实时合并，不受此缓存影响 */
-    private static final long CACHE_TTL_SECONDS = 5;
+    /**
+     * 轮询缓存：略大于页面 6s 节拍，同一份结果能覆盖下一次轮询（约每 12s 回源一次）。
+     * 本进程的作业一旦结束会 {@link #invalidate()}，所以不会让「刚跑完」的记录延迟出现。
+     */
+    private static final long CACHE_TTL_SECONDS = 10;
     private static final long CACHE_TTL_NANOS = TimeUnit.SECONDS.toNanos(CACHE_TTL_SECONDS);
     /** run id 来自路径变量，拼进 SQL 前必须卡死字符集 */
     private static final Pattern RUN_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:-]{0,79}");
@@ -103,7 +106,7 @@ public class BatchHistoryService {
                 return new Result(List.of(), new RunsView.History(RunsView.History.NOT_INITIALIZED,
                         "运行历史表 " + table + " 还没建（先跑一次 init），当前只显示本进程的记录", table));
             }
-            return new Result(List.copyOf(select(" order by started_at desc limit " + n)),
+            return new Result(List.copyOf(select(" order by started_ms desc limit " + n)),
                     new RunsView.History(RunsView.History.OK, null, table));
         } catch (TrinoUnavailableException e) {
             invalidateProbe();
@@ -143,12 +146,10 @@ public class BatchHistoryService {
     }
 
     private List<BatchRun> select(String suffix) {
-        // 时间列取 epoch 毫秒：Trino 的 timestamp 不带时区，cast 成 varchar 或驱动转成
-        // java.sql.Timestamp 都会按会话时区重排（同一行在 UTC 会话与 Asia/Shanghai 会话下差 8 小时），
-        // 只有 to_unixtime 这种绝对时刻换算与连接时区无关。
+        // 时间的权威列就是 epoch 毫秒：BatchApp 直接写入，InitJob 为老表回填。
+        // 不再对 timestamp 做时区换算——绝对时刻编进 schema，而不是靠连接属性/约定。
         String sql = "select run_id, job, command, status, exit_code,"
-                + " cast(round(to_unixtime(started_at) * 1000) as bigint) as started_ms,"
-                + " cast(round(to_unixtime(finished_at) * 1000) as bigint) as finished_ms,"
+                + " started_ms, finished_ms,"
                 + " duration_ms, log_file, message from " + table() + suffix;
         QueryResult result = queries.executeQuiet(sql, null);
         List<BatchRun> runs = new ArrayList<>(result.rows().size());
@@ -210,10 +211,7 @@ public class BatchHistoryService {
         return index < row.size() ? row.get(index) : null;
     }
 
-    /**
-     * 入参是 SQL 里算出来的 epoch 毫秒。不能直接取 timestamp：无论 cast 成字符串还是驱动转成
-     * java.sql.Timestamp，都会按会话时区/ JVM 时区重排，同一时刻在不同时区下得到不同值。
-     */
+    /** 入参是权威列 started_ms / finished_ms 的 epoch 毫秒，绝对时刻，不受任何时区设置影响 */
     private static Instant toInstantMillis(String text) {
         Long millis = toLong(text);
         return millis == null ? null : Instant.ofEpochMilli(millis);

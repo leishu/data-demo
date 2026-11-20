@@ -65,6 +65,10 @@ public final class LakeTables {
      * 进程被 kill 或超时强杀时没人来收尾，留着 RUNNING 行会变成永久脏数据。
      *
      * <p>不分区：单表行数就是「跑过多少次作业」，量级极小，分区只会让 Trino 侧多一层元数据。</p>
+     *
+     * <p>时间是权威 epoch 毫秒（{@code started_ms}/{@code finished_ms}），绝对时刻、无时区歧义；
+     * 旧的 {@code started_at}/{@code finished_at} 保留为可读墙钟，已废弃，读取侧不再依赖它们。
+     * 老表由 InitJob 自动 ADD COLUMNS 并按 UTC 墙钟回填。</p>
      */
     public static String createBatchRuns(PlatformConfig cfg) {
         TableRef t = TableRef.of(cfg.catalogName(), OPS_SCHEMA, BATCH_RUNS);
@@ -74,11 +78,13 @@ public final class LakeTables {
                 + "  command      STRING      COMMENT '本次进程收到的参数',\n"
                 + "  status       STRING      COMMENT 'SUCCEEDED/FAILED',\n"
                 + "  exit_code    INT         COMMENT '作业语义退出码：0 成功 1 失败',\n"
-                + "  started_at   TIMESTAMP   COMMENT '开始时间(UTC)',\n"
-                + "  finished_at  TIMESTAMP   COMMENT '结束时间(UTC)',\n"
+                + "  started_at   TIMESTAMP   COMMENT '[已废弃] 开始墙钟，仅展示；请用 started_ms',\n"
+                + "  finished_at  TIMESTAMP   COMMENT '[已废弃] 结束墙钟，仅展示；请用 finished_ms',\n"
                 + "  duration_ms  BIGINT      COMMENT '耗时(毫秒)',\n"
                 + "  log_file     STRING      COMMENT '服务端日志文件，重启后仍可 tail',\n"
-                + "  message      STRING      COMMENT '结果说明'\n"
+                + "  message      STRING      COMMENT '结果说明',\n"
+                 + "  started_ms   BIGINT      COMMENT '权威开始时间：epoch 毫秒（UTC 绝对时刻）',\n"
+                 + "  finished_ms  BIGINT      COMMENT '权威结束时间：epoch 毫秒（UTC 绝对时刻）'\n"
                 + ")\n"
                 + "USING iceberg\n"
                 + "TBLPROPERTIES (\n"

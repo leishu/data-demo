@@ -79,6 +79,20 @@ final class LogTailCursor {
         }
     }
 
+    /**
+     * 读文件最后 maxLines 行（一次性快照）。
+     *
+     * <p>复用预热逻辑：只从文件末尾读一块，不把整个 spark 日志 {@code readAllLines} 进内存。</p>
+     */
+    static List<String> readTail(Path file, int maxLines) throws IOException {
+        if (maxLines <= 0 || !Files.isReadable(file)) {
+            return List.of();
+        }
+        LogTailCursor cursor = new LogTailCursor();
+        cursor.primeTail(file, maxLines);
+        return cursor.poll(file, maxLines);
+    }
+
     private static int indexOfNewline(byte[] chunk) {
         for (int i = 0; i < chunk.length; i++) {
             if (chunk[i] == '\n') {

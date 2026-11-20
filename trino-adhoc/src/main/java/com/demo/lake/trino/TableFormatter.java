@@ -46,7 +46,44 @@ public final class TableFormatter {
     }
 
     private static int displayWidth(String value) {
-        return cell(value).codePointCount(0, cell(value).length());
+        String v = cell(value);
+        int width = 0;
+        for (int i = 0; i < v.length(); ) {
+            int cp = v.codePointAt(i);
+            width += codePointWidth(cp);
+            i += Character.charCount(cp);
+        }
+        return width;
+    }
+
+    /** 组合符号不占列；CJK / 全角 / emoji 在等宽终端里占两列，否则含中文的表头会错位 */
+    private static int codePointWidth(int cp) {
+        switch (Character.getType(cp)) {
+            case Character.NON_SPACING_MARK:
+            case Character.ENCLOSING_MARK:
+            case Character.COMBINING_SPACING_MARK:
+                return 0;
+            default:
+                break;
+        }
+        if (cp == 0x200B || cp == 0x200D || cp == 0xFE0F) {
+            return 0;
+        }
+        return isWide(cp) ? 2 : 1;
+    }
+
+    private static boolean isWide(int cp) {
+        return (cp >= 0x1100 && cp <= 0x115F)            // 韩文字母
+                || cp == 0x2329 || cp == 0x232A
+                || (cp >= 0x2E80 && cp <= 0xA4CF && cp != 0x303F) // CJK 部首、假名、汉字等
+                || (cp >= 0xAC00 && cp <= 0xD7A3)        // 韩文音节
+                || (cp >= 0xF900 && cp <= 0xFAFF)        // CJK 兼容汉字
+                || (cp >= 0xFE10 && cp <= 0xFE19)        // 竖排标点
+                || (cp >= 0xFE30 && cp <= 0xFE6F)        // CJK 兼容形式
+                || (cp >= 0xFF00 && cp <= 0xFF60)        // 全角字符
+                || (cp >= 0xFFE0 && cp <= 0xFFE6)
+                || (cp >= 0x1F300 && cp <= 0x1FAFF)      // emoji
+                || (cp >= 0x20000 && cp <= 0x3FFFD);     // CJK 扩展区
     }
 
     private static void appendLine(StringBuilder sb, int[] widths) {
@@ -61,7 +98,7 @@ public final class TableFormatter {
         sb.append('|');
         for (int i = 0; i < widths.length; i++) {
             String v = cell(values.get(i));
-            int pad = widths[i] - v.codePointCount(0, v.length());
+            int pad = widths[i] - displayWidth(v);
             sb.append(' ').append(v).append(" ".repeat(pad)).append(" |");
         }
         sb.append('\n');

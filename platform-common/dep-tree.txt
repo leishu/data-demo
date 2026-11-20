@@ -1,2 +1,0 @@
-com.demo.lake:platform-common:jar:1.0.0-SNAPSHOT
-\- org.slf4j:slf4j-api:jar:2.0.7:compile

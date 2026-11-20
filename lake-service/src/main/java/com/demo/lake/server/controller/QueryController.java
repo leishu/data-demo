@@ -8,6 +8,7 @@ import com.demo.lake.server.exception.ErrorMapper;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.model.TableInfo;
+import com.demo.lake.server.query.service.QueryQuotaService;
 import com.demo.lake.server.query.service.QueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.security.Principal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +35,7 @@ import java.util.Map;
 public class QueryController {
 
     private final QueryService queryService;
+    private final QueryQuotaService quotas;
     private final PlatformConfig cfg;
     private final LakeProperties props;
 
@@ -40,8 +43,11 @@ public class QueryController {
     }
 
     @PostMapping("/query")
-    public Mono<QueryResult> query(@RequestBody QueryRequest request) {
-        return queryService.query(request.sql(), request.maxRows());
+    public Mono<QueryResult> query(@RequestBody QueryRequest request, Principal principal) {
+        // 配额只罩用户发起的查询：内部读运行历史走 QueryService，不占名额
+        return Mono.usingWhen(quotas.acquire(client(principal)),
+                permit -> queryService.query(request.sql(), request.maxRows()),
+                quotas::release);
     }
 
     /**
@@ -51,8 +57,10 @@ public class QueryController {
      * 也容易被 URL 长度限制卡住；前端用 fetch + ReadableStream 解帧，代价只是几十行解析代码。</p>
      */
     @PostMapping(value = "/query/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request) {
-        return queryService.streamQuery(request.sql(), request.maxRows())
+    public Flux<ServerSentEvent<QueryEvent>> queryStream(@RequestBody QueryRequest request, Principal principal) {
+        return Flux.usingWhen(quotas.acquire(client(principal)),
+                        permit -> queryService.streamQuery(request.sql(), request.maxRows()),
+                        quotas::release)
                 .map(ev -> ServerSentEvent.builder(ev).event(ev.type()).build())
                 .onErrorResume(e -> {
                     // 流已经开始了就发不了状态码，只能自己翻成一条 error 事件
@@ -65,14 +73,24 @@ public class QueryController {
     }
 
     @GetMapping("/tables")
-    public Mono<List<TableInfo>> tables() {
-        return queryService.listTables();
+    public Mono<List<TableInfo>> tables(Principal principal) {
+        return Mono.usingWhen(quotas.acquire(client(principal)),
+                permit -> queryService.listTables(),
+                quotas::release);
     }
 
     @GetMapping("/tables/{table}/sample")
     public Mono<QueryResult> sample(@PathVariable String table,
-                                    @RequestParam(defaultValue = "10") int limit) {
-        return queryService.sample(table, limit);
+                                    @RequestParam(defaultValue = "10") int limit,
+                                    Principal principal) {
+        return Mono.usingWhen(quotas.acquire(client(principal)),
+                permit -> queryService.sample(table, limit),
+                quotas::release);
+    }
+
+    /** 配额按认证账号分桶；没拿到 Principal（鉴权关闭时）退回匿名桶 */
+    private static String client(Principal principal) {
+        return principal == null || principal.getName() == null ? "anonymous" : principal.getName();
     }
 
     /** 有效配置回显：只给非敏感项，S3 密钥用 PlatformConfig.describe() 打码后的结果 */

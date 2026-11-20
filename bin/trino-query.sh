@@ -30,7 +30,26 @@ trap cleanup EXIT
 
 ARGS=()
 NO_TRINO=0   # --list / --print-only 不需要连服务
-CUSTOM_URL=0 # 指定了 --url 就不知道目标在哪儿，不做本地探测
+
+# 本地探测用的 host/port：优先级与 PlatformConfig 一致
+#   环境变量 LAKE_TRINO_HOST / LAKE_TRINO_PORT > conf/platform.properties > 默认 localhost:8080
+prop_from_conf() {
+  local key="$1"
+  [[ -r conf/platform.properties ]] || return 0
+  sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" conf/platform.properties \
+    | tail -n 1 | tr -d '\r' | sed -e 's/[[:space:]]*$//'
+}
+
+TRINO_HOST="${LAKE_TRINO_HOST:-$(prop_from_conf 'platform\.trino\.host')}"
+TRINO_HOST="${TRINO_HOST:-localhost}"
+TRINO_PORT="${LAKE_TRINO_PORT:-$(prop_from_conf 'platform\.trino\.port')}"
+TRINO_PORT="${TRINO_PORT:-8080}"
+
+# 指定了 --url、或配置里写了完整 JDBC URL 时，host/port 未必对得上，不做本地探测
+CUSTOM_URL=0
+if [[ -n "${LAKE_TRINO_URL:-}" || -n "$(prop_from_conf 'platform\.trino\.url')" ]]; then
+  CUSTOM_URL=1
+fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --list|--print-only)
@@ -88,11 +107,11 @@ for arg in "${ARGS[@]}"; do
 done
 EXEC_ARGS="${EXEC_ARGS% }"
 
-# Trino 默认不随基础设施启动（常驻 ~0.8G），先探一下 8080：
+# Trino 默认不随基础设施启动（常驻 ~0.8G），先探一下配置里的 host:port：
 # 不然要等到 mvn 跑起来才报 JDBC 连接超时，看不出是服务没起
 if [[ "${NO_TRINO}" == "0" && "${CUSTOM_URL}" == "0" ]] \
-   && ! curl -fsS --max-time 3 http://localhost:8080/v1/info >/dev/null 2>&1; then
-  echo "[!] Trino 没在跑（localhost:8080 不可达）。先执行：bin/infra.sh up trino" >&2
+   && ! curl -fsS --max-time 3 "http://${TRINO_HOST}:${TRINO_PORT}/v1/info" >/dev/null 2>&1; then
+  echo "[!] Trino 没在跑（${TRINO_HOST}:${TRINO_PORT} 不可达，取自 platform.trino.host/port）。先执行：bin/infra.sh up trino" >&2
   exit 1
 fi
 

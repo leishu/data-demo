@@ -128,10 +128,22 @@ open http://localhost:8088/                # 内置查询控制台
 | `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
 | `GET /actuator/health` | 带 `trino` 组件的健康检查 |
 
+> 除静态页面与 `/actuator/health`、`/actuator/info` 外，所有接口都要 HTTP Basic 认证；配额超限返回 429。
+
 几个刻意的设计：
 
 - **SQL 默认只读**。`SqlGuard` 只放行 `select/with/show/describe/explain`，且必须单条语句；
+  `EXPLAIN ANALYZE` 会把内层语句真实执行一遍，所以只读模式下会继续按白名单校验内层 SQL
+  （Trino JDBC 的 `setReadOnly` 只是驱动标记，不做服务端拦截）。
   要放开把 `lake.query.allow-writes` 置 true。给外部一个「能跑任意 SQL」的接口太危险。
+- **时间是权威 epoch 毫秒，不靠时区约定**。`ops.batch_runs` 的 `started_ms` / `finished_ms`
+  直接存绝对时刻（BatchApp 写入，InitJob 为老表按 UTC 墙钟回填）；旧的 `timestamp` 墙钟列已废弃。
+  绝对时刻编进 schema，JVM / 会话时区怎么变都不会让历史列表偏移 8 小时。
+- **API 需要鉴权**（demo 级）。`/api/**` 走 HTTP Basic：`viewer/viewer` 只读查询，
+  `operator/operator` 额外能触发作业和看 actuator 指标；页面、`/actuator/health`、`/actuator/info` 公开。
+  生产环境请设 `lake.security.enabled=false`，由网关 / IdP 做认证授权（静态口令只适合本机演示）。
+- **查询有配额**。全局并发上限（`max-concurrent-queries`）+ 单账号滑动窗口
+  （`max-queries-per-minute`），等不到名额返回 **429** 而不是一直挂着；内部读运行历史不占配额。
 - **Trino 挂了服务照常启动**（连接池 `initializationFailTimeout=-1`），查询返回 **503** 并给出
   「先起 Trino」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
 - **批作业用子进程**，不在 Web 容器里养 SparkSession：内存、线程、崩溃隔离都更省心，

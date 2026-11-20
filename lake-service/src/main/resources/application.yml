@@ -37,6 +37,21 @@ lake:
     timeout-seconds: 60
     pool-size: 8
     allow-writes: false
+    # 查询配额：并发名额 + 单账号每分钟次数，超了返回 429
+    max-concurrent-queries: 4
+    max-queries-per-minute: 60
+    acquire-timeout-ms: 3000
+  # demo 级鉴权：HTTP Basic + 静态账号，无会话。生产请关掉并由网关/IdP 接管
+  security:
+    enabled: true
+    realm: lakehouse
+    accounts:
+      - username: viewer
+        password: "{noop}viewer"
+        roles: [QUERY]
+      - username: operator
+        password: "{noop}operator"
+        roles: [QUERY, BATCH]
   batch:
     enabled: true
     # 换成集群提交：spark-submit --master yarn --class com.demo.lake.batch.BatchApp <jar> --job {job}

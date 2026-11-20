@@ -139,7 +139,7 @@ public final class BatchApp {
         System.out.println("  --warehouse <uri>     覆盖仓库路径，如 s3a://lake/warehouse、/data/warehouse");
         System.out.println("  --catalog-type <t>    hadoop | hive");
         System.out.println("  --hive-uri <uri>      thrift://hms:9083");
-        System.out.println("  --keep-session        job 之间复用同一个 SparkSession（默认已复用）");
+        System.out.println("  --keep-session       结束后不调用 spark.stop()（调试用；job 之间本来就复用同一个 session）");
         System.out.println("  --run-id <id>         指定运行 ID（服务端拉起时由 BATCH_RUN_ID 环境变量注入）");
         System.out.println("  --no-record           不往 ops.batch_runs 写运行记录");
         System.out.println();

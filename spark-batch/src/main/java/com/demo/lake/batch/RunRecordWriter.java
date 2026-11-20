@@ -20,6 +20,10 @@ import java.util.Collections;
  * <p>写账是旁路：表没建、catalog 挂了、权限不对，都只打一行提示，绝不改变作业退出码——
  * 「作业跑成功了但记账失败」和「作业失败」是两件事，不能混成一个非 0 退出码。</p>
  *
+ * <p>时间写两份：{@code started_ms}/{@code finished_ms} 是权威列，直接存 epoch 毫秒，
+ * 与 JVM / 会话时区完全无关；{@code started_at}/{@code finished_at} 是废弃的 UTC 墙钟列，
+ * 只为兼容旧的外部读者。lake-service 只读 epoch 列。</p>
+ *
  * <p>不带 run_id 时由本进程自己编一个；被 lake-service 拉起时会通过环境变量
  * {@code BATCH_RUN_ID} / {@code BATCH_RUN_LOG} 注入服务端的运行 ID 与日志路径，
  * 这样服务端重启后从表里读回来的记录还能和原来的日志文件对上。</p>
@@ -53,7 +57,10 @@ final class RunRecordWriter {
                     .add("finished_at", DataTypes.TimestampType, false)
                     .add("duration_ms", DataTypes.LongType, false)
                     .add("log_file", DataTypes.StringType, true)
-                    .add("message", DataTypes.StringType, true);
+                    .add("message", DataTypes.StringType, true)
+                    // 权威时间：epoch 毫秒。旧 timestamp 列保留可读墙钟，但读取侧不再依赖它
+                    .add("started_ms", DataTypes.LongType, false)
+                    .add("finished_ms", DataTypes.LongType, false);
 
             Row row = RowFactory.create(
                     runId,
@@ -65,7 +72,9 @@ final class RunRecordWriter {
                     Timestamp.from(finishedAt),
                     durationMs,
                     env("BATCH_RUN_LOG"),
-                    truncate(message, MAX_MESSAGE));
+                    truncate(message, MAX_MESSAGE),
+                    startedAt.toEpochMilli(),
+                    finishedAt.toEpochMilli());
 
             spark.createDataFrame(Collections.singletonList(row), schema)
                     .writeTo(table.fqn())

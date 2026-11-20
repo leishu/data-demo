@@ -11,6 +11,9 @@ logs/
 metastore_db/
 derby.log
 
+# 本地依赖树导出（mvn dependency:tree > dep-tree.txt），不入库
+dep-tree.txt
+
 # 本地环境配置（含密钥，别提交）
 conf/platform.properties
 

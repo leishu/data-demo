@@ -294,7 +294,11 @@ public class QueryService {
         if (value instanceof BigDecimal decimal) {
             return decimal.toPlainString();
         }
-        if (value instanceof Timestamp || value instanceof java.sql.Date || value instanceof java.sql.Time) {
+        if (value instanceof Timestamp timestamp) {
+            // 不能用 Timestamp.toString()：它按 JVM 默认时区渲染，会把 UTC 时刻显示成 +8
+            return timestamp.toInstant().toString();
+        }
+        if (value instanceof java.sql.Date || value instanceof java.sql.Time) {
             return value.toString();
         }
         if (value instanceof byte[] bytes) {

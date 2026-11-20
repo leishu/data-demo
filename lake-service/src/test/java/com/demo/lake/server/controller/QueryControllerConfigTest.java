@@ -20,7 +20,7 @@ class QueryControllerConfigTest {
     private Map<String, Object> config(List<String> allowedJobs) {
         LakeProperties props = new LakeProperties();
         props.getBatch().setAllowedJobs(allowedJobs);
-        return new QueryController(null, PlatformConfig.load(), props).config();
+        return new QueryController(null, null, PlatformConfig.load(), props).config();
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.demo.lake.server.exception;
 
 import com.demo.lake.server.query.InvalidQueryException;
 import com.demo.lake.server.query.QueryFailedException;
+import com.demo.lake.server.query.QueryQuotaExceededException;
 import com.demo.lake.server.query.TrinoUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
@@ -50,6 +51,11 @@ public final class ErrorMapper {
         if (t instanceof TrinoUnavailableException) {
             return new Mapped(HttpStatus.SERVICE_UNAVAILABLE, t.getMessage(),
                     "先起 Trino：bin/infra.sh up trino；或改用 bin/trino-query.sh 的本地模式校验 SQL");
+        }
+        // 配额是「客户端发太多」，不是依赖挂了，必须 429 而不是 503
+        if (t instanceof QueryQuotaExceededException) {
+            return new Mapped(HttpStatus.TOO_MANY_REQUESTS, t.getMessage(),
+                    "调大 lake.query 下的 max-concurrent-queries / max-queries-per-minute，或稍后重试");
         }
         // ServerWebInputException 是 ResponseStatusException 的子类，必须排在它前面
         if (t instanceof ServerWebInputException) {

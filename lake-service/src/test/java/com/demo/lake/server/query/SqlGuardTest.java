@@ -49,6 +49,27 @@ class SqlGuardTest {
     }
 
     @Test
+    void 只读模式下EXPLAIN_ANALYZE的内层语句也要校验() {
+        // ANALYZE 会真实执行内层语句，写入必须被拦下
+        assertThrows(InvalidQueryException.class,
+                () -> SqlGuard.requireReadOnly("explain analyze insert into t values (1)", false));
+        assertThrows(InvalidQueryException.class,
+                () -> SqlGuard.requireReadOnly("EXPLAIN (ANALYZE, FORMAT JSON) delete from t", false));
+        assertThrows(InvalidQueryException.class,
+                () -> SqlGuard.requireReadOnly("explain analyze verbose merge into t using s on t.id = s.id", false));
+
+        // 内层仍是只读语句则放行；普通 EXPLAIN（只出计划、不执行）也不受影响
+        assertEquals("explain analyze select 1",
+                SqlGuard.requireReadOnly("explain analyze select 1", false));
+        assertEquals("explain insert into t values (1)",
+                SqlGuard.requireReadOnly("explain insert into t values (1)", false));
+
+        // 显式允许写入时不必再拆内层
+        assertEquals("explain analyze insert into t values (1)",
+                SqlGuard.requireReadOnly("explain analyze insert into t values (1)", true));
+    }
+
+    @Test
     void 首关键字提取() {
         assertEquals("select", SqlGuard.firstKeyword("SELECT * from t"));
         assertEquals("describe", SqlGuard.firstKeyword("\n\t describe iceberg.lake.t"));

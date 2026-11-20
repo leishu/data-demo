@@ -1,9 +1,9 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { CaretRight, Loading } from '@element-plus/icons-vue'
-import { api } from '@/api'
+import { ApiError, streamQuery } from '@/api'
 import { loadConfig, store, tableFqn } from '@/store'
 import ResultTable from '@/components/ResultTable.vue'
 import CopyButton from '@/components/CopyButton.vue'
@@ -79,6 +79,8 @@ const result = ref(null)
 const error = ref(null)
 const running = ref(false)
 const statsOpen = ref(false)
+/** 当前 SSE 请求；换 SQL 重跑或离开页面时要 abort，别让 Trino 白算 */
+let controller = null
 
 const statsText = computed(() => (result.value && result.value.stats) || '')
 
@@ -98,25 +100,71 @@ async function run() {
     error.value = { message: 'SQL 是空的', status: 0, hint: '先写一条 select，或点下面的示例' }
     return
   }
+  controller?.abort()
+  const ac = new AbortController()
+  controller = ac
   running.value = true
   error.value = null
   statsOpen.value = false
+  result.value = null
+
+  // 流式接收：meta 先画表头，rows 每批追加一次，done 补统计
+  let live = null
+  let streamError = null
   try {
-    result.value = await api.query(text, Number(maxRows.value))
+    await streamQuery(text, Number(maxRows.value), {
+      signal: ac.signal,
+      onEvent(ev) {
+        if (ev.event === 'meta') {
+          live = {
+            columns: ev.data.columns || [],
+            rows: [],
+            rowCount: 0,
+            truncated: false,
+            elapsedMs: 0,
+            stats: ''
+          }
+          result.value = { ...live }
+        } else if (ev.event === 'rows' && live) {
+          live.rows.push(...(ev.data.rows || []))
+          live.rowCount = live.rows.length
+          result.value = { ...live }
+        } else if (ev.event === 'done' && live) {
+          live.rowCount = ev.data.rowCount ?? live.rows.length
+          live.truncated = !!ev.data.truncated
+          live.elapsedMs = ev.data.elapsedMs ?? 0
+          live.stats = ev.data.stats || ''
+          result.value = { ...live }
+        } else if (ev.event === 'error') {
+          const d = ev.data || {}
+          streamError = new ApiError(d.message || '查询失败', {
+            status: d.status || 0,
+            hint: d.hint || ''
+          })
+        }
+      }
+    })
+
+    if (streamError) throw streamError
     localStorage.setItem(STORAGE_KEY, sql.value)
     store.draftSql = sql.value
-    if (result.value.truncated) {
+    if (result.value?.truncated) {
       ElMessage.warning(`结果已按 ${result.value.rowCount} 行截断，加 where 或调大上限`)
     }
   } catch (e) {
+    // 主动 abort（重跑/离开页面）不算错误
+    if (ac.signal.aborted || e.name === 'AbortError') return
     result.value = null
     error.value = e
     // 503 是「依赖没起」，属于环境问题，不弹红条，页面上已经有说明
     if (e.status !== 503) ElMessage.error(e.message || '查询失败')
   } finally {
+    if (controller === ac) controller = null
     running.value = false
   }
 }
+
+onUnmounted(() => controller?.abort())
 
 function applyExample(ex) {
   sql.value = ex.sql
@@ -176,9 +224,12 @@ function onKeydown(e) {
         <span class="card-title">结果</span>
         <div class="result-extra">
           <template v-if="result && !error">
-            <span class="faint meta">{{ result.rowCount }} 行 · {{ result.elapsedMs }} ms</span>
+            <span class="faint meta">
+              {{ result.rowCount }} 行<template v-if="!running"> · {{ result.elapsedMs }} ms</template>
+            </span>
+            <el-tag v-if="running" size="small" type="primary" effect="light">流式接收中</el-tag>
             <el-tag v-if="result.truncated" size="small" type="warning" effect="light">已截断</el-tag>
-            <CopyButton :result="result" />
+            <CopyButton v-if="!running" :result="result" />
           </template>
           <el-button v-if="statsText" size="small" text @click="statsOpen = !statsOpen">
             {{ statsOpen ? '收起 QueryStats' : 'QueryStats' }}
@@ -194,7 +245,7 @@ function onKeydown(e) {
       @retry="run"
     />
 
-    <div v-else-if="running" class="state-box">
+    <div v-else-if="running && !result" class="state-box">
       <el-icon class="is-loading loading-icon"><Loading /></el-icon>
       <div class="state-text">
         <strong>正在执行</strong>

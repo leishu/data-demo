@@ -75,6 +75,9 @@ public class LakeConfiguration {
         hikari.setInitializationFailTimeout(-1);
         // source 是 Trino 驱动认的连接属性，会在 coordinator 的查询列表里标识来源
         hikari.addDataSourceProperty("source", cfg.trinoSource() + "-service");
+        // 会话时区固定 UTC：Spark 把时间戳按 UTC 墙钟写进湖表，若会话用机器时区（如 Asia/Shanghai），
+        // to_unixtime 等换算会整体偏移 8 小时，历史记录还会和内存里的 Instant 错序
+        hikari.addDataSourceProperty("timezone", "UTC");
         log.info("Trino 连接池 -> {} (pool={})", cfg.trinoJdbcUrl(), props.getQuery().getPoolSize());
         return new HikariDataSource(hikari);
     }

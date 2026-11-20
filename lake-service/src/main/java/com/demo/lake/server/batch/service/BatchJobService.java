@@ -12,7 +12,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -182,8 +181,8 @@ public class BatchJobService {
             return List.of();
         }
         try {
-            List<String> all = Files.readAllLines(file, StandardCharsets.UTF_8);
-            return all.subList(Math.max(0, all.size() - n), all.size());
+            // 只从文件尾部读一块（最多 256KB），别把整个 spark 日志读进内存
+            return LogTailCursor.readTail(file, n);
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "读日志失败: " + e.getMessage(), e);
         }

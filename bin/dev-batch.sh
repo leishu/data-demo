@@ -19,11 +19,27 @@ fi
 
 # 仓库是 s3a:// / s3:// 时必须激活 s3 profile（iceberg-aws-bundle + hadoop-aws 只在这个 profile 里，
 # 不激活会报 NoClassDefFoundError: software/amazon/awssdk/services/s3/model/S3Exception）。
-# 这里按「生效的 warehouse」自动判断，取法跟 PlatformConfig 一致：LAKE_WAREHOUSE 环境变量优先，
-# 其次 conf/platform.properties。显式给了 MVN_PROFILE 则以它为准，不再自动猜。
+# 这里按「生效的 warehouse」自动判断，优先级跟 PlatformConfig 一致：
+#   命令行 --warehouse > LAKE_WAREHOUSE 环境变量 > conf/platform.properties
+# 显式给了 MVN_PROFILE 则以它为准，不再自动猜。
 # 被 lake-service 的作业编排拉起时走的就是自动判断，不需要给服务进程挂环境变量。
 effective_warehouse() {
-  local w="${LAKE_WAREHOUSE:-}"
+  local w="" arg expect=0
+  for arg in "$@"; do
+    if [[ "$expect" == "1" ]]; then
+      expect=0
+      # 值不能是另一个选项（防止 --warehouse 漏写值时把 --xxx 当成仓库路径）
+      [[ "$arg" != --* ]] && w="$arg"
+      continue
+    fi
+    case "$arg" in
+      --warehouse) expect=1 ;;
+      --warehouse=*) w="${arg#--warehouse=}" ;;
+    esac
+  done
+  if [[ -z "$w" ]]; then
+    w="${LAKE_WAREHOUSE:-}"
+  fi
   if [[ -z "$w" && -r conf/platform.properties ]]; then
     w="$(sed -n 's/^[[:space:]]*platform\.warehouse[[:space:]]*=[[:space:]]*//p' conf/platform.properties \
       | tail -n 1 | tr -d '\r' | sed -e 's/[[:space:]]*$//')"
@@ -35,7 +51,7 @@ PROFILE_ARGS=()
 if [[ -n "${MVN_PROFILE:-}" ]]; then
   PROFILE_ARGS+=("-P${MVN_PROFILE}")
 else
-  WAREHOUSE="$(effective_warehouse)"
+  WAREHOUSE="$(effective_warehouse "$@")"
   case "$WAREHOUSE" in
     s3://*|s3a://*)
       PROFILE_ARGS+=("-Ps3")
