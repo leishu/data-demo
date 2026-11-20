@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.RunIds;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
 import com.demo.lake.server.config.LakeProperties;
@@ -30,7 +31,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -138,7 +138,7 @@ public class BatchJobService {
         }
 
         String command = conf.getCommandTemplate().replace("{job}", job);
-        String id = "run-" + Instant.now().toEpochMilli() + "-" + UUID.randomUUID().toString().substring(0, 6);
+        String id = RunIds.generate();
         Path logFile = Paths.get(conf.getLogDir()).toAbsolutePath().resolve(id + ".log");
         try {
             Files.createDirectories(logFile.getParent());

@@ -14,8 +14,9 @@ import java.util.UUID;
  * 被 lake-service 拉起时用服务端注入的 ID，{@code ops.batch_runs} 与 bronze 数据行里的
  * run_id 才会指向同一个批次。</p>
  *
- * <p>本进程自编时形如 {@code run-2026-11-19-13:45-9a1aad}：分钟级时间戳只是给人看的，
- * 唯一性靠后面 6 位随机后缀（同一分钟内多次运行也不会撞）。</p>
+ * <p>自编时形如 {@code run-2026-11-19-13-45-9a1aad}（时间部分按 {@code uuuu-MM-dd-HH-mm} 格式化）：分钟级时间戳只是给人看的，
+ * 唯一性靠后面 6 位随机后缀（同一分钟内多次运行也不会撞）。服务端与 spark-batch 共用 {@link #generate()}，
+ * 保证两边生成的 ID 格式一致。</p>
  */
 public final class RunIds {
 
@@ -38,6 +39,11 @@ public final class RunIds {
         if (fromEnv != null) {
             return fromEnv;
         }
+        return generate();
+    }
+
+    /** 按 {@code run-uuuu-MM-dd-HH-mm-xxxxxx} 生成一个新 ID，UTC 分钟级时间戳 + 6 位随机后缀 */
+    public static String generate() {
         return "run-" + TIME.format(Instant.now()) + "-" + UUID.randomUUID().toString().substring(0, 6);
     }
 
