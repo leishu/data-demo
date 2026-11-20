@@ -22,6 +22,7 @@ public record BatchRun(
         String logFile,
         String message) {
 
+    public static final String QUEUED = BatchRunStatus.QUEUED;
     public static final String RUNNING = BatchRunStatus.RUNNING;
     public static final String SUCCEEDED = BatchRunStatus.SUCCEEDED;
     public static final String FAILED = BatchRunStatus.FAILED;

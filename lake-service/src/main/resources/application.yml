@@ -59,6 +59,18 @@ lake:
     work-dir: .
     log-dir: logs/batch
     timeout-seconds: 1800
+    # 调度：超过并发上限的作业进 QUEUED，由调度器按提交顺序放行
+    max-concurrent-jobs: 2
+    dispatch-interval-ms: 1000
+    # local=本机子进程；kubernetes=走 K8s Job API（需要 RBAC 与 ServiceAccount）
+    executor: local
+    kubernetes:
+      api-url: https://kubernetes.default.svc
+      namespace: default
+      image: spark:3.5.1
+      service-account: default
+      poll-seconds: 5
+      timeout-seconds: 1800
     # 运行状态库：复用 infra 的 Postgres，服务重启/多实例都能看到同一份 RUNNING 状态
     state:
       url: jdbc:postgresql://localhost:5432/metastore

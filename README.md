@@ -123,7 +123,7 @@ open http://localhost:8088/                # 内置查询控制台
 | `GET /api/tables` | 当前库的表清单 + 字段清单（读 Trino 的 `information_schema`，字段 `comment` 即 DDL 里的中文名） |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
-| `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单 |
+| `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单；带 `Idempotency-Key` 头可去重 |
 | `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部；列表 = 本进程内存记录 ∪ `ops.batch_runs` 历史（按 id 合并，内存优先），历史读不到时降级返回 `history.status` |
 | `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
 | `GET /actuator/health` | 带 `trino` 组件的健康检查 |
@@ -148,6 +148,10 @@ open http://localhost:8088/                # 内置查询控制台
   「先起 Trino」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
 - **批作业用子进程**，不在 Web 容器里养 SparkSession：内存、线程、崩溃隔离都更省心，
   换成 `spark-submit --master yarn ...` 也只改 `lake.batch.command-template`。
+- **作业走调度器，不再由请求线程直接 fork**。提交只落一条 `QUEUED` 记录；`JobDispatcher`
+  按提交顺序原子认领，受全局并发上限（`lake.batch.max-concurrent-jobs`）约束。执行方式可切：
+  `local` 是本机子进程（默认），`kubernetes` 通过 K8s Job API 提交并轮询终态，且可带
+  `Idempotency-Key` 去重——同一 key 重复 POST 只会得到同一条运行记录。
 - **服务无状态**。批作业的 RUNNING 状态不放内存，而是写进 infra 里已有的 Postgres
   （`lake_batch.batch_runs`），由提交实例按 `owner` 续心跳；服务重启或开多个实例都能看到同一份列表。
   心跳超时的僵死作业会先尝试从湖表终态归档恢复，否则落「实例失联」终态（对账周期默认 60s）。

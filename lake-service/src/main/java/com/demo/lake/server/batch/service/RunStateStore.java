@@ -31,4 +31,18 @@ public interface RunStateStore {
 
     /** 对账也找不到终态：按「实例失联」落终态，别让 RUNNING 变成永久脏数据 */
     void markLost(String id, String message, Instant now);
+
+    /** 幂等键 → run id；重复提交直接返回原运行记录 */
+    Optional<BatchRun> findByIdempotencyKey(String key);
+
+    void recordIdempotency(String key, String runId);
+
+    /** 当前 RUNNING 数量，用于全局并发闸门 */
+    int runningCount();
+
+    /** 原子地把最早的一条 QUEUED 改成 RUNNING，并归本实例所有；没有可认领的返回 null */
+    BatchRun claimNext(String owner);
+
+    /** 记下外部执行器句柄（本地进程 PID 或 K8s Job 名），便于排障/取消 */
+    void setHandle(String runId, String handle);
 }

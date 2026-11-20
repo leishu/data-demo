@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -35,11 +36,15 @@ public class BatchController {
     public record RunDetail(BatchRun run, List<String> tail) {
     }
 
-    /** 202：作业已提交，进度看 /api/batch/runs/{id}/events（SSE）或 /{id} */
+    /**
+     * 202：作业已排队，进度看 /api/batch/runs/{id}/events（SSE）或 /{id}。
+     * 带 Idempotency-Key 时重复提交返回同一条运行记录，不会重复执行。
+     */
     @PostMapping("/{job}")
-    public Mono<ResponseEntity<BatchRun>> submit(@PathVariable String job) {
-        // 建日志目录 + 起子进程都是阻塞动作，扔到 blocking 调度器上
-        return Mono.fromCallable(() -> jobService.submit(job))
+    public Mono<ResponseEntity<BatchRun>> submit(@PathVariable String job,
+                                                  @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        // 建日志目录 + 写运行状态都是阻塞动作，扔到 blocking 调度器上
+        return Mono.fromCallable(() -> jobService.submit(job, idempotencyKey))
                 .subscribeOn(blocking)
                 .map(run -> ResponseEntity.status(HttpStatus.ACCEPTED).body(run));
     }

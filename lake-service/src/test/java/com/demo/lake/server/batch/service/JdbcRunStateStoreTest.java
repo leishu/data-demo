@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 用 H2 验证运行态表的 SQL 行为；不依赖 infra 里的 Postgres */
@@ -84,6 +85,26 @@ class JdbcRunStateStoreTest {
         }
         List<BatchRun> latest = store.recent(3);
         assertEquals(List.of("r4", "r3", "r2"), latest.stream().map(BatchRun::id).toList());
+    }
+
+    @Test
+    void 幂等键与排队认领() {
+        BatchRun queued = new BatchRun("q1", "init", "--job init", BatchRun.QUEUED, null,
+                Instant.now(), null, null, null, "已排队");
+        store.insert(queued, "svc-a");
+        store.recordIdempotency("key-1", "q1");
+        store.recordIdempotency("key-1", "another"); // 重复写入应被忽略
+        assertEquals("q1", store.findByIdempotencyKey("key-1").orElseThrow().id());
+
+        assertEquals(0, store.runningCount());
+        BatchRun claimed = store.claimNext("svc-b");
+        assertEquals("q1", claimed.id());
+        assertEquals(BatchRun.RUNNING, claimed.status());
+        assertEquals(1, store.runningCount());
+        assertNull(store.claimNext("svc-b"), "没有更多 QUEUED 时应返回 null");
+
+        store.setHandle("q1", "pid:123");
+        assertTrue(claimed.job().equals("init"));
     }
 
     private Connection open() throws Exception {

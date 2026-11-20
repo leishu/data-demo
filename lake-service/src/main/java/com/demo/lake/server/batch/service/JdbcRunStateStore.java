@@ -12,6 +12,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,13 +52,36 @@ public class JdbcRunStateStore implements RunStateStore {
                     + "  message VARCHAR(1000),\n"
                     + "  owner VARCHAR(80) NOT NULL,\n"
                     + "  heartbeat_ms BIGINT NOT NULL,\n"
-                    + "  updated_ms BIGINT NOT NULL\n"
+                    + "  updated_ms BIGINT NOT NULL,\n"
+                    + "  handle VARCHAR(255)\n"
                     + ")");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_lake_batch_runs_started ON " + TABLE + "(started_ms DESC)");
+            // 老库升级：幂等/调度引入的新列按需补上（Postgres 与 H2 都支持 information_schema）
+            ensureColumn(conn, "handle", "handle VARCHAR(255)");
+            stmt.execute("CREATE TABLE IF NOT EXISTS lake_batch.idempotency (\n"
+                    + "  idem_key VARCHAR(128) PRIMARY KEY,\n"
+                    + "  run_id VARCHAR(80) NOT NULL\n"
+                    + ")");
             log.info("运行状态表就绪: {}", TABLE);
         } catch (SQLException e) {
             // 不阻止启动：infra 没起时只读查询还能用，批作业接口会返回 503
             log.warn("运行状态表初始化失败（批作业接口暂不可用）: {}", e.getMessage());
+        }
+    }
+
+    private static void ensureColumn(Connection conn, String name, String ddl) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM information_schema.columns WHERE lower(table_schema)='lake_batch'"
+                        + " AND lower(table_name)='batch_runs' AND lower(column_name)=?")) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return;
+                }
+            }
+        }
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("ALTER TABLE " + TABLE + " ADD COLUMN " + ddl);
         }
     }
 
@@ -136,6 +160,81 @@ public class JdbcRunStateStore implements RunStateStore {
         });
     }
 
+    @Override
+    public Optional<BatchRun> findByIdempotencyKey(String key) {
+        String runId;
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?")) {
+            ps.setString(1, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                runId = rs.next() ? rs.getString(1) : null;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("读幂等键失败: " + e.getMessage(), e);
+        }
+        return runId == null ? Optional.empty() : find(runId);
+    }
+
+    @Override
+    public void recordIdempotency(String key, String runId) {
+        if (findByIdempotencyKey(key).isPresent()) {
+            return;
+        }
+        try {
+            execute("INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)", ps -> {
+                ps.setString(1, key);
+                ps.setString(2, runId);
+            });
+        } catch (RuntimeException e) {
+            // 并发重复提交：别人先插了，按已存在的记录处理
+            log.debug("幂等键已存在 {}: {}", key, e.getMessage());
+        }
+    }
+
+    @Override
+    public int runningCount() {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT count(*) FROM " + TABLE + " WHERE status='RUNNING'");
+             ResultSet rs = ps.executeQuery()) {
+            rs.next();
+            return rs.getInt(1);
+        } catch (SQLException e) {
+            throw new IllegalStateException("读运行状态失败: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public BatchRun claimNext(String owner) {
+        List<BatchRun> candidates = queryList(SELECT + " WHERE status='QUEUED' ORDER BY started_ms LIMIT 1", ps -> {
+        });
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        String id = candidates.get(0).id();
+        long now = System.currentTimeMillis();
+        int changed = executeCount("UPDATE " + TABLE
+                        + " SET status='RUNNING', owner=?, heartbeat_ms=?, updated_ms=?"
+                        + " WHERE run_id=? AND status='QUEUED'", ps -> {
+            ps.setString(1, owner);
+            ps.setLong(2, now);
+            ps.setLong(3, now);
+            ps.setString(4, id);
+        });
+        // 多实例可能同时看到同一个候选；只有抢到 update 的那个实例真正执行
+        return changed == 0 ? null : find(id).orElse(null);
+    }
+
+    @Override
+    public void setHandle(String runId, String handle) {
+        execute("UPDATE " + TABLE + " SET handle=?, updated_ms=? WHERE run_id=?", ps -> {
+            ps.setString(1, handle);
+            ps.setLong(2, System.currentTimeMillis());
+            ps.setString(3, runId);
+        });
+    }
+
     @FunctionalInterface
     private interface StatementBinder {
         void bind(PreparedStatement ps) throws SQLException;
@@ -146,6 +245,16 @@ public class JdbcRunStateStore implements RunStateStore {
              PreparedStatement ps = conn.prepareStatement(sql)) {
             binder.bind(ps);
             ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new IllegalStateException("运行状态库写入失败: " + e.getMessage(), e);
+        }
+    }
+
+    private int executeCount(String sql, StatementBinder binder) {
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            binder.bind(ps);
+            return ps.executeUpdate();
         } catch (SQLException e) {
             throw new IllegalStateException("运行状态库写入失败: " + e.getMessage(), e);
         }

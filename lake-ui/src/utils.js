@@ -26,6 +26,7 @@ export function statusTone(status) {
     case 'SUCCEEDED':
     case 'UP':
       return 'ok'
+    case 'QUEUED':
     case 'RUNNING':
     case 'CHECKING':
       return 'warn'
@@ -40,6 +41,7 @@ export function statusTone(status) {
 
 export function fmtJobStatus(status) {
   const map = {
+    QUEUED: '排队中',
     RUNNING: '运行中',
     SUCCEEDED: '成功',
     FAILED: '失败',

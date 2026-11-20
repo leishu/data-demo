@@ -68,8 +68,29 @@ public class LakeProperties {
          */
         private List<String> allowedJobs = LakeJobs.CHOICES;
 
+        /** 全局同时在跑的作业数；超出的进入 QUEUED，由调度器按提交顺序放行 */
+        private int maxConcurrentJobs = 2;
+        /** 调度器扫描 QUEUED 的间隔 */
+        private int dispatchIntervalMs = 1000;
+        /** 提交方式：local（本机子进程，默认）| kubernetes（K8s Job） */
+        private String executor = "local";
+        /** Kubernetes Job 提交参数（只在 executor=kubernetes 时用到） */
+        private final Kubernetes kubernetes = new Kubernetes();
         /** 运行状态存储：复用 infra 的 Postgres，服务本身不再持有 RUNNING 状态 */
         private final State state = new State();
+
+        @Getter
+        @Setter
+        public static class Kubernetes {
+            /** in-cluster 时用 https://kubernetes.default.svc，本地调试可指到代理 */
+            private String apiUrl = "https://kubernetes.default.svc";
+            private String namespace = "default";
+            private String image = "spark:3.5.1";
+            private String serviceAccount = "default";
+            /** 轮询 Job 终态的间隔与最长等待（秒） */
+            private int pollSeconds = 5;
+            private int timeoutSeconds = 1800;
+        }
 
         @Getter
         @Setter

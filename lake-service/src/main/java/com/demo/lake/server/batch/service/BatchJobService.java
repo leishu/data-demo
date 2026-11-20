@@ -16,7 +16,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,21 +28,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
- * 批作业编排：按需拉起 Spark 作业的独立进程，把输出落到日志文件。
+ * 批作业编排的入口：校验 → 幂等去重 → 落 QUEUED，剩下的交给 {@link JobDispatcher}。
  *
- * <p>为什么不用同进程跑 Spark：Web 容器里常驻一个 SparkSession 会吃掉堆内存、和 Tomcat 抢线程，
- * 作业挂了还会拖死服务。子进程方式边界清晰，也贴合生产里「服务调 spark-submit」的做法——
- * 换集群时只改 lake.batch.command-template 即可。</p>
- *
- * <p>运行态不在本进程内存里：{@link RunStateStore}（Postgres）是唯一权威，
- * 服务只持有「本实例的子进程」用于停机清理。这样重启不丢 RUNNING，多实例也能看到同一份列表。
- * 湖表 {@code ops.batch_runs} 仍是终态归档，两边按 id 合并、终态优先。</p>
+ * <p>这里不再 fork 子进程、也不在内存里维护运行态：状态在 Postgres（{@link RunStateStore}），
+ * 执行方式由调度器选 local / Kubernetes。本类只负责对外的一致视图（列表、详情、日志尾部）
+ * 和失联记录的心跳/对账。</p>
  */
 @Service
 @Slf4j
@@ -51,6 +43,8 @@ import java.util.concurrent.TimeUnit;
 public class BatchJobService {
 
     private static final int MAX_TAIL_LINES = 200;
+    private static final int MAX_IDEMPOTENCY_KEY = 128;
+    private static final Pattern IDEMPOTENCY_KEY = Pattern.compile("[A-Za-z0-9._:-]{1,128}");
     /** 开始时间倒序；历史记录时间解析失败时是 null，排到最后 */
     private static final Comparator<BatchRun> NEWEST_FIRST =
             Comparator.comparing(BatchRun::startedAt, Comparator.nullsLast(Comparator.<Instant>reverseOrder()));
@@ -61,11 +55,8 @@ public class BatchJobService {
     private final LakeProperties props;
     private final BatchHistoryService history;
     private final RunStateStore state;
+    private final BatchIdentity identity;
     private final Scheduler blocking;
-    /** 多实例下用实例 ID 区分心跳归属，避免 A 实例给 B 实例的僵死作业续命 */
-    private final String owner = "svc-" + UUID.randomUUID().toString().substring(0, 8);
-    private final Map<String, Process> liveProcesses = new ConcurrentHashMap<>();
-    private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final Disposable.Composite maintenance = Disposables.composite();
 
     @PostConstruct
@@ -73,7 +64,7 @@ public class BatchJobService {
         LakeProperties.Batch.State conf = props.getBatch().getState();
         maintenance.add(Flux.interval(Duration.ofSeconds(Math.max(1, conf.getHeartbeatSeconds())))
                 .flatMap(tick -> Mono.fromCallable(() -> {
-                    state.heartbeat(owner, Instant.now());
+                    state.heartbeat(identity.id(), Instant.now());
                     return true;
                 }).onErrorResume(e -> {
                     log.warn("运行状态心跳失败: {}", e.getMessage());
@@ -97,7 +88,8 @@ public class BatchJobService {
         Instant cutoff = Instant.now().minusSeconds(Math.max(30, props.getBatch().getState().getStaleAfterSeconds()));
         for (BatchRun stale : state.staleRunning(cutoff)) {
             BatchRun archived = history.find(stale.id());
-            if (archived != null && !BatchRun.RUNNING.equals(archived.status())) {
+            if (archived != null && !BatchRun.RUNNING.equals(archived.status())
+                    && !BatchRun.QUEUED.equals(archived.status())) {
                 state.finish(archived);
                 log.info("对账：{} 采纳湖表终态 {}", stale.id(), archived.status());
             } else {
@@ -107,7 +99,11 @@ public class BatchJobService {
         }
     }
 
-    public BatchRun submit(String job) {
+    /**
+     * 提交作业：校验白名单后先落 QUEUED。带 Idempotency-Key 的重复请求直接返回原记录，
+     * 不会重复起作业。
+     */
+    public BatchRun submit(String job, String idempotencyKey) {
         LakeProperties.Batch conf = props.getBatch();
         if (!conf.isEnabled()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "批作业编排已关闭（lake.batch.enabled=false）");
@@ -115,6 +111,17 @@ public class BatchJobService {
         if (job == null || !conf.getAllowedJobs().contains(job)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "不支持的作业: " + job + "，可选: " + conf.getAllowedJobs());
+        }
+        String key = idempotencyKey == null || idempotencyKey.isBlank() ? null : idempotencyKey.trim();
+        if (key != null && (key.length() > MAX_IDEMPOTENCY_KEY || !IDEMPOTENCY_KEY.matcher(key).matches())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Idempotency-Key 只能是字母数字与 . _ : -，最长 128 字符");
+        }
+        if (key != null) {
+            BatchRun existing = state.findByIdempotencyKey(key).orElse(null);
+            if (existing != null) {
+                log.info("幂等命中 {} -> {}", key, existing.id());
+                return existing;
+            }
         }
 
         String command = conf.getCommandTemplate().replace("{job}", job);
@@ -126,74 +133,19 @@ public class BatchJobService {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "无法创建日志目录: " + logFile.getParent(), e);
         }
 
-        BatchRun run = new BatchRun(id, job, command, BatchRun.RUNNING, null,
-                Instant.now(), null, null, logFile.toString(), "已提交");
+        BatchRun run = new BatchRun(id, job, command, BatchRun.QUEUED, null,
+                Instant.now(), null, null, logFile.toString(), "已排队，等待调度");
         try {
-            // 先落运行态再起进程：进程刚起来就有另一实例能看到这条 RUNNING
-            state.insert(run, owner);
+            state.insert(run, identity.id());
+            if (key != null) {
+                state.recordIdempotency(key, run.id());
+            }
         } catch (RuntimeException e) {
             log.error("运行态写入失败，拒绝提交作业 {}", job, e);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "运行状态库不可用，无法提交作业", e);
         }
-        log.info("提交批作业 {} -> {}", job, command);
-        executor.submit(() -> execute(run, command, logFile));
+        log.info("批作业已排队 {} -> {}", job, id);
         return run;
-    }
-
-    private void execute(BatchRun run, String command, Path logFile) {
-        long start = System.currentTimeMillis();
-        Process process = null;
-        try {
-            ProcessBuilder pb = new ProcessBuilder(tokenize(command))
-                    .directory(new File(props.getBatch().getWorkDir()).getAbsoluteFile())
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.to(logFile.toFile()));
-            // 让作业进程用自己的 run id 记一笔账，重启后两边才能按同一个主键对上
-            pb.environment().put(ENV_RUN_ID, run.id());
-            pb.environment().put(ENV_RUN_LOG, logFile.toString());
-            process = pb.start();
-            liveProcesses.put(run.id(), process);
-
-            boolean finished = process.waitFor(props.getBatch().getTimeoutSeconds(), TimeUnit.SECONDS);
-            long elapsed = System.currentTimeMillis() - start;
-            if (!finished) {
-                process.destroyForcibly();
-                update(run, BatchRun.TIMEOUT, null, elapsed,
-                        "超过 " + props.getBatch().getTimeoutSeconds() + "s 未结束，已强制结束");
-                return;
-            }
-            int exit = process.exitValue();
-            if (exit == 0) {
-                update(run, BatchRun.SUCCEEDED, exit, elapsed, "完成");
-            } else {
-                update(run, BatchRun.FAILED, exit, elapsed, "退出码 " + exit + "，看日志尾部");
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            long elapsed = System.currentTimeMillis() - start;
-            update(run, BatchRun.FAILED, null, elapsed, "被中断");
-        } catch (IOException e) {
-            long elapsed = System.currentTimeMillis() - start;
-            log.error("批作业 {} 启动失败", run.job(), e);
-            update(run, BatchRun.FAILED, null, elapsed, "启动失败: " + e.getMessage());
-        } finally {
-            if (process != null) {
-                liveProcesses.remove(run.id());
-            }
-        }
-    }
-
-    private void update(BatchRun run, String status, Integer exitCode, long elapsedMs, String message) {
-        BatchRun done = run.finished(status, exitCode, message, elapsedMs);
-        try {
-            state.finish(done);
-        } catch (RuntimeException e) {
-            // 湖表归档仍会写；心跳对账兜底，别让记账失败改变作业的可见终态
-            log.error("运行态终态写入失败 {}", run.id(), e);
-        }
-        // 终态可能刚写进湖表：别让轮询缓存挡住它（顺带重探一次表是否存在）
-        history.invalidate();
-        log.info("批作业 {} {} -> {} ({}ms)", run.job(), run.id(), status, elapsedMs);
     }
 
     /** 运行状态库 ∪ 湖表历史，按 id 去重（终态优先），再按开始时间倒序截断 */
@@ -224,7 +176,6 @@ public class BatchJobService {
     /**
      * 先看运行状态库，命中就直接返回（SSE 每 500ms 调一次，不能每次都去打 Trino）；
      * 只有状态库里没有的记录（命令行直跑、历史归档）才回落湖表。
-     * 崩溃后的终态采纳由 {@link #reconcile()} 负责，不在这里反复查湖表。
      */
     public BatchRun get(String id) {
         try {
@@ -247,7 +198,7 @@ public class BatchJobService {
     }
 
     private static boolean isTerminal(String status) {
-        return status != null && !BatchRun.RUNNING.equals(status);
+        return status != null && !BatchRun.QUEUED.equals(status) && !BatchRun.RUNNING.equals(status);
     }
 
     /** 读日志尾部，够定位失败原因就行，别把整个 spark 日志甩给调用方 */
@@ -281,7 +232,7 @@ public class BatchJobService {
         }
     }
 
-    /** 空白分词，支持单/双引号包住带空格的参数；不解析管道与重定向（那是 shell 的事） */
+    /** 空白分词，支持单/双引号包住带空格的参数；local 执行器复用它 */
     static List<String> tokenize(String command) {
         List<String> tokens = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -317,10 +268,5 @@ public class BatchJobService {
     @PreDestroy
     void shutdown() {
         maintenance.dispose();
-        liveProcesses.forEach((id, p) -> {
-            log.warn("服务关闭，强制结束作业进程 {}", id);
-            p.destroyForcibly();
-        });
-        executor.shutdownNow();
     }
 }

@@ -17,6 +17,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,7 +32,7 @@ class BatchJobServiceTest {
         return p;
     }
 
-    /** 单测不连 Trino：历史一律当读不到，只验内存那份 */
+    /** 单测不连 Trino：历史一律当读不到 */
     private BatchHistoryService noHistory() {
         return new BatchHistoryService(null, null) {
             @Override
@@ -47,15 +48,29 @@ class BatchJobServiceTest {
         };
     }
 
+    private InMemoryRunStateStore store;
+    private JobDispatcher dispatcher;
+    private BatchIdentity identity;
+
     private BatchJobService newService(LakeProperties p) {
-        return new BatchJobService(p, noHistory(), new InMemoryRunStateStore(), Schedulers.immediate());
+        store = new InMemoryRunStateStore();
+        identity = new BatchIdentity();
+        BatchHistoryService history = noHistory();
+        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p)),
+                new JobCompletionService(store, history), identity, p, Schedulers.immediate());
+        return new BatchJobService(p, history, store, identity, Schedulers.immediate());
+    }
+
+    /** 测试里手动触发一次调度扫描（生产由 @PostConstruct 的定时器驱动） */
+    private void dispatch() {
+        dispatcher.dispatch();
     }
 
     private BatchRun await(BatchJobService service, String id) throws InterruptedException {
         Instant deadline = Instant.now().plus(Duration.ofSeconds(20));
         while (Instant.now().isBefore(deadline)) {
             BatchRun run = service.get(id);
-            if (!BatchRun.RUNNING.equals(run.status())) {
+            if (!BatchRun.QUEUED.equals(run.status()) && !BatchRun.RUNNING.equals(run.status())) {
                 return run;
             }
             Thread.sleep(50);
@@ -66,8 +81,9 @@ class BatchJobServiceTest {
     @Test
     void 成功作业记录退出码与耗时() throws Exception {
         BatchJobService service = newService(props("/bin/sh -c \"echo done; exit 0\""));
-        BatchRun submitted = service.submit(LakeJobs.INIT);
-        assertEquals(BatchRun.RUNNING, submitted.status());
+        BatchRun submitted = service.submit(LakeJobs.INIT, null);
+        assertEquals(BatchRun.QUEUED, submitted.status());
+        dispatch();
 
         BatchRun done = await(service, submitted.id());
         assertEquals(BatchRun.SUCCEEDED, done.status());
@@ -79,17 +95,47 @@ class BatchJobServiceTest {
     @Test
     void 非零退出码标记失败() throws Exception {
         BatchJobService service = newService(props("/bin/sh -c \"exit 3\""));
-        BatchRun done = await(service, service.submit(LakeJobs.INGEST).id());
+        BatchRun submitted = service.submit(LakeJobs.INGEST, null);
+        dispatch();
+        BatchRun done = await(service, submitted.id());
         assertEquals(BatchRun.FAILED, done.status());
         assertEquals(3, done.exitCode());
         assertTrue(done.message().contains("3"));
     }
 
     @Test
+    void 并发闸门让后来的作业排队() throws Exception {
+        LakeProperties p = props("/bin/sh -c \"sleep 1; exit 0\"");
+        p.getBatch().setMaxConcurrentJobs(1);
+        BatchJobService service = newService(p);
+        BatchRun first = service.submit(LakeJobs.INIT, null);
+        BatchRun second = service.submit(LakeJobs.SHOW, null);
+        dispatch();
+
+        assertEquals(BatchRun.RUNNING, service.get(first.id()).status());
+        assertEquals(BatchRun.QUEUED, service.get(second.id()).status());
+
+        await(service, first.id());
+        dispatch();
+        assertEquals(BatchRun.SUCCEEDED, await(service, second.id()).status());
+    }
+
+    @Test
+    void 幂等键重复提交返回同一条记录() {
+        BatchJobService service = newService(props("/bin/sh -c \"exit 0\""));
+        BatchRun a = service.submit(LakeJobs.INIT, "batch-2026-01");
+        BatchRun b = service.submit(LakeJobs.INIT, "batch-2026-01");
+        assertEquals(a.id(), b.id());
+        assertEquals(1, store.recent(10).size());
+        assertThrows(ResponseStatusException.class,
+                () -> service.submit(LakeJobs.INIT, "bad key with spaces"));
+    }
+
+    @Test
     void 白名单外的作业直接拒绝() {
         BatchJobService service = newService(props("/bin/echo {job}"));
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
-                () -> service.submit("drop-everything"));
+                () -> service.submit("drop-everything", null));
         assertEquals(400, e.getStatusCode().value());
     }
 
@@ -98,12 +144,12 @@ class BatchJobServiceTest {
         LakeProperties p = props("/bin/echo {job}");
         p.getBatch().setEnabled(false);
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
-                () -> newService(p).submit(LakeJobs.SHOW));
+                () -> newService(p).submit(LakeJobs.SHOW, null));
         assertEquals(403, e.getStatusCode().value());
     }
 
     @Test
-    void 列表合并湖表历史且内存优先() throws Exception {
+    void 列表合并湖表历史且运行状态优先() throws Exception {
         BatchRun persisted = new BatchRun("run-1", LakeJobs.INIT, "--job " + LakeJobs.INIT, BatchRun.SUCCEEDED, 0,
                 Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-11-01T00:00:05Z"),
                 5000L, null, "历史");
@@ -119,14 +165,20 @@ class BatchJobServiceTest {
                 return "run-1".equals(id) ? persisted : null;
             }
         };
-        BatchJobService service = new BatchJobService(props("/bin/sh -c \"echo done; exit 0\""), history,
-                new InMemoryRunStateStore(), Schedulers.immediate());
-        BatchRun done = await(service, service.submit(LakeJobs.INIT).id());
+        LakeProperties p = props("/bin/sh -c \"echo done; exit 0\"");
+        store = new InMemoryRunStateStore();
+        identity = new BatchIdentity();
+        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p)),
+                new JobCompletionService(store, history), identity, p, Schedulers.immediate());
+        BatchJobService service = new BatchJobService(p, history, store, identity, Schedulers.immediate());
+        BatchRun submitted = service.submit(LakeJobs.INIT, null);
+        dispatch();
+        BatchRun done = await(service, submitted.id());
 
         assertEquals(2, service.list(20).runs().size());
         assertEquals(done, service.get(done.id()));
         assertEquals(persisted, service.get("run-1"));
-        // 历史记录没有日志文件，tail 应该给空列表而不是 NPE
+        assertNotEquals(done.id(), persisted.id());
         assertTrue(service.tail("run-1", 10).isEmpty());
         assertThrows(ResponseStatusException.class, () -> service.get("run-unknown"));
     }
@@ -142,6 +194,7 @@ class BatchJobServiceTest {
     /** 不连 Postgres 的测试替身：行为和 JdbcRunStateStore 一致，只是放在内存里 */
     static class InMemoryRunStateStore implements RunStateStore {
         private final Map<String, BatchRun> runs = new ConcurrentHashMap<>();
+        private final Map<String, String> idempotency = new ConcurrentHashMap<>();
 
         @Override
         public void insert(BatchRun run, String owner) {
@@ -181,6 +234,40 @@ class BatchJobServiceTest {
             if (run != null) {
                 runs.put(id, run.finished(BatchRun.FAILED, 1, message, 0));
             }
+        }
+
+        @Override
+        public Optional<BatchRun> findByIdempotencyKey(String key) {
+            String id = idempotency.get(key);
+            return id == null ? Optional.empty() : find(id);
+        }
+
+        @Override
+        public void recordIdempotency(String key, String runId) {
+            idempotency.putIfAbsent(key, runId);
+        }
+
+        @Override
+        public int runningCount() {
+            return (int) runs.values().stream().filter(r -> BatchRun.RUNNING.equals(r.status())).count();
+        }
+
+        @Override
+        public BatchRun claimNext(String owner) {
+            BatchRun next = runs.values().stream()
+                    .filter(r -> BatchRun.QUEUED.equals(r.status()))
+                    .min(Comparator.comparing(BatchRun::startedAt)).orElse(null);
+            if (next == null) {
+                return null;
+            }
+            BatchRun claimed = new BatchRun(next.id(), next.job(), next.command(), BatchRun.RUNNING, null,
+                    next.startedAt(), null, null, next.logFile(), "执行中");
+            runs.put(next.id(), claimed);
+            return claimed;
+        }
+
+        @Override
+        public void setHandle(String runId, String handle) {
         }
     }
 }
