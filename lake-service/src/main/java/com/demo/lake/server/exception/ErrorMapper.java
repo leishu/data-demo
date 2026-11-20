@@ -1,6 +1,7 @@
 package com.demo.lake.server.exception;
 
 import com.demo.lake.server.query.InvalidQueryException;
+import com.demo.lake.server.query.InvalidSemanticQueryException;
 import com.demo.lake.server.query.QueryFailedException;
 import com.demo.lake.server.query.QueryQuotaExceededException;
 import com.demo.lake.server.query.TrinoUnavailableException;
@@ -42,6 +43,10 @@ public final class ErrorMapper {
         if (t instanceof InvalidQueryException) {
             return new Mapped(HttpStatus.BAD_REQUEST, t.getMessage(),
                     "SQL 需为单条只读语句（select/with/show/describe/explain）");
+        }
+        if (t instanceof InvalidSemanticQueryException) {
+            return new Mapped(HttpStatus.BAD_REQUEST, t.getMessage(),
+                    "检查 metric / dimensions / filters 是否在指标目录的白名单内");
         }
         if (t instanceof QueryFailedException failed) {
             String hint = failed.getSqlState() == null

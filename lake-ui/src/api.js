@@ -53,6 +53,9 @@ export const api = {
   sample: (table, limit = 50) =>
     request(`/api/tables/${encodeURIComponent(table)}/sample?limit=${limit}`),
   config: () => request('/api/config'),
+  semantics: () => request('/api/semantics'),
+  semanticRender: (payload) => request('/api/semantics/render', { method: 'POST', body: payload }),
+  semanticQuery: (payload) => request('/api/semantics/query', { method: 'POST', body: payload }),
 
   submitJob: (job) => request(`/api/batch/${encodeURIComponent(job)}`, { method: 'POST' }),
   runs: (limit = 20) => request(`/api/batch/runs?limit=${limit}`),

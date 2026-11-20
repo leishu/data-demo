@@ -11,8 +11,9 @@ const router = useRouter()
 const NAV = [
   { key: '/query', label: '查询台', index: '1' },
   { key: '/tables', label: '表浏览', index: '2' },
-  { key: '/jobs', label: '批作业', index: '3' },
-  { key: '/config', label: '配置', index: '4' }
+  { key: '/semantics', label: '指标', index: '3' },
+  { key: '/jobs', label: '批作业', index: '4' },
+  { key: '/config', label: '配置', index: '5' }
 ]
 
 const activeKey = computed(() => '/' + (route.path.split('/')[1] || 'query'))

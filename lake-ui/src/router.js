@@ -3,6 +3,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import QueryView from './views/QueryView.vue'
 import TablesView from './views/TablesView.vue'
 import JobsView from './views/JobsView.vue'
+import SemanticView from './views/SemanticView.vue'
 import ConfigView from './views/ConfigView.vue'
 
 // hash 模式：被 Spring Boot 当静态资源托管时不需要服务端做 history fallback
@@ -27,6 +28,12 @@ const router = createRouter({
       name: 'jobs',
       component: JobsView,
       meta: { title: '批作业', subtitle: '触发 Spark 作业，跟踪状态与日志尾部' }
+    },
+    {
+      path: '/semantics',
+      name: 'semantics',
+      component: SemanticView,
+      meta: { title: '指标语义', subtitle: '受控口径查询，可预览 Trino / Spark 两种方言 SQL' }
     },
     {
       path: '/config',

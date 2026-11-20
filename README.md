@@ -120,6 +120,9 @@ open http://localhost:8088/                # 内置查询控制台
 |---|---|
 | `POST /api/query` | `{"sql":"select ...","maxRows":100}` → 列定义 + 行 + 耗时 + `truncated` |
 | `POST /api/query/stream` | 同上，但走 SSE：`meta` → `rows`… → `done`，出错则发 `error` |
+| `GET /api/semantics` | 指标目录：口径表达式、来源表与允许的维度 |
+| `POST /api/semantics/render` | 按指标/维度/过滤生成 SQL，`engine=trino\|spark` 可看两种方言 |
+| `POST /api/semantics/query` | 执行语义查询（固定 Trino 方言），同样受配额与审计约束 |
 | `GET /api/tables` | 当前库的表清单 + 字段清单（读 Trino 的 `information_schema`，字段 `comment` 即 DDL 里的中文名） |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
@@ -140,6 +143,10 @@ open http://localhost:8088/                # 内置查询控制台
 - **时间是权威 epoch 毫秒，不靠时区约定**。`ops.batch_runs` 的 `started_ms` / `finished_ms`
   直接存绝对时刻（BatchApp 写入，InitJob 为老表按 UTC 墙钟回填）；旧的 `timestamp` 墙钟列已废弃。
   绝对时刻编进 schema，JVM / 会话时区怎么变都不会让历史列表偏移 8 小时。
+- **有语义层，口径只维护一份**。`platform-common` 的 `SemanticCatalog` 定义 GMV / 净收入 /
+  退款率等指标；调用方只能选指标、白名单维度和过滤条件，服务端生成 SQL 并执行（也走配额与审计）。
+  `SemanticSqlRenderer` 支持 Trino / Spark 两种方言（引号风格不同、口径一致），
+  方便把同一份定义下推到别的引擎的调用方。
 - **API 需要鉴权**（demo 级）。`/api/**` 走 HTTP Basic：`viewer/viewer` 只读查询，
   `operator/operator` 额外能触发作业和看 actuator 指标；页面、`/actuator/health`、`/actuator/info` 公开。
   生产环境请设 `lake.security.enabled=false`，由网关 / IdP 做认证授权（静态口令只适合本机演示）。

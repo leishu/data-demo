@@ -157,7 +157,7 @@ public class BatchJobService {
 
     /** 运行状态库 ∪ 湖表历史，按 id 去重（终态优先），再按开始时间倒序截断 */
     public RunsView list(int limit) {
-        int n = Math.max(1, Math.min(limit, 100));
+        int n = Math.clamp(limit, 1, 100);
         Map<String, BatchRun> merged = new LinkedHashMap<>();
         try {
             state.recent(n).forEach(run -> merged.put(run.id(), run));

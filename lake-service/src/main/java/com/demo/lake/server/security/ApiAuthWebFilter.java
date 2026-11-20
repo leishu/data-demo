@@ -91,7 +91,8 @@ public class ApiAuthWebFilter implements WebFilter {
 
     /** null 表示「认证通过即可」，不需要额外角色 */
     static String requiredRole(String path, HttpMethod method) {
-        if (path.startsWith("/api/query") || path.startsWith("/api/tables") || path.equals("/api/config")) {
+        if (path.startsWith("/api/query") || path.startsWith("/api/tables")
+                || path.startsWith("/api/semantics") || path.equals("/api/config")) {
             return "QUERY";
         }
         if (path.startsWith("/api/batch")) {

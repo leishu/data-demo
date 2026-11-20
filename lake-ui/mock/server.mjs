@@ -16,6 +16,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '../../lake-service/src/main/resources/static')
 const PORT = Number(process.argv[process.argv.indexOf('--port') + 1]) || 4173
 
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = ''
+    req.on('data', (c) => (raw += c))
+    req.on('end', () => resolve(raw))
+    req.on('error', reject)
+  })
+}
+
 const CATALOG = 'iceberg'
 const DATABASE = 'lake'
 
@@ -250,7 +259,7 @@ function pick(sql) {
   )
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`)
   const p = url.pathname
   const method = req.method
@@ -316,6 +325,26 @@ const server = http.createServer((req, res) => {
             ])
           )
     return send(res, 200, body)
+  }
+
+  // 语义层：口径定义与多引擎 SQL 预览，查询直接复用 pick() 的假数据
+  if (p === '/api/semantics' && method === 'GET') {
+    return send(res, 200, [
+      { name: 'gmv', label: '成交总额', description: '有效订单的 GMV 之和', measure: 'sum(gmv)', source: 'gold_daily_revenue', dimensions: ['dt', 'merchant_id', 'category'] },
+      { name: 'orders', label: '有效订单数', description: '计入口径的订单数之和', measure: 'sum(order_cnt)', source: 'gold_daily_revenue', dimensions: ['dt', 'merchant_id', 'category'] },
+      { name: 'net_revenue', label: '净收入', description: 'GMV 扣掉退款后的金额之和', measure: 'sum(net_revenue)', source: 'gold_daily_revenue', dimensions: ['dt', 'merchant_id', 'category'] }
+    ])
+  }
+  if (p === '/api/semantics/render' && method === 'POST') {
+    let body = {}
+    try { body = JSON.parse(await readBody(req) || '{}') } catch { /* 用空对象 */ }
+    const q = body.engine === 'spark' ? '`' : '"'
+    const sql = `select ${q}dt${q}, sum(gmv) as ${q}gmv${q} from iceberg.lake.gold_daily_revenue group by ${q}dt${q} order by ${q}dt${q} desc limit 500`
+    return send(res, 200, { engine: body.engine || 'trino', sql })
+  }
+  if (p === '/api/semantics/query' && method === 'POST') {
+    try { await readBody(req) } catch { /* 忽略 */ }
+    return send(res, 200, pick('gold_daily_revenue'))
   }
 
   if (p === '/api/query/stream' && method === 'POST') {
