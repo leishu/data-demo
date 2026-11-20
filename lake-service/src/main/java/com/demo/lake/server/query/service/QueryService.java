@@ -200,12 +200,12 @@ public class QueryService {
      */
     public Mono<List<TableInfo>> listTables() {
         return Mono.fromCallable(() -> {
-            String sql = "select t.table_name, t.table_type, c.column_name, c.data_type, c.comment"
-                    + " from " + catalog() + ".information_schema.tables t"
-                    + " left join " + catalog() + ".information_schema.columns c"
-                    + " on c.table_schema = t.table_schema and c.table_name = t.table_name"
-                    + " where t.table_schema = '" + database() + "'"
-                    + " order by t.table_name, c.ordinal_position";
+            String sql = "SELECT t.table_name, t.table_type, c.column_name, c.data_type, c.comment"
+                    + " FROM " + catalog() + ".information_schema.tables t"
+                    + " LEFT JOIN " + catalog() + ".information_schema.columns c"
+                    + " ON c.table_schema = t.table_schema AND c.table_name = t.table_name"
+                    + " WHERE t.table_schema = '" + database() + "'"
+                    + " ORDER BY t.table_name, c.ordinal_position";
             QueryResult rs = execute(sql, null);
             // 表名 → 表信息；left join 下没有列的表只出现一行，column_name 为 null
             Map<String, TableInfo> byTable = new LinkedHashMap<>();
@@ -223,7 +223,7 @@ public class QueryService {
     public Mono<QueryResult> sample(String table, int limit) {
         return Mono.fromCallable(() -> {
             int n = Math.max(1, Math.min(limit, props.getQuery().getMaxRows()));
-            String sql = "select * from " + catalog() + "." + database() + "." + identifier(table) + " limit " + n;
+            String sql = "SELECT * FROM " + catalog() + "." + database() + "." + identifier(table) + " LIMIT " + n;
             return execute(sql, n);
         }).subscribeOn(blocking);
     }

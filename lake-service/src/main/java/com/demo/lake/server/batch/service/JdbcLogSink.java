@@ -119,7 +119,7 @@ public class JdbcLogSink implements LogSink {
 
     private static long maxSeq(Connection conn, String runId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT coalesce(max(seq), 0) FROM " + TABLE + " WHERE run_id=?")) {
+                "SELECT COALESCE(MAX(seq), 0) FROM " + TABLE + " WHERE run_id=?")) {
             ps.setString(1, runId);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();

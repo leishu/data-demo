@@ -34,8 +34,8 @@ class SemanticControllerTest {
 
         assertTrue(trino.contains("\"dt\""), trino);
         assertTrue(spark.contains("`dt`"), spark);
-        assertTrue(trino.contains("sum(gmv) as \"gmv\""));
-        assertTrue(spark.contains("sum(gmv) as `gmv`"));
+        assertTrue(trino.contains("SUM(gmv) AS \"gmv\""));
+        assertTrue(spark.contains("SUM(gmv) AS `gmv`"));
     }
 
     @Test

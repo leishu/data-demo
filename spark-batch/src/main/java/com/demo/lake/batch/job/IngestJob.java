@@ -84,11 +84,11 @@ public class IngestJob implements LakeJob {
                 + "(order_id, user_id, merchant_id, category, amount, currency, status, "
                 + " event_time, ingest_time, source_file, run_id) "
                 + "SELECT order_id, user_id, merchant_id, category, amount, currency, status, "
-                + "       event_time, current_timestamp() AS ingest_time, input_file_name() AS source_file, run_id "
+                + "       event_time, CURRENT_TIMESTAMP() AS ingest_time, INPUT_FILE_NAME() AS source_file, run_id "
                 + "FROM raw_orders");
 
         System.out.println("[ingest] bronze 总行数 = " + spark.table(bronze.fqn()).count());
-        spark.sql("SELECT cast(event_time AS date) AS dt, count(*) AS cnt, count(DISTINCT order_id) AS distinct_orders "
+        spark.sql("SELECT CAST(event_time AS DATE) AS dt, COUNT(*) AS cnt, COUNT(DISTINCT order_id) AS distinct_orders "
                 + "FROM " + bronze.fqn() + " GROUP BY 1 ORDER BY 1").show(false);
     }
 

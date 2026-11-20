@@ -20,12 +20,12 @@ class SemanticSqlRendererTest {
                         new SemanticFilter("merchant_id", "eq", "M'1")),
                 100, SemanticSqlRenderer.Dialect.TRINO);
 
-        assertTrue(sql.contains("\"dt\", \"merchant_id\", sum(gmv) as \"gmv\""));
-        assertTrue(sql.contains("from " + TABLE));
-        assertTrue(sql.contains("\"dt\" >= date '2026-11-01'"));
+        assertTrue(sql.contains("\"dt\", \"merchant_id\", SUM(gmv) AS \"gmv\""));
+        assertTrue(sql.contains("FROM " + TABLE));
+        assertTrue(sql.contains("\"dt\" >= DATE '2026-11-01'"));
         assertTrue(sql.contains("\"merchant_id\" = 'M''1'"));
-        assertTrue(sql.contains("group by \"dt\", \"merchant_id\""));
-        assertTrue(sql.endsWith("limit 100"));
+        assertTrue(sql.contains("GROUP BY \"dt\", \"merchant_id\""));
+        assertTrue(sql.endsWith("LIMIT 100"));
     }
 
     @Test
@@ -36,7 +36,7 @@ class SemanticSqlRendererTest {
                 SemanticSqlRenderer.Dialect.TRINO);
 
         assertTrue(spark.contains("`dt`"));
-        assertTrue(spark.contains("sum(gmv) as `gmv`"));
+        assertTrue(spark.contains("SUM(gmv) AS `gmv`"));
         assertTrue(trino.contains("\"dt\""));
         assertTrue(spark.replace("`", "\"").equals(trino));
     }
@@ -59,6 +59,6 @@ class SemanticSqlRendererTest {
     void 退款率口径用nullif避免除零() {
         String sql = SemanticSqlRenderer.render(SemanticCatalog.get("refund_rate"), TABLE, List.of("dt"),
                 List.of(), 10, SemanticSqlRenderer.Dialect.TRINO);
-        assertTrue(sql.contains("sum(refund_amount) / nullif(sum(gmv), 0)"));
+        assertTrue(sql.contains("SUM(refund_amount) / NULLIF(SUM(gmv), 0)"));
     }
 }

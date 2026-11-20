@@ -67,33 +67,33 @@ public final class SemanticSqlRenderer {
             }
         }
 
-        StringBuilder sql = new StringBuilder("select ");
+        StringBuilder sql = new StringBuilder("SELECT ");
         for (int i = 0; i < dims.size(); i++) {
             sql.append(dialect.ident(dims.get(i))).append(", ");
         }
-        sql.append(metric.getMeasure()).append(" as ").append(dialect.ident(metric.getName()));
-        sql.append(" from ").append(tableFqn);
+        sql.append(metric.getMeasure()).append(" AS ").append(dialect.ident(metric.getName()));
+        sql.append(" FROM ").append(tableFqn);
 
         if (filters != null && !filters.isEmpty()) {
-            sql.append(" where ");
+            sql.append(" WHERE ");
             for (int i = 0; i < filters.size(); i++) {
                 if (i > 0) {
-                    sql.append(" and ");
+                    sql.append(" AND ");
                 }
                 sql.append(condition(filters.get(i), allowed, dialect));
             }
         }
         if (!dims.isEmpty()) {
-            sql.append(" group by ");
+            sql.append(" GROUP BY ");
             for (int i = 0; i < dims.size(); i++) {
                 if (i > 0) {
                     sql.append(", ");
                 }
                 sql.append(dialect.ident(dims.get(i)));
             }
-            sql.append(" order by ").append(dialect.ident(dims.get(0))).append(" desc");
+            sql.append(" ORDER BY ").append(dialect.ident(dims.get(0))).append(" DESC");
         }
-        sql.append(" limit ").append(Math.max(1, Math.min(limit, 1000)));
+        sql.append(" LIMIT ").append(Math.max(1, Math.min(limit, 1000)));
         return sql.toString();
     }
 
@@ -118,7 +118,7 @@ public final class SemanticSqlRenderer {
             if (!DATE.matcher(value).matches()) {
                 throw new IllegalArgumentException("dt 过滤值必须是 yyyy-MM-dd: " + value);
             }
-            return "date '" + value + "'";
+            return "DATE '" + value + "'";
         }
         try {
             new BigDecimal(value);

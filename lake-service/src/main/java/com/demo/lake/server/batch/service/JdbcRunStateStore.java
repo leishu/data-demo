@@ -71,8 +71,8 @@ public class JdbcRunStateStore implements RunStateStore {
 
     private static void ensureColumn(Connection conn, String name, String ddl) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT 1 FROM information_schema.columns WHERE lower(table_schema)='lake_batch'"
-                        + " AND lower(table_name)='batch_runs' AND lower(column_name)=?")) {
+                "SELECT 1 FROM information_schema.columns WHERE LOWER(table_schema)='lake_batch'"
+                        + " AND LOWER(table_name)='batch_runs' AND LOWER(column_name)=?")) {
             ps.setString(1, name);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -205,7 +205,7 @@ public class JdbcRunStateStore implements RunStateStore {
     private int countByStatus(String status) {
         try (Connection conn = dataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
-                     "SELECT count(*) FROM " + TABLE + " WHERE status=?")) {
+                     "SELECT COUNT(*) FROM " + TABLE + " WHERE status=?")) {
             ps.setString(1, status);
             try (ResultSet rs = ps.executeQuery()) {
                 rs.next();

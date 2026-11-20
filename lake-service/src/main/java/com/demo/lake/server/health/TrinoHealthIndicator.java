@@ -43,7 +43,7 @@ public class TrinoHealthIndicator implements ReactiveHealthIndicator {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement()) {
             stmt.setQueryTimeout(3);
-            stmt.execute("select 1");
+            stmt.execute("SELECT 1");
             return Health.up().build();
         } catch (Exception e) {
             log.debug("Trino 健康检查失败", e);

@@ -37,10 +37,10 @@ public class EvolveJob implements LakeJob {
 
         System.out.println("[evolve] 回填 channel（CoW 会重写受影响的数据文件）");
         spark.sql("UPDATE " + silver.fqn() + " SET channel = "
-                + "CASE pmod(hash(user_id), 3) "
+                + "CASE PMOD(HASH(user_id), 3) "
                 + "WHEN 0 THEN 'APP' WHEN 1 THEN 'MINI_APP' ELSE 'WEB' END");
 
-        spark.sql("SELECT channel, count(*) AS cnt FROM " + silver.fqn() + " GROUP BY channel ORDER BY cnt DESC")
+        spark.sql("SELECT channel, COUNT(*) AS cnt FROM " + silver.fqn() + " GROUP BY channel ORDER BY cnt DESC")
                 .show(false);
         System.out.println("[evolve] 当前 schema：");
         spark.table(silver.fqn()).printSchema();

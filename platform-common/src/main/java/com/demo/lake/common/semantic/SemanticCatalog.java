@@ -11,17 +11,17 @@ public final class SemanticCatalog {
 
     public static final List<MetricDefinition> METRICS = List.of(
             new MetricDefinition("gmv", "成交总额", "有效订单的 GMV 之和",
-                    LakeTables.GOLD_DAILY_REVENUE, "sum(gmv)", GOLD_DIMENSIONS),
+                    LakeTables.GOLD_DAILY_REVENUE, "SUM(gmv)", GOLD_DIMENSIONS),
             new MetricDefinition("orders", "有效订单数", "计入口径的订单数之和",
-                    LakeTables.GOLD_DAILY_REVENUE, "sum(order_cnt)", GOLD_DIMENSIONS),
+                    LakeTables.GOLD_DAILY_REVENUE, "SUM(order_cnt)", GOLD_DIMENSIONS),
             new MetricDefinition("buyers", "下单人数", "按天/商户/品类统计的下单人数之和（跨维度不可相加）",
-                    LakeTables.GOLD_DAILY_REVENUE, "sum(buyer_cnt)", GOLD_DIMENSIONS),
+                    LakeTables.GOLD_DAILY_REVENUE, "SUM(buyer_cnt)", GOLD_DIMENSIONS),
             new MetricDefinition("net_revenue", "净收入", "GMV 扣掉退款后的金额之和",
-                    LakeTables.GOLD_DAILY_REVENUE, "sum(net_revenue)", GOLD_DIMENSIONS),
+                    LakeTables.GOLD_DAILY_REVENUE, "SUM(net_revenue)", GOLD_DIMENSIONS),
             // 权威口径：sql/adhoc/01_daily_revenue.sql 的 refund_rate 须与此保持一致
             // （退款金额/GMV、nullif 防除零、返回比例 0~1），改动此处时请同步该脚本。
             new MetricDefinition("refund_rate", "退款率", "退款金额 / GMV",
-                    LakeTables.GOLD_DAILY_REVENUE, "sum(refund_amount) / nullif(sum(gmv), 0)", GOLD_DIMENSIONS));
+                    LakeTables.GOLD_DAILY_REVENUE, "SUM(refund_amount) / NULLIF(SUM(gmv), 0)", GOLD_DIMENSIONS));
 
     private SemanticCatalog() {
     }

@@ -106,7 +106,7 @@ public class BatchHistoryService {
                 return new Result(List.of(), new RunsView.History(RunsView.History.NOT_INITIALIZED,
                         "运行历史表 " + table + " 还没建（先跑一次 init），当前只显示本进程的记录", table));
             }
-            return new Result(List.copyOf(select(" order by started_ms desc limit " + n)),
+            return new Result(List.copyOf(select(" ORDER BY started_ms DESC LIMIT " + n)),
                     new RunsView.History(RunsView.History.OK, null, table));
         } catch (TrinoUnavailableException e) {
             invalidateProbe();
@@ -136,7 +136,7 @@ public class BatchHistoryService {
             if (!present()) {
                 return null;
             }
-            List<BatchRun> hits = select(" where run_id = '" + id + "' limit 1");
+            List<BatchRun> hits = select(" WHERE run_id = '" + id + "' LIMIT 1");
             return hits.isEmpty() ? null : hits.getFirst();
         } catch (RuntimeException e) {
             invalidateProbe();
@@ -148,9 +148,9 @@ public class BatchHistoryService {
     private List<BatchRun> select(String suffix) {
         // 时间的权威列就是 epoch 毫秒：BatchApp 直接写入，InitJob 为老表回填。
         // 不再对 timestamp 做时区换算——绝对时刻编进 schema，而不是靠连接属性/约定。
-        String sql = "select run_id, job, command, status, exit_code,"
+        String sql = "SELECT run_id, job, command, status, exit_code,"
                 + " started_ms, finished_ms,"
-                + " duration_ms, log_file, message from " + table() + suffix;
+                + " duration_ms, log_file, message FROM " + table() + suffix;
         QueryResult result = queries.executeQuiet(sql, null);
         List<BatchRun> runs = new ArrayList<>(result.rows().size());
         for (List<String> row : result.rows()) {
@@ -166,9 +166,9 @@ public class BatchHistoryService {
         if (at != 0 && now - at < PROBE_TTL_NANOS) {
             return present;
         }
-        String sql = "select count(*) from " + catalog() + ".information_schema.tables"
-                + " where table_schema = '" + LakeTables.OPS_SCHEMA + "'"
-                + " and table_name = '" + LakeTables.BATCH_RUNS + "'";
+        String sql = "SELECT COUNT(*) FROM " + catalog() + ".information_schema.tables"
+                + " WHERE table_schema = '" + LakeTables.OPS_SCHEMA + "'"
+                + " AND table_name = '" + LakeTables.BATCH_RUNS + "'";
         QueryResult result = queries.executeQuiet(sql, null);
         boolean found = !result.rows().isEmpty() && !"0".equals(result.rows().getFirst().getFirst());
         present = found;

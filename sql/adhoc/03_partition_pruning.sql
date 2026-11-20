@@ -3,11 +3,11 @@
 
 -- 1) 只查一天
 EXPLAIN
-SELECT count(*)
+SELECT COUNT(*)
 FROM iceberg.lake.gold_daily_revenue
-WHERE dt = current_date - INTERVAL '1' DAY;
+WHERE dt = CURRENT_DATE - INTERVAL '1' DAY;
 
 -- 2) 全表扫描（对照）
 EXPLAIN
-SELECT count(*)
+SELECT COUNT(*)
 FROM iceberg.lake.gold_daily_revenue;
