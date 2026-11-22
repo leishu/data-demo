@@ -89,6 +89,9 @@ public class KubernetesJobExecutor implements JobExecutor {
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                // 轮询线程没了就必须报终态，否则心跳会一直给这个 run 续命，变成永久 RUNNING
+                listener.completed(run, BatchRun.FAILED, 1, System.currentTimeMillis() - start,
+                        "K8s Job 状态轮询被中断");
                 return;
             } catch (Exception e) {
                 log.debug("轮询 K8s Job {} 状态失败: {}", name, e.getMessage());
@@ -97,6 +100,8 @@ public class KubernetesJobExecutor implements JobExecutor {
                 Thread.sleep(Math.max(1, conf.getPollSeconds()) * 1000L);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                listener.completed(run, BatchRun.FAILED, 1, System.currentTimeMillis() - start,
+                        "K8s Job 状态轮询被中断");
                 return;
             }
         }

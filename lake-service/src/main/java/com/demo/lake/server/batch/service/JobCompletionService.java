@@ -14,12 +14,15 @@ import org.springframework.stereotype.Component;
 public class JobCompletionService implements JobOutcomeListener {
 
     private final RunStateStore state;
+    private final RunningRunRegistry liveRuns;
     private final BatchHistoryService history;
     private final AuditService audit;
     private final LakeMetrics metrics;
 
     @Override
     public void completed(BatchRun run, String status, Integer exitCode, long elapsedMs, String message) {
+        // 先摘心跳：终态写库失败时也要让对账接管，而不是留下永久 RUNNING
+        liveRuns.remove(run.id());
         BatchRun done = run.finished(status, exitCode, message, elapsedMs);
         try {
             state.finish(done);

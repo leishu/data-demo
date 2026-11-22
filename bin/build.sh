@@ -59,13 +59,26 @@ if [[ "${SKIP_UI:-0}" != "1" ]] && [[ "${MVN_ARGS[*]}" != *"-pl spark-batch"* &&
   if command -v node >/dev/null 2>&1 || ls "${HOME}"/.workbuddy/binaries/node/versions/*/bin/node >/dev/null 2>&1; then
     echo "构建前端 lake-ui ..."
     if ! bin/build-ui.sh >"${TMPDIR:-/tmp}/lake-ui-build.log" 2>&1; then
-      echo "警告：前端构建失败（jar 里不会带控制台，接口不受影响），日志：" >&2
+      echo "前端构建失败：jar 里不会带控制台，已中止构建（单独跑 bin/build-ui.sh 看原因），日志：" >&2
       tail -20 "${TMPDIR:-/tmp}/lake-ui-build.log" >&2
+      exit 1
     fi
   else
     echo "跳过前端：找不到 node（需要时单独跑 bin/build-ui.sh）"
   fi
 fi
 
-JAVA_HOME="${JAVA21}" PATH="${JAVA21}/bin:${PATH}" \
-  exec mvn -B "${REPO_ARGS[@]}" "${MVN_ARGS[@]}"
+export JAVA_HOME="${JAVA21}"
+export PATH="${JAVA21}/bin:${PATH}"
+
+mvn -B "${REPO_ARGS[@]}" "${MVN_ARGS[@]}"
+
+# 预生成 spark-batch 运行时 classpath：dev-batch.sh 用 java -cp 直接起批处理，
+# 不再每次提交作业都跑一遍 mvn package（并发作业会抢同一个 target 目录）。
+# 带 -Ps3 一次把 S3 依赖也放进去，运行期按 warehouse 自动选，无需再切 profile。
+if [[ -d spark-batch/target/classes ]]; then
+  echo "生成 spark-batch 运行时 classpath ..."
+  mvn -q -B "${REPO_ARGS[@]}" -Ps3 -pl spark-batch -am \
+    dependency:build-classpath \
+    -Dmdep.outputFile="${PWD}/spark-batch/target/classpath.txt"
+fi

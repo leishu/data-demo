@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.server.support.DbLocks;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -45,6 +46,7 @@ public class JdbcLogSink implements LogSink {
                     + "  at_ms BIGINT NOT NULL,\n"
                     + "  PRIMARY KEY (run_id, seq)\n"
                     + ")");
+            DbLocks.ensure(dataSource, DbLocks.LOG_APPEND);
             log.info("作业日志表就绪: {}", TABLE);
         } catch (SQLException e) {
             log.warn("作业日志表初始化失败（跨实例 tail 暂不可用）: {}", e.getMessage());
@@ -57,28 +59,37 @@ public class JdbcLogSink implements LogSink {
             return;
         }
         try (Connection conn = dataSource.getConnection()) {
-            long seq = maxSeq(conn, runId);
-            long now = System.currentTimeMillis();
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO " + TABLE + " (run_id, seq, line, at_ms) VALUES (?,?,?,?)")) {
-                for (String line : lines) {
-                    ps.setString(1, runId);
-                    ps.setLong(2, ++seq);
-                    ps.setString(3, truncate(line));
-                    ps.setLong(4, now);
-                    ps.addBatch();
-                }
-                ps.executeBatch();
-            }
-            // 只留尾部，避免一次长日志把状态库撑爆
-            long cutoff = seq - MAX_LINES;
-            if (cutoff > 0) {
+            conn.setAutoCommit(false);
+            try {
+                // MAX(seq)+1 必须在锁内：同一 run 出现第二个写入者时，否则会主键冲突整批丢日志
+                DbLocks.lock(conn, DbLocks.LOG_APPEND);
+                long seq = maxSeq(conn, runId);
+                long now = System.currentTimeMillis();
                 try (PreparedStatement ps = conn.prepareStatement(
-                        "DELETE FROM " + TABLE + " WHERE run_id=? AND seq<=?")) {
-                    ps.setString(1, runId);
-                    ps.setLong(2, cutoff);
-                    ps.executeUpdate();
+                        "INSERT INTO " + TABLE + " (run_id, seq, line, at_ms) VALUES (?,?,?,?)")) {
+                    for (String line : lines) {
+                        ps.setString(1, runId);
+                        ps.setLong(2, ++seq);
+                        ps.setString(3, truncate(line));
+                        ps.setLong(4, now);
+                        ps.addBatch();
+                    }
+                    ps.executeBatch();
                 }
+                // 只留尾部，避免一次长日志把状态库撑爆
+                long cutoff = seq - MAX_LINES;
+                if (cutoff > 0) {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM " + TABLE + " WHERE run_id=? AND seq<=?")) {
+                        ps.setString(1, runId);
+                        ps.setLong(2, cutoff);
+                        ps.executeUpdate();
+                    }
+                }
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
             }
         } catch (SQLException e) {
             // 日志是旁路：写失败不能影响作业本身或终态落库

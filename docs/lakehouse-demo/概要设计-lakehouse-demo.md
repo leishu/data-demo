@@ -268,7 +268,7 @@ sequenceDiagram
 - **职责**：把 batch 作业包装成可提交、可排队、可跟踪、可恢复、跨实例共享状态的 HTTP 作业。
 - **对外接口**：`POST /api/batch/{job}`、`GET /api/batch/runs[/{id}]`、`GET /api/batch/runs/{id}/events`。〔FACT｜controller/BatchController.java:43-74〕
 - **依赖**：`platform-common`（runId / 作业白名单）；Postgres（运行态+日志）、Trino（读湖表历史）、本地进程或 K8s（执行）。
-- **关键约束**：请求线程不直接 fork 子进程，只落 QUEUED；由 Dispatcher 按提交顺序原子认领，受全局并发上限约束。〔FACT｜batch/service/JobDispatcher.java:56-80〕
+- **关键约束**：请求线程不直接 fork 子进程，只落 QUEUED；幂等键与 QUEUED 在同一事务内抢占；Dispatcher 在数据库行锁内检查名额并认领，多实例共享同一个并发上限。〔FACT｜batch/service/JobDispatcher.java:55-75〕
 
 ### 3.6 lake-ui —— Vue 3 控制台
 
@@ -509,9 +509,9 @@ sequenceDiagram
     Svc-->>UI: 202 + BatchRun
     UI->>UI: follow(id) 建 SSE
     loop 每 1s
-        D->>PG: runningCount<max(2) ? claimNext 原子 UPDATE QUEUED→RUNNING
+        D->>PG: 行锁内 claimNextIfSlotAvailable(owner,max) → QUEUED→RUNNING
         D->>E: executor.start(注入 BATCH_RUN_ID, stdout→{id}.log)
-        E->>BP: 启动 dev-batch.sh → BatchApp
+        E->>BP: java -cp 启动预构建的 BatchApp
         BP->>BP: RunIds.resolve(BATCH_RUN_ID) → 跑 job
         BP->>LK: finally 写终态(epoch 毫秒, 失败不改退出码)
         E->>PG: 每500ms flush 日志; 退出→completed
@@ -521,8 +521,8 @@ sequenceDiagram
 ```
 
 **关键数据节点**：
-1. **提交**：`BatchJobService.submit` 做白名单校验（`LakeJobs.CHOICES`）、幂等校验（命中直接返回原记录）、`RunIds.generate()` 生成 runId、命令模板 `bin/dev-batch.sh --job {job}` 拼命令、建日志目录、写一条 QUEUED 到 Postgres，owner 为本实例 ID。〔FACT｜batch/service/BatchJobService.java:119-165〕
-2. **认领**：Dispatcher 每 1s 扫描，`claimNext` 用原子条件 UPDATE（`WHERE status='QUEUED'`）认领，多实例不会重复执行；受 `max-concurrent-jobs`（默认 2）约束。〔FACT｜batch/service/JobDispatcher.java:56-80〕〔FACT｜batch/service/JdbcRunStateStore.java:219-238〕
+1. **提交**：`BatchJobService.submit` 做白名单校验（`LakeJobs.CHOICES`）、快路径幂等命中查询、`RunIds.generate()` 生成 runId、命令模板 `bin/dev-batch.sh --job {job}` 拼命令、建日志目录；带幂等键时由 `insertWithIdempotency` 在事务内抢占键并写入 QUEUED，并发重复提交只有一个胜出。〔FACT｜batch/service/BatchJobService.java:119-170〕
+2. **认领**：Dispatcher 每 1s 扫描，`claimNextIfSlotAvailable` 在同一把数据库行锁里做「RUNNING 数 < max」检查与条件 UPDATE 认领，多实例既不重复执行也不越过 `max-concurrent-jobs`（默认 2）。〔FACT｜batch/service/JobDispatcher.java:55-75〕〔FACT｜batch/service/JdbcRunStateStore.java:219-260〕
 3. **执行**：本地执行器把 stdout/stderr 重定向到 `logs/batch/{id}.log`，注入 `BATCH_RUN_ID` 与 `BATCH_RUN_LOG` 环境变量；虚拟线程循环 `waitFor(500ms)` + 每轮 flush 日志到 Postgres，退出码 0→SUCCEEDED/非 0→FAILED/超时→TIMEOUT。〔FACT｜batch/service/LocalProcessJobExecutor.java:33-93〕
 4. **终态回流**：`JobCompletionService.completed()` 写终态到运行态库、令湖表历史缓存失效、打指标与审计。〔FACT｜batch/service/JobCompletionService.java:21-35〕
 5. **runId 对齐**：服务端生成 runId → 注入子进程 → `RunIds.resolve` 取出 → 既写 bronze 每行、又写 `ops.batch_runs`，二者指向同一批次。〔FACT｜common/batch/RunIds.java:14-19〕〔FACT｜spark-batch/BatchApp.java:80-88〕
@@ -548,7 +548,7 @@ staleRunning(now - 120s) → 查湖表 ops.batch_runs
 ### 4.12 审计与可观测流
 
 - **审计三重出口**：`AuditService.record()` 生成 UUID eventId → 写 `logs/audit.log`（90 天滚动，独立 logger）+ 内存环形缓冲（最近 200 条，`GET /api/audit`）+ 返回 eventId 供保险箱关联。SQL 只写 SHA-256 前 16 位指纹，不写原文/口令。〔FACT｜observability/AuditService.java:14-47〕〔FACT｜OBSERVABILITY.md:45-58〕
-- **原文保险箱**（可选）：开启后 SQL 经 `SqlRedactor` 启发式脱敏 → AES-GCM 加密（eventId 作 AAD）→ Postgres `lake_audit.query_text`；开启却没配 `LAKE_AUDIT_KEY` 时服务启动失败（fail closed）；读取需 AUDITOR 角色且每次读取再写一条审计。〔FACT｜observability/AuditTextStore.java:49-118〕〔FACT｜OBSERVABILITY.md:60-88〕
+- **原文保险箱**（可选）：开启后 SQL 经 `SqlRedactor` 启发式脱敏 → AES-GCM 加密（eventId 作 AAD）→ Postgres `lake_audit.query_text`，同时记录 `key_id`；密钥按 `key_id` 组成密钥环，轮换后旧原文仍可读，缺密钥/解密失败会抛错并计 `lake.audit.vault.decrypt.error`，不再伪装成 404；读取需 AUDITOR 角色且每次读取再写一条审计。〔FACT｜observability/AuditTextStore.java:49-165〕〔FACT｜OBSERVABILITY.md:60-100〕
 - **指标**：Micrometer 埋点经 `/actuator/metrics` 暴露，`lake.query.*` / `lake.batch.*` / `lake.auth.denied` 等；SLI/SLO 与告警见 `docs/OBSERVABILITY.md`。〔FACT｜observability/LakeMetrics.java:11-24〕
 
 ### 4.13 前端控制台流（lake-ui）
@@ -721,7 +721,7 @@ erDiagram
 
 ### ADR-7：服务无状态，RUNNING 写 Postgres，历史归档写湖表
 - **背景**：RUNNING 放内存会导致服务重启/多实例看不到同一份列表。〔FACT｜README.md:163-168〕
-- **采用**：运行态写 `lake_batch.batch_runs`（Postgres，按 owner 续心跳）；湖表 `ops.batch_runs` 作跨引擎长期归档；心跳超时的僵死作业先尝试从湖表终态恢复，否则落「实例失联」。
+- **采用**：运行态写 `lake_batch.batch_runs`（Postgres，只给 `RunningRunRegistry` 里仍活着的 run 续心跳，终态写失败也会停心跳）；湖表 `ops.batch_runs` 作跨引擎长期归档；心跳超时的僵死作业先尝试从湖表终态恢复，否则落「实例失联」。
 - **后果**：引入了 Postgres 这一新依赖，但对账机制保证最终一致。
 
 ### ADR-8：长任务用 SSE，不用轮询
@@ -736,7 +736,7 @@ erDiagram
 
 ### ADR-10：SQL 默认只读 + 配额 + 诊断式错误
 - **背景**：对外暴露「能跑任意 SQL」的接口太危险；慢查询会拖垮服务。〔FACT｜README.md:139-156〕
-- **采用**：`SqlGuard` 白名单（含 EXPLAIN ANALYZE 内层递归校验）、全局并发 + 单账号滑动窗口（超限 429）、Trino 不可用返回 503 并提示「先起 Trino」、`initializationFailTimeout=-1` 让服务照常启动。
+- **采用**：`SqlGuard` 白名单（含 EXPLAIN ANALYZE 内层递归校验、quote-aware 注释剥离）、落 Postgres 的全局并发 + 单账号滑动窗口（超限 429，多实例共享一份额度）、Trino 不可用返回 503 并提示「先起 Trino」、`initializationFailTimeout=-1` 让服务照常启动。
 - **后果**：demo 级防护，生产需网关/IdP 接管认证。
 
 ### ADR-11：即席查询用官方 trino-jdbc 薄封装，不依赖外部 CLI

@@ -61,14 +61,18 @@ class BatchJobServiceTest {
     private JobDispatcher dispatcher;
     private BatchIdentity identity;
 
+    private RunningRunRegistry liveRuns;
+
     private BatchJobService newService(LakeProperties p) {
         store = new InMemoryRunStateStore();
         logs = new InMemoryLogSink();
         identity = new BatchIdentity();
+        liveRuns = new RunningRunRegistry();
         BatchHistoryService history = noHistory();
         dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
-                new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
-        return new BatchJobService(p, history, store, logs, identity, audit(), texts(), metrics(), Schedulers.immediate());
+                new JobCompletionService(store, liveRuns, history, audit(), metrics()),
+                identity, liveRuns, metrics(), p, Schedulers.immediate());
+        return new BatchJobService(p, history, store, logs, identity, liveRuns, audit(), texts(), metrics(), Schedulers.immediate());
     }
 
     /** 测试里手动触发一次调度扫描（生产由 @PostConstruct 的定时器驱动） */
@@ -179,9 +183,11 @@ class BatchJobServiceTest {
         store = new InMemoryRunStateStore();
         logs = new InMemoryLogSink();
         identity = new BatchIdentity();
+        liveRuns = new RunningRunRegistry();
         dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
-                new JobCompletionService(store, history, audit(), metrics()), identity, metrics(), p, Schedulers.immediate());
-        BatchJobService service = new BatchJobService(p, history, store, logs, identity, audit(), texts(), metrics(), Schedulers.immediate());
+                new JobCompletionService(store, liveRuns, history, audit(), metrics()),
+                identity, liveRuns, metrics(), p, Schedulers.immediate());
+        BatchJobService service = new BatchJobService(p, history, store, logs, identity, liveRuns, audit(), texts(), metrics(), Schedulers.immediate());
         BatchRun submitted = service.submit(LakeJobs.INIT, null);
         dispatch();
         BatchRun done = await(service, submitted.id());
@@ -212,7 +218,7 @@ class BatchJobServiceTest {
 
     /** 测试里保险箱默认关闭，不需要数据库也不需要密钥 */
     private static AuditTextStore texts() {
-        return new AuditTextStore(new LakeProperties(), null);
+        return new AuditTextStore(new LakeProperties(), null, new SimpleMeterRegistry());
     }
 
     @Test
@@ -269,6 +275,17 @@ class BatchJobServiceTest {
         }
 
         @Override
+        public synchronized String insertWithIdempotency(BatchRun run, String owner, String key) {
+            BatchRun existing = findByIdempotencyKey(key).orElse(null);
+            if (existing != null) {
+                return existing.id();
+            }
+            insert(run, owner);
+            idempotency.put(key, run.id());
+            return run.id();
+        }
+
+        @Override
         public void finish(BatchRun run) {
             runs.put(run.id(), run);
         }
@@ -287,7 +304,7 @@ class BatchJobServiceTest {
         }
 
         @Override
-        public void heartbeat(String owner, Instant now) {
+        public void heartbeat(String runId, Instant now) {
         }
 
         @Override
@@ -336,6 +353,14 @@ class BatchJobServiceTest {
                     next.startedAt(), null, null, next.logFile(), "执行中");
             runs.put(next.id(), claimed);
             return claimed;
+        }
+
+        @Override
+        public synchronized BatchRun claimNextIfSlotAvailable(String owner, int maxConcurrent) {
+            if (runningCount() >= maxConcurrent) {
+                return null;
+            }
+            return claimNext(owner);
         }
 
         @Override

@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -64,7 +65,9 @@ public class IngestJob implements LakeJob {
 
         List<String> generated = new ArrayList<>();
         for (int offset = days - 1; offset >= 0; offset--) {
-            LocalDate dt = LocalDate.now().minusDays(offset);
+            // Spark 会话固定 UTC（PlatformConfig 的 spark.sql.session.timeZone），业务日期也必须用 UTC，
+            // 否则非 UTC 机器在跨零点时会给 dt 打上本地日期，和 event_time / CURRENT_DATE 错位
+            LocalDate dt = LocalDate.now(ZoneOffset.UTC).minusDays(offset);
             Dataset<Row> df = buildDay(spark, dt, perDay);
             Path dir = rawRoot.resolve("dt=" + dt);
             df.write().mode("overwrite").option("compression", "snappy").parquet(dir.toString());

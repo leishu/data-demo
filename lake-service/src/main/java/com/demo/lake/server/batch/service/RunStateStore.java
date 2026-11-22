@@ -14,8 +14,15 @@ import java.util.Optional;
  */
 public interface RunStateStore {
 
-    /** owner 是提交作业的服务实例 ID，心跳只由它续期 */
+    /** owner 是提交作业的服务实例 ID，只是记录归属，不用来决定心跳是否续期 */
     void insert(BatchRun run, String owner);
+
+    /**
+     * 原子提交：插入运行记录并登记幂等键。
+     *
+     * @return 本次 runId 表示提交成功；已存在的 runId 表示幂等命中（本次记录未写入）
+     */
+    String insertWithIdempotency(BatchRun run, String owner, String idempotencyKey);
 
     void finish(BatchRun run);
 
@@ -23,8 +30,8 @@ public interface RunStateStore {
 
     List<BatchRun> recent(int limit);
 
-    /** 刷新本实例名下所有 RUNNING 记录的心跳 */
-    void heartbeat(String owner, Instant now);
+    /** 只刷新指定 run 的心跳：注册里还活着的 run 才续期，避免一次写库失败留下永久 RUNNING */
+    void heartbeat(String runId, Instant now);
 
     /** 心跳超时的 RUNNING 记录，等待和湖表终态对账 */
     List<BatchRun> staleRunning(Instant before);
@@ -45,6 +52,15 @@ public interface RunStateStore {
 
     /** 原子地把最早的一条 QUEUED 改成 RUNNING，并归本实例所有；没有可认领的返回 null */
     BatchRun claimNext(String owner);
+
+    /**
+     * 在全局闸门内检查「RUNNING 数 &lt; max」并认领一条 QUEUED。
+     *
+     * <p>检查和认领放在同一个数据库事务/行锁里，多实例不会各自误以为还有名额。</p>
+     *
+     * @return 认领到的 run；名额满或队列空时返回 null
+     */
+    BatchRun claimNextIfSlotAvailable(String owner, int maxConcurrent);
 
     /** 记下外部执行器句柄（本地进程 PID 或 K8s Job 名），便于排障/取消 */
     void setHandle(String runId, String handle);

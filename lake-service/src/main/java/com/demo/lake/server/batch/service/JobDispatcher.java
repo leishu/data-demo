@@ -32,6 +32,7 @@ public class JobDispatcher {
     private final Map<String, JobExecutor> executors;
     private final JobCompletionService completion;
     private final BatchIdentity identity;
+    private final RunningRunRegistry liveRuns;
     private final LakeMetrics metrics;
     private final LakeProperties props;
     private final Scheduler blocking;
@@ -56,11 +57,13 @@ public class JobDispatcher {
     void dispatch() {
         metrics.setQueueDepth(state.queuedCount());
         int max = Math.max(1, props.getBatch().getMaxConcurrentJobs());
-        while (state.runningCount() < max) {
-            BatchRun claimed = state.claimNext(identity.id());
+        while (true) {
+            // 名额检查与认领由状态库的全局行锁包住：多实例共享同一个并发上限
+            BatchRun claimed = state.claimNextIfSlotAvailable(identity.id(), max);
             if (claimed == null) {
                 return;
             }
+            liveRuns.add(claimed.id());
             JobExecutor executor = executors.get(props.getBatch().getExecutor());
             if (executor == null) {
                 completion.completed(claimed, BatchRun.FAILED, 1, 0,

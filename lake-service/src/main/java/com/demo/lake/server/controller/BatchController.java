@@ -66,7 +66,7 @@ public class BatchController {
                 .map(run -> ResponseEntity.status(HttpStatus.ACCEPTED).body(run));
     }
 
-    @Operation(summary = "运行记录列表", description = "本进程内存记录 ∪ ops.batch_runs 历史（按 id 合并，内存优先）")
+    @Operation(summary = "运行记录列表", description = "状态库 lake_batch.batch_runs ∪ ops.batch_runs 历史（按 id 合并，库内记录优先）")
     @GetMapping("/runs")
     public Mono<RunsView> runs(
             @Parameter(description = "最多返回多少条，默认 20") @RequestParam(defaultValue = "20") int limit) {

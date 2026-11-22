@@ -37,11 +37,18 @@ case "${cmd}" in
     # 控制台页面要先进 jar；没有 node 时降级为「只有接口，没有页面」
     if [[ "${SKIP_UI:-0}" != "1" ]]; then
       if ! bin/build-ui.sh >/dev/null 2>&1; then
-        echo "警告：前端构建失败，jar 里不会带控制台（单独跑 bin/build-ui.sh 看原因）" >&2
+        echo "前端构建失败：jar 里不会带控制台，已中止构建（单独跑 bin/build-ui.sh 看原因）" >&2
+        exit 1
       fi
     fi
-    JAVA_HOME="${JAVA21_HOME}" PATH="${JAVA21_HOME}/bin:${PATH}" \
-      mvn -q -DskipTests -pl lake-service -am package
+    export JAVA_HOME="${JAVA21_HOME}"
+    export PATH="${JAVA21_HOME}/bin:${PATH}"
+    mvn -q -DskipTests -pl lake-service -am package
+    # 同 bin/build.sh：给 dev-batch.sh 预生成运行时 classpath，跑作业时不再 mvn package
+    if [[ -d spark-batch/target/classes ]]; then
+      mvn -q -DskipTests -Ps3 -pl spark-batch -am dependency:build-classpath \
+        -Dmdep.outputFile="${PWD}/spark-batch/target/classpath.txt"
+    fi
     echo "已生成 ${JAR_PATTERN}"
     ;;
 

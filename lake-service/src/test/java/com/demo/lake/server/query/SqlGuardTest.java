@@ -23,6 +23,18 @@ class SqlGuardTest {
     }
 
     @Test
+    void 字符串字面量里的注释标记不能被剥掉() {
+        assertEquals("select 'a--b' as x, 'c/* d */e' as y",
+                SqlGuard.stripComments("select 'a--b' as x, 'c/* d */e' as y"));
+        assertEquals("select \"odd--name\" from t",
+                SqlGuard.requireReadOnly("select \"odd--name\" from t", false));
+        assertEquals("select 'it''s -- fine'",
+                SqlGuard.requireReadOnly("select 'it''s -- fine'", false));
+        // 真正的注释仍然要被剥掉
+        assertEquals("select 1", SqlGuard.requireReadOnly("/* a */ select 1 -- b", false).strip());
+    }
+
+    @Test
     void 写入语句默认拒绝() {
         InvalidQueryException e = assertThrows(InvalidQueryException.class,
                 () -> SqlGuard.requireReadOnly("insert into t values (1)", false));

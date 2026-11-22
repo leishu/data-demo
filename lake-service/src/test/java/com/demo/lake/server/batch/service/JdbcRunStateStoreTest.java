@@ -11,6 +11,11 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -64,7 +69,7 @@ class JdbcRunStateStoreTest {
         }
         assertEquals(2, store.staleRunning(Instant.now().minusSeconds(120)).size());
 
-        store.heartbeat("svc-a", Instant.now());
+        store.heartbeat("own", Instant.now());
         assertEquals(1, store.staleRunning(Instant.now().minusSeconds(120)).size());
         try (Connection c = open(); Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT heartbeat_ms FROM lake_batch.batch_runs WHERE run_id='own'")) {
@@ -105,6 +110,48 @@ class JdbcRunStateStoreTest {
 
         store.setHandle("q1", "pid:123");
         assertTrue(claimed.job().equals("init"));
+    }
+
+    @Test
+    void 并发幂等提交只有一个胜出() throws Exception {
+        Instant now = Instant.now();
+        BatchRun a = queued("qa", now);
+        BatchRun b = queued("qb", now.plusMillis(1));
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            Future<String> fa = pool.submit(() -> {
+                start.await();
+                return store.insertWithIdempotency(a, "svc-a", "same-key");
+            });
+            Future<String> fb = pool.submit(() -> {
+                start.await();
+                return store.insertWithIdempotency(b, "svc-b", "same-key");
+            });
+            start.countDown();
+            String winnerA = fa.get(5, TimeUnit.SECONDS);
+            String winnerB = fb.get(5, TimeUnit.SECONDS);
+            assertEquals(winnerA, winnerB);
+            assertEquals(1, store.recent(10).size(), "幂等命中不应插入第二条 run");
+            assertEquals(winnerA, store.findByIdempotencyKey("same-key").orElseThrow().id());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void 失联终态保留耗时() {
+        Instant started = Instant.now().minusSeconds(30);
+        store.insert(running("lost", started), "svc-a");
+        store.markLost("lost", "实例失联", started.plusSeconds(10));
+        BatchRun lost = store.find("lost").orElseThrow();
+        assertEquals(BatchRun.FAILED, lost.status());
+        assertEquals(10_000L, lost.durationMs());
+    }
+
+    private static BatchRun queued(String id, Instant started) {
+        return new BatchRun(id, "init", "--job init", BatchRun.QUEUED, null,
+                started, null, null, null, "已排队");
     }
 
     private Connection open() throws Exception {

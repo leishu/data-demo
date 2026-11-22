@@ -158,9 +158,52 @@ public final class SqlGuard {
         return sql.substring(start, i).toLowerCase(Locale.ROOT);
     }
 
+    /** 去掉行注释与块注释，但保留字符串字面量/带引号标识符里长得像注释标记的文本。 */
     static String stripComments(String sql) {
-        // 块注释 + 行注释；字符串字面量里的 "--" 会误删，但即席查询里可接受
-        String noBlock = sql.replaceAll("(?s)/\\*.*?\\*/", " ");
-        return noBlock.replaceAll("(?m)--[^\\n]*", " ");
+        StringBuilder out = new StringBuilder(sql.length());
+        char quote = 0;
+        int i = 0;
+        while (i < sql.length()) {
+            char c = sql.charAt(i);
+            if (quote != 0) {
+                out.append(c);
+                if (c == quote) {
+                    // SQL 里用两个连续引号转义（'a''b' / "a""b" / `a``b`）
+                    if (i + 1 < sql.length() && sql.charAt(i + 1) == quote) {
+                        out.append(quote);
+                        i += 2;
+                        continue;
+                    }
+                    quote = 0;
+                }
+                i++;
+                continue;
+            }
+            if (c == '\'' || c == '"' || c == '`') {
+                quote = c;
+                out.append(c);
+                i++;
+                continue;
+            }
+            if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
+                while (i < sql.length() && sql.charAt(i) != '\n') {
+                    i++;
+                }
+                out.append(' ');
+                continue;
+            }
+            if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
+                i += 2;
+                while (i + 1 < sql.length() && !(sql.charAt(i) == '*' && sql.charAt(i + 1) == '/')) {
+                    i++;
+                }
+                i = Math.min(sql.length(), i + 2);
+                out.append(' ');
+                continue;
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
     }
 }

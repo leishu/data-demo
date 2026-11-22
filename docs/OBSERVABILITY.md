@@ -18,6 +18,7 @@ lake-service 用 Micrometer 埋点，指标经 `GET /actuator/metrics`（已暴�
 | `lake.query.rows` | counter | — | 累计返回行数 |
 | `lake.query.quota.rejected` | counter | `reason` | 配额拒绝（rate-limit / concurrency） |
 | `lake.auth.denied` | counter | `reason` | 鉴权拒绝（missing-credentials / bad-credentials / insufficient-role） |
+| `lake.audit.vault.decrypt.error` | counter | — | 查询原文密钥缺失/解密失败（需要人工介入，不能当作“记录不存在”） |
 
 Spring Boot 自带 `http.server.requests`、`jvm.*`、`hikari.*` 等基础指标，不再重复定义。
 
@@ -79,6 +80,21 @@ lake:
 curl -u auditor:auditor 'http://localhost:8088/api/audit/sql/<event_id>?reason=INCIDENT-123'
 curl -u auditor:auditor -X POST 'http://localhost:8088/api/audit/sql/<event_id>/hold?hold=true'
 ```
+
+**密钥轮换**：每条原文都会记录写入时的 `key_id`。轮换时保留旧密钥，旧记录才读得出来：
+
+```yaml
+lake:
+  audit:
+    key-id: v2                 # 当前密钥编号
+    keys:                      # 也可以用环境变量 LAKE_AUDIT_KEYS_V1 / LAKE_AUDIT_KEYS_V2 ...
+      v1: <base64 32 字节>      # 旧密钥
+      v2: <base64 32 字节>
+```
+
+`LAKE_AUDIT_KEY` 始终表示“当前密钥”，优先级高于同编号的历史配置；若密钥环里没有当前
+`key_id`，启动直接失败。读取时按记录里的 `key_id` 选密钥：缺密钥或 GCM 校验失败会抛明确错误，
+并累加 `lake.audit.vault.decrypt.error`，**不再伪装成 404 “记录不存在”**。
 
 每条原文记录带 `redacted` 字段说明是否脱敏；`legal_hold=true` 的记录不会被 TTL 清理。
 **每次读取原文也会再写一条 `audit.text_access` 审计事件**（含 reason），响应带 `Cache-Control: no-store`。

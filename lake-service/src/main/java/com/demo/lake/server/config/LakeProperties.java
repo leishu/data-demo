@@ -5,7 +5,9 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 服务层自有配置（lake.*）。
@@ -122,9 +124,15 @@ public class LakeProperties {
         /** 写入前脱敏：字符串字面量掩码，日期/数字保留 */
         private boolean redact = true;
         private int retentionDays = 30;
-        /** AES-256 密钥（base64，32 字节），从环境变量注入，不进配置文件 */
+        /** 当前 AES-256 密钥（base64，32 字节），从环境变量注入，不进配置文件 */
         private String key = null;
+        /** 当前密钥的编号，写进每条原文的 key_id 列 */
         private String keyId = "v1";
+        /**
+         * 历史密钥环：{@code LAKE_AUDIT_KEYS_V1 / V2 ...} 或 yml 里的 lake.audit.keys.v1。
+         * 轮换时把旧密钥留在这里，老原文才读得出来；留空则只用上面的单密钥（兼容旧配置）。
+         */
+        private Map<String, String> keys = new HashMap<>();
     }
 
     /**

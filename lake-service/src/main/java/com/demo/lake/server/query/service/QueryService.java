@@ -300,7 +300,6 @@ public class QueryService {
             case Timestamp timestamp -> {
                 // 不能用 Timestamp.toString()：它按 JVM 默认时区渲染，会把 UTC 时刻显示成 +8
                 return timestamp.toInstant().toString();
-                // 不能用 Timestamp.toString()：它按 JVM 默认时区渲染，会把 UTC 时刻显示成 +8
             }
             default -> {
             }

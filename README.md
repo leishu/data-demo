@@ -133,7 +133,7 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单；带 `Idempotency-Key` 头可去重 |
-| `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部；列表 = 本进程内存记录 ∪ `ops.batch_runs` 历史（按 id 合并，内存优先），历史读不到时降级返回 `history.status` |
+| `GET /api/batch/runs[/{id}]` | 运行记录与日志尾部；列表 = 状态库 `lake_batch.batch_runs` ∪ `ops.batch_runs` 历史（按 id 合并，库内记录优先），历史读不到时降级返回 `history.status` |
 | `GET /api/batch/runs/{id}/events` | 作业跟踪 SSE：`status` / `log` / `ping` / `end` |
 | `GET /actuator/health` | 带 `trino` 组件的健康检查 |
 
@@ -159,21 +159,27 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
   `operator/operator` 额外能触发作业和看 actuator 指标；页面、`/actuator/health`、`/actuator/info` 公开。
   生产环境请设 `lake.security.enabled=false`，由网关 / IdP 做认证授权（静态口令只适合本机演示）。
 - **查询有配额**。全局并发上限（`max-concurrent-queries`）+ 单账号滑动窗口
-  （`max-queries-per-minute`），等不到名额返回 **429** 而不是一直挂着；内部读运行历史不占配额。
+  （`max-queries-per-minute`）都放在 Postgres（`lake_batch.query_leases` / `query_events`），
+  多实例共享同一份额度；并发名额是带过期时间的租约，实例崩溃没归还也会自动回收；
+  等不到名额返回 **429** 而不是一直挂着；内部读运行历史不占配额。
 - **Trino 挂了服务照常启动**（连接池 `initializationFailTimeout=-1`），查询返回 **503** 并给出
   「先起 Trino」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
 - **批作业用子进程**，不在 Web 容器里养 SparkSession：内存、线程、崩溃隔离都更省心，
   换成 `spark-submit --master yarn ...` 也只改 `lake.batch.command-template`。
 - **作业走调度器，不再由请求线程直接 fork**。提交只落一条 `QUEUED` 记录；`JobDispatcher`
-  按提交顺序原子认领，受全局并发上限（`lake.batch.max-concurrent-jobs`）约束。执行方式可切：
+  按提交顺序认领，名额检查与认领放在同一把数据库行锁里，多实例共享同一个并发上限
+  （`lake.batch.max-concurrent-jobs`）。执行方式可切：
   `local` 是本机子进程（默认），`kubernetes` 通过 K8s Job API 提交并轮询终态，且可带
-  `Idempotency-Key` 去重——同一 key 重复 POST 只会得到同一条运行记录。
+  `Idempotency-Key` 去重——抢占幂等键和写入 `QUEUED` 在同一事务里，同一 key 并发重复 POST
+  也只会得到同一条运行记录。
 - **服务无状态**。批作业的 RUNNING 状态不放内存，而是写进 infra 里已有的 Postgres
-  （`lake_batch.batch_runs`），由提交实例按 `owner` 续心跳；服务重启或开多个实例都能看到同一份列表。
-  心跳超时的僵死作业会先尝试从湖表终态归档恢复，否则落「实例失联」终态（对账周期默认 60s）。
+  （`lake_batch.batch_runs`）；只有执行器还活着的 run 才续心跳（`RunningRunRegistry`），
+  服务重启或开多个实例都能看到同一份列表。终态写库失败时心跳也会停，对账会按时把僵死作业
+  先尝试从湖表终态归档恢复，否则落「实例失联」终态（对账周期默认 60s）。
   湖表 `ops.batch_runs` 仍由 BatchApp 写终态，作为跨引擎的长期归档。
   本地执行器还会把日志行实时搬进状态库的 `lake_batch.batch_log_lines`（每 run 只留尾部 2000 行，
-  默认保留 7 天），所以跨实例点开运行详情也能看到日志；老记录仍可退回本机日志文件。
+  默认保留 7 天）；SSE 首帧共享日志为空时会惰性重探，所以请求落到非执行实例也能看到后续日志；
+  老记录仍可退回本机日志文件。
 - **服务层不侵入 Spark 代码**。Spring 只在 driver/服务侧；批处理 jar 要进 `spark-submit`、
   要能序列化到 executor，塞一个 `ApplicationContext` 只会让集群问题更难查。
 - **阻塞 IO 一律 offload**。WebFlux 的请求线程就是 Netty 事件循环，Hikari 取连接、`rs.next()`、
@@ -229,8 +235,8 @@ bin/infra.sh doctor               # 端口 / HTTP 自检（Trino 未起时自动
 
 # 2. 用集群配置跑批（Hive catalog + s3a 仓库）
 cp conf/platform.properties.example conf/platform.properties
-bin/dev-batch.sh --job all       # 脚本看 warehouse 是 s3a:// 就自动带 -Ps3（iceberg-aws-bundle + hadoop-aws）
-                                 # 想指定别的 profile 时用 MVN_PROFILE=xxx 覆盖，脚本就不再自动判断
+bin/build.sh                     # 预生成 classpath（含 -Ps3 的 iceberg-aws-bundle + hadoop-aws）
+bin/dev-batch.sh --job all       # 运行时只做 java -cp，不再每次 mvn package
 
 # 3. Trino 即席查询（默认不起 Trino，常驻约 0.8 GB，用完 bin/infra.sh stop trino 回收）
 bin/infra.sh up trino
@@ -356,8 +362,9 @@ CoW 的代价是写放大，换来的是「Spark 写、Trino 读」零兼容问�
   `TrinoDialect` 只做最小替换（`date_add` / 带引号的 `INTERVAL` 字面量），
   带 `@trino-only` 标记的语句（`$snapshots` 元数据表、`FOR VERSION AS OF`）直接跳过——
   别指望它当通用方言翻译器用。
-- **`mvn exec:java` 只能对单个模块跑**：脚本里用 `package exec:java` + `-Dexec.mainClass`，
-  父模块靠 `exec-maven-plugin` 的 `skip=true` 跳过。
+- **跑批前先构建**：`bin/dev-batch.sh` 现在是 `java -cp` 薄封装，依赖 `bin/build.sh`
+  生成的 jar 和 `spark-batch/target/classpath.txt`；没构建过会直接报错退出，
+  不会再偷偷跑一次 `mvn package`（并发作业抢同一个 `target/` 的老问题已消除）。
 
 ## 生产化 TODO
 

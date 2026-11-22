@@ -55,9 +55,11 @@ public class BatchWatcher {
 
         // 首帧：共享库里有日志就从那里回放，否则用本地文件尾部
         long[] seqHolder = new long[1];
+        boolean[] useShared = {false};
+        boolean localEmitted = false;
         List<LogSink.LogLine> initial = logSink.tail(id, tailLines);
-        boolean useShared = !initial.isEmpty();
-        if (useShared) {
+        if (!initial.isEmpty()) {
+            useShared[0] = true;
             seqHolder[0] = initial.getLast().seq();
             emit(sink, initial.stream().map(LogSink.LogLine::text).toList());
         } else if (logFile != null) {
@@ -78,15 +80,22 @@ public class BatchWatcher {
                 lastEmit = System.nanoTime();
             }
 
-            List<String> lines = pollLogs(id, useShared, cursor, logFile, seqHolder);
+            if (switchToSharedIfReady(id, tailLines, useShared, seqHolder, sink, localEmitted)) {
+                lastEmit = System.nanoTime();
+            }
+            List<String> lines = pollLogs(id, useShared[0], cursor, logFile, seqHolder);
             if (!lines.isEmpty()) {
                 emit(sink, lines);
                 lastEmit = System.nanoTime();
+                if (!useShared[0]) {
+                    localEmitted = true;
+                }
             }
 
             if (!BatchRun.RUNNING.equals(run.status()) && !BatchRun.QUEUED.equals(run.status())) {
                 // 终态前再抽干一次，避免最后几行日志被 end 事件抢跑
-                List<String> finalLines = pollLogs(id, useShared, cursor, logFile, seqHolder);
+                switchToSharedIfReady(id, tailLines, useShared, seqHolder, sink, localEmitted);
+                List<String> finalLines = pollLogs(id, useShared[0], cursor, logFile, seqHolder);
                 if (!finalLines.isEmpty()) {
                     emit(sink, finalLines);
                 }
@@ -106,6 +115,31 @@ public class BatchWatcher {
                 return;
             }
         }
+    }
+
+    /**
+     * 首帧共享日志为空时不能一锤定音：作业刚排队/刚启动，或请求落到非执行实例，后续日志才会出现。
+     * 每轮惰性重探，一旦共享库有行就切过去；若此前已经从本机文件发过日志，则只补增量不回放历史，
+     * 避免同一批日志在页面上出现两遍。
+     *
+     * @return 是否向流里发过历史日志
+     */
+    private boolean switchToSharedIfReady(String id, int tailLines, boolean[] useShared, long[] seqHolder,
+                                          FluxSink<BatchEvent> sink, boolean localEmitted) {
+        if (useShared[0]) {
+            return false;
+        }
+        List<LogSink.LogLine> appeared = logSink.tail(id, tailLines);
+        if (appeared.isEmpty()) {
+            return false;
+        }
+        useShared[0] = true;
+        seqHolder[0] = appeared.getLast().seq();
+        if (localEmitted) {
+            return false;
+        }
+        emit(sink, appeared.stream().map(LogSink.LogLine::text).toList());
+        return true;
     }
 
     /** seqHolder[0] 是本条流已读到的最大序号，按引用更新，互不影响 */

@@ -60,6 +60,7 @@ public class BatchJobService {
     private final RunStateStore state;
     private final LogSink logSink;
     private final BatchIdentity identity;
+    private final RunningRunRegistry liveRuns;
     private final AuditService audit;
     private final AuditTextStore auditText;
     private final LakeMetrics metrics;
@@ -71,7 +72,14 @@ public class BatchJobService {
         LakeProperties.Batch.State conf = props.getBatch().getState();
         maintenance.add(Flux.interval(Duration.ofSeconds(Math.max(1, conf.getHeartbeatSeconds())))
                 .flatMap(tick -> Mono.fromCallable(() -> {
-                    state.heartbeat(identity.id(), Instant.now());
+                    // 只给「执行器还活着」的 run 续心跳；写终态失败时心跳也会停，交给对账收尸
+                    for (String runId : liveRuns.snapshot()) {
+                        try {
+                            state.heartbeat(runId, Instant.now());
+                        } catch (RuntimeException e) {
+                            log.warn("run {} 心跳失败: {}", runId, e.getMessage());
+                        }
+                    }
                     return true;
                 }).onErrorResume(e -> {
                     log.warn("运行状态心跳失败: {}", e.getMessage());
@@ -149,9 +157,19 @@ public class BatchJobService {
         BatchRun run = new BatchRun(id, job, command, BatchRun.QUEUED, null,
                 Instant.now(), null, null, logFile.toString(), "已排队，等待调度");
         try {
-            state.insert(run, identity.id());
-            if (key != null) {
-                state.recordIdempotency(key, run.id());
+            if (key == null) {
+                state.insert(run, identity.id());
+            } else {
+                // 抢占幂等键 + 插入 run 在同一事务里；并发重复提交只有一个能赢
+                String winner = state.insertWithIdempotency(run, identity.id(), key);
+                if (!run.id().equals(winner)) {
+                    log.info("幂等命中 {} -> {}", key, winner);
+                    BatchRun existing = state.find(winner).orElse(null);
+                    if (existing == null) {
+                        throw new IllegalStateException("幂等键指向的运行记录不存在: " + winner);
+                    }
+                    return existing;
+                }
             }
         } catch (RuntimeException e) {
             log.error("运行态写入失败，拒绝提交作业 {}", job, e);

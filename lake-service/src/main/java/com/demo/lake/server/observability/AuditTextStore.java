@@ -1,6 +1,8 @@
 package com.demo.lake.server.observability;
 
 import com.demo.lake.server.config.LakeProperties;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -19,6 +21,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -39,11 +43,16 @@ public class AuditTextStore {
 
     private final LakeProperties props;
     private final DataSource dataSource;
-    private SecretKeySpec key;
+    private final MeterRegistry registry;
+    /** 按 key_id 存的密钥环：轮换后旧编号仍然能解出老原文 */
+    private final Map<String, SecretKeySpec> keys = new HashMap<>();
+    private Counter decryptErrors;
 
-    public AuditTextStore(LakeProperties props, @Qualifier("stateDataSource") DataSource dataSource) {
+    public AuditTextStore(LakeProperties props, @Qualifier("stateDataSource") DataSource dataSource,
+                          MeterRegistry registry) {
         this.props = props;
         this.dataSource = dataSource;
+        this.registry = registry;
     }
 
     @PostConstruct
@@ -52,20 +61,27 @@ public class AuditTextStore {
             log.info("查询原文保险箱未开启（lake.audit.sql-capture-enabled=false）");
             return;
         }
-        String encoded = props.getAudit().getKey();
-        if (encoded == null || encoded.isBlank()) {
-            throw new IllegalStateException("开启了查询原文保险箱但没配 LAKE_AUDIT_KEY，拒绝以明文启动");
+        Map<String, String> configured = props.getAudit().getKeys();
+        if (configured == null || configured.isEmpty()) {
+            String encoded = props.getAudit().getKey();
+            if (encoded == null || encoded.isBlank()) {
+                throw new IllegalStateException("开启了查询原文保险箱但没配 LAKE_AUDIT_KEY，拒绝以明文启动");
+            }
+            configured = Map.of(props.getAudit().getKeyId(), encoded);
         }
-        byte[] raw;
-        try {
-            raw = Base64.getDecoder().decode(encoded.trim());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("LAKE_AUDIT_KEY 不是合法 base64", e);
+        for (Map.Entry<String, String> entry : configured.entrySet()) {
+            keys.put(entry.getKey(), decodeKey(entry.getValue()));
         }
-        if (raw.length != 32) {
-            throw new IllegalStateException("LAKE_AUDIT_KEY 必须是 base64 编码的 32 字节 AES-256 密钥");
+        // LAKE_AUDIT_KEY 永远是「当前」密钥，优先于同编号的历史配置
+        String current = props.getAudit().getKey();
+        if (current != null && !current.isBlank()) {
+            keys.put(props.getAudit().getKeyId(), decodeKey(current));
         }
-        this.key = new SecretKeySpec(raw, "AES");
+        if (!keys.containsKey(props.getAudit().getKeyId())) {
+            throw new IllegalStateException("审计密钥环里没有当前 key_id=" + props.getAudit().getKeyId()
+                    + "，请先补齐 LAKE_AUDIT_KEY 或 lake.audit.keys." + props.getAudit().getKeyId());
+        }
+        decryptErrors = registry.counter("lake.audit.vault.decrypt.error");
         try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
             stmt.execute("CREATE SCHEMA IF NOT EXISTS lake_audit");
             stmt.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
@@ -96,7 +112,8 @@ public class AuditTextStore {
             String text = redacted ? SqlRedactor.redact(sql) : sql;
             byte[] nonce = new byte[NONCE_BYTES];
             RANDOM.nextBytes(nonce);
-            byte[] payload = seal((text == null ? "" : text).getBytes(StandardCharsets.UTF_8), eventId, nonce);
+            byte[] payload = seal((text == null ? "" : text).getBytes(StandardCharsets.UTF_8), eventId, nonce,
+                    keys.get(props.getAudit().getKeyId()));
             long now = System.currentTimeMillis();
             long expires = now + Math.max(1, props.getAudit().getRetentionDays()) * 86_400_000L;
 
@@ -135,16 +152,34 @@ public class AuditTextStore {
                 if (!rs.next()) {
                     return Optional.empty();
                 }
+                String rowKeyId = rs.getString("key_id");
+                SecretKeySpec rowKey = keys.get(rowKeyId);
+                if (rowKey == null) {
+                    throw new IllegalStateException("审计密钥环缺少 key_id=" + rowKeyId
+                            + "（记录 event=" + eventId + "），请把旧密钥加进 lake.audit.keys 后重试");
+                }
                 byte[] nonce = rs.getBytes("nonce");
                 byte[] payload = rs.getBytes("payload");
-                String sql = new String(open(payload, eventId, nonce), StandardCharsets.UTF_8);
+                byte[] plain;
+                try {
+                    plain = open(payload, eventId, nonce, rowKey);
+                } catch (Exception e) {
+                    throw new IllegalStateException("查询原文解密失败 event=" + eventId
+                            + " key_id=" + rowKeyId + "，密钥可能配错或数据已损坏", e);
+                }
+                String sql = new String(plain, StandardCharsets.UTF_8);
                 return Optional.of(new TextRecord(eventId, rs.getString("actor"), rs.getString("client_ip"),
                         rs.getLong("at_ms"), rs.getLong("expires_at"), rs.getBoolean("legal_hold"),
-                        rs.getString("key_id"), rs.getBoolean("redacted"), sql));
+                        rowKeyId, rs.getBoolean("redacted"), sql));
             }
-        } catch (Exception e) {
+        } catch (SQLException e) {
             log.warn("读取查询原文失败 event={}: {}", eventId, e.getMessage());
             return Optional.empty();
+        } catch (IllegalStateException e) {
+            // 密钥/解密问题要和「记录不存在」区分开：审计员需要看到明确错误，监控也要能看到
+            log.error("读取查询原文失败 event={}: {}", eventId, e.getMessage());
+            decryptErrors.increment();
+            throw e;
         }
     }
 
@@ -185,14 +220,27 @@ public class AuditTextStore {
         return props.getAudit().isSqlCaptureEnabled();
     }
 
-    private byte[] seal(byte[] text, String eventId, byte[] nonce) throws Exception {
+    private static SecretKeySpec decodeKey(String encoded) {
+        byte[] raw;
+        try {
+            raw = Base64.getDecoder().decode(encoded == null ? "" : encoded.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("审计密钥不是合法 base64", e);
+        }
+        if (raw.length != 32) {
+            throw new IllegalStateException("审计密钥必须是 base64 编码的 32 字节 AES-256 密钥");
+        }
+        return new SecretKeySpec(raw, "AES");
+    }
+
+    private static byte[] seal(byte[] text, String eventId, byte[] nonce, SecretKeySpec key) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, nonce));
         cipher.updateAAD(eventId.getBytes(StandardCharsets.UTF_8));
         return cipher.doFinal(text);
     }
 
-    private byte[] open(byte[] payload, String eventId, byte[] nonce) throws Exception {
+    private static byte[] open(byte[] payload, String eventId, byte[] nonce, SecretKeySpec key) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, nonce));
         cipher.updateAAD(eventId.getBytes(StandardCharsets.UTF_8));

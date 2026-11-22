@@ -1,6 +1,7 @@
 package com.demo.lake.server.observability;
 
 import com.demo.lake.server.config.LakeProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +28,7 @@ class AuditTextStoreTest {
         props.getAudit().setRetentionDays(1);
         JdbcDataSource ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:vault-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
-        AuditTextStore store = new AuditTextStore(props, ds);
+        AuditTextStore store = new AuditTextStore(props, ds, new SimpleMeterRegistry());
         store.init();
         return store;
     }
@@ -58,6 +59,40 @@ class AuditTextStoreTest {
     void 开启但没密钥时启动失败() {
         assertThrows(IllegalStateException.class, () -> store(true, null));
         assertThrows(IllegalStateException.class, () -> store(true, "not-base64!!"));
+    }
+
+    @Test
+    void 密钥轮换后旧key_id的原文仍可读() {
+        String newKey = Base64.getEncoder().encodeToString("abcdefghijklmnopqrstuvwxyz123456".getBytes());
+        JdbcDataSource ds = new JdbcDataSource();
+        ds.setURL("jdbc:h2:mem:rotate-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
+
+        LakeProperties old = new LakeProperties();
+        old.getAudit().setSqlCaptureEnabled(true);
+        old.getAudit().setKeyId("v1");
+        old.getAudit().setKey(KEY);
+        AuditTextStore before = new AuditTextStore(old, ds, new SimpleMeterRegistry());
+        before.init();
+        before.save("evt-rotate", "operator", null, "select 1");
+
+        LakeProperties rotated = new LakeProperties();
+        rotated.getAudit().setSqlCaptureEnabled(true);
+        rotated.getAudit().setKeyId("v2");
+        rotated.getAudit().setKey(newKey);
+        rotated.getAudit().getKeys().put("v1", KEY);
+        AuditTextStore after = new AuditTextStore(rotated, ds, new SimpleMeterRegistry());
+        after.init();
+        AuditTextStore.TextRecord record = after.find("evt-rotate").orElseThrow();
+        assertEquals("v1", record.keyId());
+        assertEquals("select 1", record.sql());
+
+        LakeProperties noHistory = new LakeProperties();
+        noHistory.getAudit().setSqlCaptureEnabled(true);
+        noHistory.getAudit().setKeyId("v2");
+        noHistory.getAudit().setKey(newKey);
+        AuditTextStore broken = new AuditTextStore(noHistory, ds, new SimpleMeterRegistry());
+        broken.init();
+        assertThrows(IllegalStateException.class, () -> broken.find("evt-rotate"));
     }
 
     @Test

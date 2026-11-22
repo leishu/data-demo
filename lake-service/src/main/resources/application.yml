@@ -72,6 +72,10 @@ lake:
     redact: true
     retention-days: 30
     key-id: v1
+    # 密钥轮换时把旧密钥也留在这里（环境变量 LAKE_AUDIT_KEYS_V1 / LAKE_AUDIT_KEYS_V2 ...），
+    # 否则换了 LAKE_AUDIT_KEY 之后，旧 key_id 写的历史原文会解不开
+    # keys:
+    #   v1: <base64 32 字节>
   batch:
     enabled: true
     # 换成集群提交：spark-submit --master yarn --class com.demo.lake.batch.BatchApp <jar> --job {job}
