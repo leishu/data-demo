@@ -177,17 +177,18 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 - **作业走调度器，不再由请求线程直接 fork**。提交只落一条 `QUEUED` 记录；`JobDispatcher`
   按提交顺序认领，名额检查与认领放在同一把数据库行锁里，多实例共享同一个并发上限
   （`lake.batch.max-concurrent-jobs`）。执行方式可切：
-  `local` 是本机子进程（默认），`kubernetes` 通过 K8s Job API 提交并轮询终态，且可带
-  `Idempotency-Key` 去重——抢占幂等键和写入 `QUEUED` 在同一事务里，同一 key 并发重复 POST
+  `local` 是本机子进程（默认），`kubernetes` 通过 K8s Job API 提交、轮询终态并把 Pod 日志搬进状态库，
+  且可带 `Idempotency-Key` 去重——抢占幂等键和写入 `QUEUED` 在同一事务里，同一 key 并发重复 POST
   也只会得到同一条运行记录。
 - **服务无状态**。批作业的 RUNNING 状态不放内存，而是写进 infra 里已有的 Postgres
   （`lake_batch.batch_runs`）；只有执行器还活着的 run 才续心跳（`RunningRunRegistry`），
   服务重启或开多个实例都能看到同一份列表。终态写库失败时心跳也会停，对账会按时把僵死作业
   先尝试从湖表终态归档恢复，否则落「实例失联」终态（对账周期默认 60s）。
   湖表 `ops.batch_runs` 仍由 BatchApp 写终态，作为跨引擎的长期归档。
-  本地执行器还会把日志行实时搬进状态库的 `lake_batch.batch_log_lines`（每 run 只留尾部 2000 行，
-  默认保留 7 天）；SSE 首帧共享日志为空时会惰性重探，所以请求落到非执行实例也能看到后续日志；
-  老记录仍可退回本机日志文件。
+  本地和 K8s 执行器都会把日志行实时搬进状态库的 `lake_batch.batch_log_lines`（每 run 只留尾部 2000 行，
+  默认保留 7 天）。本地执行器读 `logs/batch/{id}.log`；K8s 执行器按 `lake-job` 标签找到 Pod，
+  用 follow 流读 stdout/stderr，作业结束/超时/取消时关流。SSE 首帧共享日志为空时会惰性重探，
+  所以请求落到非执行实例也能看到后续日志；老记录仍可退回本机日志文件。
 - **服务层不侵入 Spark 代码**。Spring 只在 driver/服务侧；批处理 jar 要进 `spark-submit`、
   要能序列化到 executor，塞一个 `ApplicationContext` 只会让集群问题更难查。
 - **阻塞 IO 一律 offload**。WebFlux 的请求线程就是 Netty 事件循环，Hikari 取连接、`rs.next()`、

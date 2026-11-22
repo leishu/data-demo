@@ -528,8 +528,14 @@ sequenceDiagram
 4. **终态回流**：`JobCompletionService.completed()` 写终态到运行态库、令湖表历史缓存失效、打指标与审计。〔FACT｜batch/service/JobCompletionService.java:21-35〕
 5. **runId 对齐**：服务端生成 runId → 注入子进程 → `RunIds.resolve` 取出 → 既写 bronze 每行、又写 `ops.batch_runs`，二者指向同一批次。〔FACT｜common/batch/RunIds.java:14-19〕〔FACT｜spark-batch/BatchApp.java:80-88〕
 
-**K8s 执行方式**：`executor=kubernetes` 时改为通过 K8s Job API 创建 Job（JWT 从 in-cluster ServiceAccount 读取），注入同样的环境变量，虚拟线程轮询终态。〔FACT｜batch/service/KubernetesJobExecutor.java:38-105〕
-> 已知局限：K8s 执行器**未实现日志搬运**，SSE/tail 对 K8s 作业只能退回本地文件游标或湖表历史。〔FACT｜batch/service/LogSink.java:7-10〕〔INFER｜K8s 模式日志体验弱于本地模式〕
+**K8s 执行方式**：`executor=kubernetes` 时改为通过 K8s Job API 创建 Job（JWT 从 in-cluster ServiceAccount 读取），注入同样的环境变量，虚拟线程轮询终态。〔FACT｜batch/service/KubernetesJobExecutor.java:60-130〕
+
+**K8s 日志搬运**：Job 的 Pod 模板带 `lake-job=<jobName>` 标签，日志线程按该标签列 Pod，
+找到后用 `GET .../pods/{pod}/log?follow=true` 持续读 stdout/stderr，按 100 行/1 秒批量写进同一个
+`LogSink`（`lake_batch.batch_log_lines`）。Pod 还没创建时轮询等待，日志接口返回 4xx（容器未启动）时
+隔秒重试；终态到达后先给日志线程 2 秒排空尾部，再置停止位并关流，避免 follow 长连接泄漏。
+这样 tail / SSE 在 K8s 模式下也从状态库读，和本地模式一致，不依赖 Pod 是否还在、也不要求请求
+落到提交 Job 的那台实例。〔FACT｜batch/service/KubernetesJobExecutor.java:130-240〕〔FACT｜batch/service/LogSink.java:7-10〕
 
 ### 4.11 运行历史读取与僵死恢复流
 
@@ -782,8 +788,13 @@ WebFlux 请求线程即 Netty 事件循环；所有阻塞 IO（Hikari 取连接�
 
 本轮工程化收口（2026-11-22）：新增 `.github/workflows/ci.yml`（PR 构建 + 主分支 E2E）、`bin/smoke.sh`（鉴权/查询/SSE/语义层/审计/只读守卫/批作业，共 20 项）、`bin/stack.sh`（一键全栈）、`infra/docker-compose.full.yml` 与 `infra/lake-service/Dockerfile`。全栈模式下 `lake-service` 容器关闭批作业（镜像只带 JRE，无 Maven/Spark classpath），批作业由 `bin/stack.sh batch` 在宿主机执行；`bin/stack.sh` 生成 `conf/platform.stack.properties`，不覆盖本地 `conf/platform.properties`。验证：`bin/smoke.sh` 在宿主机模式 20 项全过，`bin/stack.sh up --no-data` + `bin/stack.sh smoke` 在容器模式 17 项全过。
 
-`〔INFER〕` 标注汇总（需人工确认）：
-1. §4.10 — K8s 执行器未实现日志搬运，是否接受其日志体验弱于本地模式。
+本轮 P1（2026-11-22）：补齐 K8s 执行器的日志搬运缺口。`KubernetesJobExecutor` 现在依赖
+`LogSink`，提交 Job 时给 Pod 模板打 `lake-job` 标签，另起虚拟线程按标签定位 Pod 并用 follow
+流读日志，批量写进 `lake_batch.batch_log_lines`；终态到达后排空尾部再关流。
+`KubernetesJobExecutorTest` 用假 K8s API 覆盖创建 Job、终态轮询与日志搬运（3 项）。
+`mvn verify` 全量 67 项测试通过。§4.10 的「已知局限」已替换为实现说明，设计文档不再有待确认项。
+
+`〔INFER〕` 标注汇总（需人工确认）：（本轮无）
 
 已裁决并落实：原第 1 项（§4.8 `refund_rate` 口径不一致）已统一——以语义层为权威，ad-hoc `01_daily_revenue.sql` 已对齐同一表达式（`nullif` 防除零、返回比例、字段更名 `refund_rate`）。修改点：`sql/adhoc/01_daily_revenue.sql:4,11`；本文 §4.8 口径说明与 ADR-9 背景已同步。语义层定义与单测 `SemanticSqlRendererTest.退款率口径用nullif避免除零()` 保持不变。
 
