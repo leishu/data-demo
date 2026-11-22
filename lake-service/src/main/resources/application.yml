@@ -26,7 +26,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,loggers
+        # prometheus：Micrometer 的抓取端点（需 BATCH 角色，Prometheus 配置里用 operator 账号）
+        include: health,info,metrics,loggers,prometheus
   endpoint:
     health:
       show-details: always

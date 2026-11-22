@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  # demo 里节点时间基本同步，不需要额外外部标签
+  external_labels:
+    env: local
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # lake-service 的 actuator 指标端点需要 BATCH 角色；这里用 demo 的 operator 账号。
+  # 生产请改成网关签发的 token，或把 prometheus 放进允许访问该端点的网络。
+  - job_name: lake-service
+    metrics_path: /actuator/prometheus
+    basic_auth:
+      username: operator
+      password: operator
+    static_configs:
+      - targets: ["127.0.0.1:8088"]
+
+  # 监控栈自身的健康，便于在 Grafana 里区分「服务挂了」和「Prometheus 自己挂了」
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]

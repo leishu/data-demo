@@ -30,6 +30,8 @@ volumes:
   pgdata:
   miniodata:
   trinodata:
+  promdata:
+  grafanadata:
 
 services:
   # ---------------------------------------------------------------- 元数据库
@@ -158,6 +160,56 @@ services:
     restart: unless-stopped
     logging: *default-logging
     networks: [lake]
+
+  # ---------------------------------------------------------------- 可观测性（可选 profile=monitoring）
+  # Prometheus / Grafana 用 host 网络：这样 127.0.0.1:8088 同时能抓到「宿主机 lake-service」和
+  # 「compose 里的 lake-service 容器」（后者把端口发布在宿主机回环上）。
+  # 代价是这两个容器不走 lakehouse-net，也不做端口映射，端口直接落在宿主机 9090 / 3000。
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: lake-prometheus
+    profiles: ["monitoring"]
+    network_mode: host
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - promdata:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    container_name: lake-grafana
+    profiles: ["monitoring"]
+    network_mode: host
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_HTTP_PORT: "3000"
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    mem_limit: 512m
+    restart: unless-stopped
+    logging: *default-logging
 
   # ---------------------------------------------------------------- 可选工具
   adminer:

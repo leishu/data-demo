@@ -155,6 +155,24 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
 `bin/stack.sh` 会生成 `conf/platform.stack.properties`（集群模式）给宿主批作业用，
 不会覆盖你自己的 `conf/platform.properties`；这个文件已在 `.gitignore` 里。
 
+### 2.2 监控栈（Prometheus + Grafana）
+
+```bash
+bin/lake-service.sh build && bin/lake-service.sh start   # 被抓取的服务（需带指标端点的 jar）
+bin/infra.sh up monitoring                              # Prometheus :9090 + Grafana :3000
+# 或者全栈一起：bin/stack.sh up --monitoring
+```
+
+- Prometheus 在 `infra/prometheus/prometheus.yml` 里抓 `127.0.0.1:8088/actuator/prometheus`，
+  用 `operator/operator` 做 Basic 认证；改了 demo 账号要同步改这里。
+- 两个容器都用 `network_mode: host`，端口直接落在宿主机，**不映射也不接 lakehouse-net**。
+  这样「宿主机服务」和「全栈模式下的容器服务」用同一个 target 就能抓到。
+- 告警规则：`infra/prometheus/rules/lake-slo.yml`（5 条，对应 `docs/OBSERVABILITY.md`）；
+  改完 `curl -X POST http://localhost:9090/-/reload` 热加载。
+- Grafana（`http://localhost:3000`，`admin/admin`）自动装载 `Lakehouse` 文件夹里的 SLO 面板；
+  数据源和面板都来自 `infra/grafana/provisioning/` 与 `infra/grafana/dashboards/`。
+- 停监控：`bin/infra.sh stop prometheus grafana`。`bin/infra.sh clean` 会连 `promdata` / `grafanadata` 一起删。
+
 ---
 
 ## 3. 日常运维（Docker 速查）
@@ -168,9 +186,10 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
 | `bin/infra.sh up` | 起 Postgres + MinIO + HMS | **默认不含 Trino**（省 ~0.8 GB）；自带 `--build`，改过 `infra/hive/Dockerfile` 会自动重建 HMS 镜像 |
 | `bin/infra.sh up trino` | 额外起 Trino（:8080） | 即席查询 / `lake-service` 查数时需要；`all` 等价。不用时 `bin/infra.sh stop trino` 立刻回收 |
 | `bin/infra.sh up tools` | 额外起 Adminer（:8081） | 走 `--profile tools`，可写成 `up tools trino` |
+| `bin/infra.sh up monitoring` | 额外起 Prometheus(:9090) + Grafana(:3000) | 走 `--profile monitoring`，可和 trino/tools 组合 |
 | `bin/infra.sh core` | 同 `up` | 旧命令名，保留兼容 |
 | `bin/infra.sh ps` | 容器 + 健康状态 | 出问题时的第一步 |
-| `bin/infra.sh logs [服务...]` | 跟日志（`-f --tail=200`） | 参数是**服务名**：`postgres` / `minio` / `hive-metastore` / `trino`，不是容器名 |
+| `bin/infra.sh logs [服务...]` | 跟日志（`-f --tail=200`） | 参数是**服务名**：`postgres` / `minio` / `hive-metastore` / `trino` / `prometheus` / `grafana`，不是容器名 |
 | `bin/infra.sh restart [服务...]` | 重启容器 | 只改了挂载文件或环境变量时够用，不必重建镜像 |
 | `bin/infra.sh psql [参数]` | 进 HMS 的 Postgres | 等价于 `docker exec -it lake-postgres psql -U hive -d metastore` |
 | `bin/infra.sh doctor` | 端口 / HTTP / Trino 端到端检查 | 检查清单见第 2 章 |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lake-service 端到端冒烟：健康检查 / 鉴权 / 查询 / SSE / 语义层 / 审计 / 批作业 / 只读守卫
+# lake-service 端到端冒烟：健康检查 / 鉴权 / 查询 / SSE / 语义层 / 批作业 / 审计 / 只读守卫 / 指标抓取
 #
 #   bin/smoke.sh                         # 默认 http://localhost:8088，operator/operator
 #   BASE_URL=http://host:8088 bin/smoke.sh
@@ -174,6 +174,16 @@ fi
 
 code="$(req POST /api/query '{"sql":"delete from silver_orders","maxRows":1}')"
 check_code "写语句被只读守卫拒绝" 400 "${code}"
+
+step "8. Prometheus 指标抓取"
+code="$(curl -sS -o "${TMP}/prom" -w '%{http_code}' -u "${SMOKE_USER}:${SMOKE_PASS}" \
+    "${BASE_URL}/actuator/prometheus" 2>/dev/null || true)"
+check_code "GET /actuator/prometheus" 200 "${code}"
+if grep -q '^lake_query_executed_total' "${TMP}/prom" 2>/dev/null; then
+  ok "Prometheus 文本里包含业务指标 lake_query_executed_total"
+else
+  bad "Prometheus 文本里没有业务指标：$(head -c 300 "${TMP}/prom" 2>/dev/null || true)"
+fi
 
 echo
 if ((FAIL == 0)); then

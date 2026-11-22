@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: Lakehouse
+    folder: Lakehouse
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

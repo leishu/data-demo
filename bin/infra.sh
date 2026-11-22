@@ -4,8 +4,9 @@
 #   bin/infra.sh up            # 起 Postgres + MinIO + HMS（默认，跑批够用）
 #   bin/infra.sh up trino      # 额外起 Trino（即席查询才需要，常驻 ~0.8G）
 #   bin/infra.sh up tools      # 额外起 Adminer（:8081），可和 trino 组合
+#   bin/infra.sh up monitoring # 额外起 Prometheus(:9090) + Grafana(:3000)，SLO 面板自动装载
 #   bin/infra.sh stop [svc]    # 停指定服务（如 stop trino），不带参数停全部
-#                                 # svc 取值：postgres / minio / hive-metastore / trino / adminer（脚本已自动带 --profile tools）
+#                                 # svc 取值：postgres / minio / hive-metastore / trino / adminer / prometheus / grafana
 #   bin/infra.sh down          # 停容器，保留数据卷
 #   bin/infra.sh clean         # 停容器并删数据卷（元数据、对象存储全清）
 #   bin/infra.sh ps            # 容器与健康状态
@@ -21,6 +22,9 @@ cd "$(dirname "$SCRIPT")/../infra"
 
 COMPOSE=(docker compose)
 PROFILE_TOOLS=(--profile tools)
+PROFILE_MONITORING=(--profile monitoring)
+# 所有 compose 子命令都带上两个 profile：down/ps/logs 才不会漏掉按 profile 启动的容器
+PROFILES=("${PROFILE_TOOLS[@]}" "${PROFILE_MONITORING[@]}")
 
 log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
@@ -32,7 +36,8 @@ usage() {
   cat <<'EOF'
 用法: bin/infra.sh <命令> [参数]
 
-  up [trino|tools|all]  起 Postgres + MinIO + HMS；带 trino（或 all）额外起 Trino，带 tools 额外起 Adminer
+  up [trino|tools|monitoring|all]
+                        起 Postgres + MinIO + HMS；可组合 trino(或 all)、tools(Adminer)、monitoring(Prometheus+Grafana)
   core              同 up（保留兼容：默认就不起 Trino）
   stop [服务...]    停容器（默认全部，与 up 对称），容器和数据卷都保留
   down              停容器，保留数据卷
@@ -97,6 +102,13 @@ print_endpoints() {
     bin/lake-service.sh build && bin/lake-service.sh start
 
 EOF
+    if [[ "${2:-0}" == "1" ]]; then
+      cat <<'EOF'
+  Prometheus     http://localhost:9090          (抓取 lake-service:8088/actuator/prometheus)
+  Grafana        http://localhost:3000          (admin/admin，Lakehouse SLO 面板已自动装载)
+
+EOF
+    fi
     return
   fi
   cat <<'EOF'
@@ -116,6 +128,13 @@ EOF
     bin/infra.sh up trino
 
 EOF
+  if [[ "${2:-0}" == "1" ]]; then
+    cat <<'EOF'
+  Prometheus     http://localhost:9090          (抓取 lake-service:8088/actuator/prometheus)
+  Grafana        http://localhost:3000          (admin/admin，Lakehouse SLO 面板已自动装载)
+
+EOF
+  fi
 }
 
 # 默认只起 Postgres + MinIO + HMS：日常跑批够用。Trino 只在做 SQL 查询时需要，
@@ -124,31 +143,34 @@ EOF
 #   bin/infra.sh up trino        三件套 + Trino（all 等价）
 #   bin/infra.sh up tools        三件套 + Adminer
 #   bin/infra.sh up tools trino  三件套 + Adminer + Trino
+#   bin/infra.sh up trino monitoring   三件套 + Trino + Prometheus/Grafana
 cmd_up() {
   need_docker
-  local with_tools=0 with_trino=0 arg label
-  local -a args=() svcs=(postgres minio hive-metastore)
+  local with_tools=0 with_trino=0 with_monitoring=0 arg label
+  local -a svcs=(postgres minio hive-metastore)
   for arg in "$@"; do
     case "${arg}" in
       tools|--tools) with_tools=1 ;;
       trino|query|all) with_trino=1 ;;
+      monitoring|--monitoring) with_monitoring=1 ;;
       *) warn "忽略未知参数：${arg}" ;;
     esac
   done
-  if [[ "${with_tools}" == "1" ]]; then
-    args=("${PROFILE_TOOLS[@]}")
-  fi
   label="Postgres + MinIO + HMS"
   if [[ "${with_tools}" == "1" ]]; then label+=" + Adminer"; fi
   if [[ "${with_trino}" == "1" ]]; then
     svcs+=(trino)
     label+=" + Trino"
   fi
+  if [[ "${with_monitoring}" == "1" ]]; then
+    svcs+=(prometheus grafana)
+    label+=" + Prometheus/Grafana"
+  fi
   log "启动 ${label}"
-  "${COMPOSE[@]}" "${args[@]}" up -d --build "${svcs[@]}"
+  "${COMPOSE[@]}" "${PROFILES[@]}" up -d --build "${svcs[@]}"
   wait_healthy "${svcs[@]}" || true
-  "${COMPOSE[@]}" ps
-  print_endpoints "${with_trino}"
+  "${COMPOSE[@]}" "${PROFILES[@]}" ps
+  print_endpoints "${with_trino}" "${with_monitoring}"
 }
 
 # 保留旧命令名：up 默认行为已经就是 core
@@ -159,9 +181,9 @@ cmd_core() {
 # 只停不停删：和 up 对称，日常关 Trino 省 ~0.8G 用它（容器还在，docker start 秒起）
 cmd_stop() {
   need_docker
-  "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" stop "$@"
+  "${COMPOSE[@]}" "${PROFILES[@]}" stop "$@"
   # 用 -a：停掉的服务仍在列表里，能直接看出是“停了”而不是“没了”
-  "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" ps -a
+  "${COMPOSE[@]}" "${PROFILES[@]}" ps -a
 }
 
 cmd_doctor() {
@@ -192,6 +214,17 @@ cmd_doctor() {
     fi
   }
   check_http "MinIO 健康"  "http://localhost:9000/minio/health/live"
+  # 监控是可选 profile，没起时只 WARN
+  if docker ps --format '{{.Names}}' | grep -qx lake-prometheus; then
+    check_http "Prometheus" "http://localhost:9090/-/healthy"
+  else
+    warn "Prometheus 未启动（bin/infra.sh up monitoring 可补起）"
+  fi
+  if docker ps --format '{{.Names}}' | grep -qx lake-grafana; then
+    check_http "Grafana" "http://localhost:3000/api/health"
+  else
+    warn "Grafana 未启动（bin/infra.sh up monitoring 可补起）"
+  fi
   # 默认模式故意不起 Trino，这里不能算失败
   if docker ps --format '{{.Names}}' | grep -qx lake-trino; then
     trino_up=1
@@ -258,15 +291,15 @@ case "${cmd}" in
   up)       cmd_up "$@" ;;
   core)     cmd_core ;;
   stop)     cmd_stop "$@" ;;
-  down)     need_docker; "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" down ;;
+  down)     need_docker; "${COMPOSE[@]}" "${PROFILES[@]}" down ;;
   clean)
     need_docker
-    warn "将删除 pgdata / miniodata / trinodata 三个数据卷"
-    "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" down -v
+    warn "将删除 pgdata / miniodata / trinodata / promdata / grafanadata 数据卷"
+    "${COMPOSE[@]}" "${PROFILES[@]}" down -v
     ;;
-  ps|status) need_docker; "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" ps ;;
-  logs)     need_docker; "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" logs -f --tail=200 "$@" ;;
-  restart)  need_docker; "${COMPOSE[@]}" "${PROFILE_TOOLS[@]}" restart "$@" ;;
+  ps|status) need_docker; "${COMPOSE[@]}" "${PROFILES[@]}" ps ;;
+  logs)     need_docker; "${COMPOSE[@]}" "${PROFILES[@]}" logs -f --tail=200 "$@" ;;
+  restart)  need_docker; "${COMPOSE[@]}" "${PROFILES[@]}" restart "$@" ;;
   psql)     need_docker; "${COMPOSE[@]}" exec postgres psql -U hive -d metastore "$@" ;;
   doctor)   cmd_doctor ;;
   -h|--help|help) usage ;;

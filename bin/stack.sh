@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 一键全栈：Docker infra（Postgres/MinIO/HMS/Trino）+ 宿主机批处理 + 容器化 lake-service
 #
-#   bin/stack.sh up [--build] [--no-data]
+#   bin/stack.sh up [--build] [--no-data] [--monitoring]
 #       构建 jar -> 起 infra -> 用集群配置跑一遍 all -> 起 lake-service 容器 -> 等健康
+#       --monitoring 额外起 Prometheus(:9090) + Grafana(:3000)
 #   bin/stack.sh down            停服务与 infra（保留数据卷）
 #   bin/stack.sh clean           停服务与 infra 并删除数据卷
 #   bin/stack.sh smoke           对已启动的栈跑端到端冒烟（容器模式批作业关闭）
@@ -16,7 +17,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-COMPOSE=(docker compose -f infra/docker-compose.yml -f infra/docker-compose.full.yml)
+# 带上 monitoring profile，down / logs / ps 才能覆盖可选监控容器
+COMPOSE=(docker compose --profile monitoring -f infra/docker-compose.yml -f infra/docker-compose.full.yml)
 STACK_CONF="conf/platform.stack.properties"
 BASE_URL="${BASE_URL:-http://localhost:8088}"
 
@@ -28,7 +30,8 @@ usage() {
   cat <<'EOF'
 用法: bin/stack.sh <命令> [参数]
 
-  up [--build] [--no-data]  起全栈；--build 强制重建 jar，--no-data 跳过初始批处理
+  up [--build] [--no-data] [--monitoring]
+                            起全栈；--build 强制重建 jar，--no-data 跳过初始批处理，--monitoring 起监控栈
   down                      停服务与 infra，保留数据卷
   clean                     停服务与 infra 并删除数据卷（不可恢复）
   smoke                     端到端冒烟（SMOKE_BATCH=0）
@@ -72,11 +75,12 @@ wait_service() {
 
 cmd_up() {
   need_docker
-  local force_build=0 skip_data=0 arg
+  local force_build=0 skip_data=0 monitoring=0 arg
   for arg in "$@"; do
     case "${arg}" in
       --build) force_build=1 ;;
       --no-data) skip_data=1 ;;
+      --monitoring) monitoring=1 ;;
       *) warn "忽略未知参数：${arg}" ;;
     esac
   done
@@ -92,8 +96,10 @@ cmd_up() {
     log "复用已有 jar：${jar}（要重建加 --build）"
   fi
 
-  log "启动 Postgres + MinIO + HMS + Trino"
-  bin/infra.sh up trino
+  local -a infra_args=(trino)
+  [[ "${monitoring}" == "1" ]] && infra_args+=(monitoring)
+  log "启动 Postgres + MinIO + HMS + Trino${monitoring:+ + Prometheus/Grafana}"
+  bin/infra.sh up "${infra_args[@]}"
 
   if [[ "${skip_data}" != "1" ]]; then
     log "用集群配置跑初始批处理（${STACK_CONF}）"
@@ -111,12 +117,19 @@ cmd_up() {
   控制台         ${BASE_URL}/
   接口文档       ${BASE_URL}/swagger-ui.html
   健康检查       ${BASE_URL}/actuator/health
+  指标抓取       ${BASE_URL}/actuator/prometheus   （operator/operator）
   批作业         bin/stack.sh batch --job all   （容器内关闭了 /api/batch）
   冒烟           bin/stack.sh smoke
 
   账号           viewer/viewer（只读）、operator/operator、auditor/auditor
+EOF
+  if [[ "${monitoring}" == "1" ]]; then
+    cat <<EOF
+  Prometheus     http://localhost:9090
+  Grafana        http://localhost:3000          (admin/admin，Lakehouse SLO 面板已自动装载)
 
 EOF
+  fi
 }
 
 cmd_down() {

@@ -40,10 +40,14 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webflux</artifactId>
     </dependency>
-    <!-- 健康检查 / 指标 -->
+    <!-- 健康检查 / 指标；Prometheus registry 让 Micrometer 指标可被直接抓取 -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
     <!-- 接口文档：/v3/api-docs（OpenAPI JSON）+ /swagger-ui.html（可在线调试） -->
     <dependency>

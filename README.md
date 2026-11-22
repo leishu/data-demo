@@ -56,7 +56,9 @@ lakehouse-demo/
 ├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 指标语义 / 配置
 ├── sql/adhoc/                可以直接丢给 Trino 的查询脚本
 ├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Trino
-│   └── lake-service/         全栈模式的 lake-service 镜像（jar + JRE 21）
+│   ├── lake-service/         全栈模式的 lake-service 镜像（jar + JRE 21）
+│   ├── prometheus/           抓取配置与 SLO 告警规则
+│   └── grafana/              数据源、面板与自动装载配置
 ├── .github/workflows/ci.yml  CI：构建/单测 + 主分支 E2E
 ├── bin/                      便捷脚本（build / stack / smoke / dev-batch / infra ...）
 └── conf/platform.properties.example   集群模式配置模板
@@ -84,6 +86,9 @@ bin/lake-service.sh build && bin/lake-service.sh start   # http://localhost:8088
 # 6. 或者：一键全栈（Docker infra + Trino + 容器化服务），再跑端到端冒烟
 bin/stack.sh up          # 首次会构建 jar、起 infra、跑一遍批处理、起服务
 bin/stack.sh smoke       # 端到端冒烟（容器模式自动跳过批作业项）
+
+# 7. 可选：起 Prometheus + Grafana（指标/SLO 面板在 docs/OBSERVABILITY.md）
+bin/infra.sh up monitoring     # Prometheus http://localhost:9090 / Grafana http://localhost:3000
 ```
 
 > `bin/build.sh` 只收到 `-DskipTests` / `-pl ...` 这类参数时会自动补 `package`，不用手写生命周期目标。
@@ -305,6 +310,7 @@ SPARK_MASTER=yarn bin/submit-batch.sh --job all \
 
 ```bash
 bin/stack.sh up          # 一键全栈：构建 jar → 起 infra/Trino → 跑批 → 起服务容器
+bin/stack.sh up --monitoring   # 再加 Prometheus(:9090) + Grafana(:3000)，SLO 面板自动装载
 bin/stack.sh smoke       # 端到端冒烟（容器模式，批作业检查自动跳过）
 bin/stack.sh batch --job all   # 批作业在宿主机跑（容器内没有 Maven/Spark 运行时）
 bin/stack.sh down        # 停服务与 infra，保留数据卷
@@ -319,10 +325,13 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
   `bin/dev-batch.sh` 需要的 Maven/Spark classpath；批作业用 `bin/stack.sh batch` 在宿主机执行。
   `bin/stack.sh` 会生成 `conf/platform.stack.properties`（集群模式：HMS + MinIO），
   不覆盖你自己的 `conf/platform.properties`。
+- **可观测性（P2）**：`lake-service` 内置 Micrometer Prometheus registry，`/actuator/prometheus`
+  可被直接抓取；`bin/infra.sh up monitoring` 起 Prometheus + Grafana，自动装载 SLO 告警规则
+  和「Lakehouse · lake-service SLI/SLO」面板（详见 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md)）。
 - **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
-  语义层 render/query、审计事件、只读守卫；服务开了批作业时还会真的提交一次 `show`
-  并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
-  失败非零退出，可直接放进 CI。
+  语义层 render/query、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
+  提交一次 `show` 并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
+  失败非零退出，可直接放进 CI（宿主机 22 项 / 容器 19 项）。
 
 ## 批处理作业
 

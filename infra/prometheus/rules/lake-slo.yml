@@ -1,0 +1,59 @@
+# 告警规则与 docs/OBSERVABILITY.md 的 SLI/SLO、建议告警一一对应。
+# demo 阈值比 SLO 目标宽（目标是「坏掉要有明确定义」，不是生产 SLA）。
+groups:
+  - name: lake-slo
+    rules:
+      - alert: LakeQueryErrorRateHigh
+        expr: |
+          sum(rate(lake_query_executed_total{outcome="error"}[5m]))
+            / clamp_min(sum(rate(lake_query_executed_total[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          slo: query-availability
+        annotations:
+          summary: "查询错误率 > 5%（持续 5 分钟）"
+          description: "先看 /actuator/health 的 trino 组件，再查 lake_query_quota_rejected_total。"
+
+      - alert: LakeQueryLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum(rate(lake_query_duration_seconds_bucket[5m])) by (le)) > 5
+        for: 10m
+        labels:
+          severity: warning
+          slo: query-latency
+        annotations:
+          summary: "查询 P95 延迟 > 5s"
+          description: "SLO 目标是 30 天 P95 ≤ 5s；先看 Trino 连接池与慢 SQL。"
+
+      - alert: LakeBatchFailureRateHigh
+        expr: |
+          sum(rate(lake_batch_completed_total{status=~"FAILED|TIMEOUT"}[1h]))
+            / clamp_min(sum(rate(lake_batch_completed_total[1h])), 1) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+          slo: batch-success
+        annotations:
+          summary: "批作业失败率 > 10%（持续 15 分钟）"
+          description: "看 logs/batch/*.log 与审计里 batch.completed 的 status 分布。"
+
+      - alert: LakeQueueDepthHigh
+        expr: lake_batch_queue_depth > 20
+        for: 10m
+        labels:
+          severity: warning
+          slo: batch-queue
+        annotations:
+          summary: "排队作业 > 20（持续 10 分钟）"
+          description: "调大 lake.batch.max-concurrent-jobs，或检查是否有作业卡在 RUNNING。"
+
+      - alert: LakeServiceDown
+        expr: up{job="lake-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "lake-service 抓取失败"
+          description: "确认服务进程与 /actuator/prometheus 的鉴权配置；Prometheus 用的是 operator 账号。"

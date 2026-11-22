@@ -1,7 +1,10 @@
 # 可观测性：指标、审计与 SLI/SLO
 
-lake-service 用 Micrometer 埋点，指标经 `GET /actuator/metrics`（已暴露）读取；接 Prometheus 时
-直接用下面的指标名抓取即可（本项目没内置 Prometheus registry，避免锁死版本）。
+lake-service 用 Micrometer 埋点，同时暴露 `GET /actuator/metrics`（人看）和
+`GET /actuator/prometheus`（Prometheus 文本抓取）。两者都需要 BATCH 角色（demo 里用 `operator/operator`）。
+仓库自带可选的 Prometheus + Grafana 栈（`bin/infra.sh up monitoring`），凭据、告警规则和面板都已预置；
+不想起容器时直接用 curl 抓端点也一样。
+
 审计事件写 `logs/audit.log`（按 90 天滚动），最近 200 条可通过 `GET /api/audit` 查看（需 BATCH 角色）。
 
 ## 指标清单
@@ -22,20 +25,44 @@ lake-service 用 Micrometer 埋点，指标经 `GET /actuator/metrics`（已暴�
 
 Spring Boot 自带 `http.server.requests`、`jvm.*`、`hikari.*` 等基础指标，不再重复定义。
 
+**Prometheus 命名换算**：Micrometer 的 `lake.query.executed` 在抓取文本里是 `lake_query_executed_total`；
+timer 会展开成 `lake_query_duration_seconds_bucket` / `_sum` / `_count`；gauge 保持
+`lake_batch_queue_depth`。下面 SLO 表达式用的是抓取后的名字。
+
+## 本地监控栈（可选）
+
+```bash
+bin/lake-service.sh build && bin/lake-service.sh start   # 被抓取的服务
+bin/infra.sh up monitoring                              # Prometheus :9090 + Grafana :3000
+```
+
+- Prometheus 配置在 `infra/prometheus/prometheus.yml`：每 15s 抓 `127.0.0.1:8088/actuator/prometheus`，
+  用 `operator/operator` 做 Basic 认证。容器用 `network_mode: host`，所以**宿主机服务和全栈模式下的
+  lake-service 容器**（端口都发布在宿主机回环上）都能被同一个 target 抓到，不需要改配置。
+- 告警规则在 `infra/prometheus/rules/lake-slo.yml`，对应下面的 SLO 与建议告警；改完可执行
+  `curl -X POST http://localhost:9090/-/reload` 热加载。
+- Grafana（`http://localhost:3000`，`admin/admin`）自动装载 `Lakehouse` 文件夹下的
+  `lake-service SLI/SLO` 面板，数据源指向本机 Prometheus。
+- 全栈一键起：`bin/stack.sh up --monitoring`；只想停监控：`bin/infra.sh stop prometheus grafana`。
+
+> 如果改了 demo 账号，记得同步改 `prometheus.yml` 里的 `basic_auth`；生产环境请换成网关签发的 token。
+
 ## SLI 与 SLO（demo 目标，不是生产承诺）
 
 | SLI | 计算方式 | SLO 目标 | 观察窗口 |
 |---|---|---|---|
-| 查询可用性 | `sum(rate(lake_query_executed{outcome="success"}[5m])) / sum(rate(lake_query_executed[5m]))` | ≥ 99.5% | 30 天 |
-| 查询延迟 | `histogram_quantile(0.95, rate(lake_query_duration_bucket[5m]))` | P95 ≤ 5s | 30 天 |
-| 作业成功率 | `sum(rate(lake_batch_completed{status="SUCCEEDED"}[1h])) / sum(rate(lake_batch_completed[1h]))` | ≥ 99% | 30 天 |
-| 排队等待 | `histogram_quantile(0.95, rate(lake_batch_queue_wait_bucket[5m]))` | P95 ≤ 60s | 7 天 |
+| 查询可用性 | `sum(rate(lake_query_executed_total{outcome="success"}[5m])) / sum(rate(lake_query_executed_total[5m]))` | ≥ 99.5% | 30 天 |
+| 查询延迟 | `histogram_quantile(0.95, rate(lake_query_duration_seconds_bucket[5m]))` | P95 ≤ 5s | 30 天 |
+| 作业成功率 | `sum(rate(lake_batch_completed_total{status="SUCCEEDED"}[1h])) / sum(rate(lake_batch_completed_total[1h]))` | ≥ 99% | 30 天 |
+| 排队等待 | `histogram_quantile(0.95, rate(lake_batch_queue_wait_seconds_bucket[5m]))` | P95 ≤ 60s | 7 天 |
 | 依赖健康 | `up{job="lake-service"} == 1 and trino health == UP` | 可用性 ≥ 99% | 30 天 |
 
 > 说明：本项目是单机 demo，Trino / MinIO / HMS 都在本机 Docker 里，延迟目标比生产宽；
 > 这些数字的作用是**让「坏掉」有明确定义**，而不是声称达到某个 SLA。
 
 ### 建议告警
+
+下面四条已落成 Prometheus 规则（`infra/prometheus/rules/lake-slo.yml`），告警名带 `Lake` 前缀：
 
 - **查询错误率 > 5% 持续 5 分钟**：先看 `/actuator/health` 的 trino 组件与 `lake.query.quota.rejected`；
   配额拒绝多说明是容量问题而不是依赖挂了。
@@ -107,14 +134,18 @@ lake:
 ## 怎么验证
 
 ```bash
-# 指标
+# 指标：人看 / Prometheus 抓取
 curl -u operator:operator http://localhost:8088/actuator/metrics/lake.batch.submitted
-curl -u operator:operator http://localhost:8088/actuator/metrics/lake.query.duration
+curl -u operator:operator http://localhost:8088/actuator/prometheus | grep lake_query_executed_total
+
+# 监控栈（起起来之后）
+curl http://localhost:9090/api/v1/targets | python3 -m json.tool | grep -A2 lake-service
+curl -u admin:admin http://localhost:3000/api/dashboards/uid/lake-service-slo | python3 -m json.tool | head
 
 # 审计
 curl -u operator:operator 'http://localhost:8088/api/audit?limit=20'
 tail -20 logs/audit.log
 
-# 一条命令把上面这些（含 401/查询/SSE/语义层/审计/只读守卫）全验一遍
-bin/smoke.sh
+# 一条命令把上面这些（含 401/查询/SSE/语义层/审计/只读守卫/指标抓取）全验一遍
+bin/smoke.sh                       # 宿主机模式 22 项；容器模式 19 项
 ```

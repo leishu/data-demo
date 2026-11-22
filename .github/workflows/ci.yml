@@ -45,6 +45,12 @@ jobs:
       - name: Shell syntax check
         run: for f in bin/*.sh; do bash -n "$f"; done
 
+      # 监控栈是可选 profile：这里只做静态校验，不在 CI 里拉 Prometheus/Grafana 镜像
+      - name: Validate monitoring config
+        run: |
+          docker compose -f infra/docker-compose.yml --profile monitoring config >/dev/null
+          python3 -m json.tool infra/grafana/dashboards/lake-service-slo.json >/dev/null
+
       - name: Build console (lake-ui)
         run: |
           npm --prefix lake-ui ci

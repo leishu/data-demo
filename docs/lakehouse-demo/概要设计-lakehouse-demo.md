@@ -786,13 +786,23 @@ WebFlux 请求线程即 Netty 事件循环；所有阻塞 IO（Hikari 取连接�
 
 本轮同步：即席查询由自研 `trino-adhoc` → 官方 CLI → 最终定为 **`lake-adhoc`（官方 trino-jdbc 薄封装 + `SqlParams` 预处理 + `TableFormatter` 显示）**。改动点：`pom.xml`（删 `trino-adhoc`、加 `lake-adhoc`）、`platform-common/cli/SqlParams.java`（新增，暴露 `prepare()`）、`lake-adhoc/`（新增模块：TrinoQuery / TrinoClient / TableFormatter）、`bin/trino-query.sh`（简化为一次 `mvn exec:java` 的参数转发）、`README.md`、`infra/README.md`；本文 §1.2/§1.4/§2.2/§3.3/§4.1/§4.14、ADR-11 同步更新。验证：`bash -n` 与 `mvn -pl lake-adhoc -am package` 通过；在 Trino 476 容器上实测中文列对齐、真实数据、`--stats` QueryStats、`01_daily_revenue.sql` 端到端、`04_time_travel.sql --params snapshot_id=...` 三条语句及缺参跳过，均通过（详见 §4.14）。
 
-本轮工程化收口（2026-11-22）：新增 `.github/workflows/ci.yml`（PR 构建 + 主分支 E2E）、`bin/smoke.sh`（鉴权/查询/SSE/语义层/审计/只读守卫/批作业，共 20 项）、`bin/stack.sh`（一键全栈）、`infra/docker-compose.full.yml` 与 `infra/lake-service/Dockerfile`。全栈模式下 `lake-service` 容器关闭批作业（镜像只带 JRE，无 Maven/Spark classpath），批作业由 `bin/stack.sh batch` 在宿主机执行；`bin/stack.sh` 生成 `conf/platform.stack.properties`，不覆盖本地 `conf/platform.properties`。验证：`bin/smoke.sh` 在宿主机模式 20 项全过，`bin/stack.sh up --no-data` + `bin/stack.sh smoke` 在容器模式 17 项全过。
+本轮工程化收口（2026-11-22）：新增 `.github/workflows/ci.yml`（PR 构建 + 主分支 E2E）、`bin/smoke.sh`（鉴权/查询/SSE/语义层/审计/只读守卫/批作业，共 20 项）、`bin/stack.sh`（一键全栈）、`infra/docker-compose.full.yml` 与 `infra/lake-service/Dockerfile`。全栈模式下 `lake-service` 容器关闭批作业（镜像只带 JRE，无 Maven/Spark classpath），批作业由 `bin/stack.sh batch` 在宿主机执行；`bin/stack.sh` 生成 `conf/platform.stack.properties`，不覆盖本地 `conf/platform.properties`。验证：`bin/smoke.sh` 在宿主机模式 22 项全过（含指标抓取），`bin/stack.sh up --no-data` + `bin/stack.sh smoke` 在容器模式 19 项全过。
 
 本轮 P1（2026-11-22）：补齐 K8s 执行器的日志搬运缺口。`KubernetesJobExecutor` 现在依赖
 `LogSink`，提交 Job 时给 Pod 模板打 `lake-job` 标签，另起虚拟线程按标签定位 Pod 并用 follow
 流读日志，批量写进 `lake_batch.batch_log_lines`；终态到达后排空尾部再关流。
 `KubernetesJobExecutorTest` 用假 K8s API 覆盖创建 Job、终态轮询与日志搬运（3 项）。
 `mvn verify` 全量 67 项测试通过。§4.10 的「已知局限」已替换为实现说明，设计文档不再有待确认项。
+
+本轮 P2（2026-11-22）：让 SLI/SLO 真正可抓取。`lake-service` 加 `micrometer-registry-prometheus`
+并暴露 `/actuator/prometheus`（需 BATCH 角色）；新增可选 `monitoring` profile：
+`infra/prometheus/prometheus.yml`（抓 `127.0.0.1:8088`，basic_auth=operator）、
+`infra/prometheus/rules/lake-slo.yml`（5 条告警）、
+`infra/grafana/provisioning/`（数据源 + 面板自动装载）与 `infra/grafana/dashboards/lake-service-slo.json`。
+Prometheus/Grafana 用 host 网络，同一 target 同时覆盖宿主机服务和全栈容器服务。
+`bin/infra.sh up monitoring`、`bin/stack.sh up --monitoring`、`bin/smoke.sh` 增加指标抓取检查；
+实战验证 target=up、规则加载 5 条、Grafana 面板 7 个 panel，`mvn verify` 67 项通过，
+冒烟宿主机 22 项 / 容器 19 项。
 
 `〔INFER〕` 标注汇总（需人工确认）：（本轮无）
 
