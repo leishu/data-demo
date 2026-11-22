@@ -1,0 +1,47 @@
+{
+  "catalogs": [
+    {
+      "user": "admin",
+      "catalog": ".*",
+      "allow": "all"
+    },
+    {
+      "user": "etl",
+      "catalog": "iceberg",
+      "allow": "read-write"
+    },
+    {
+      "user": "analyst",
+      "catalog": "iceberg",
+      "allow": "read-only"
+    }
+  ],
+  "schemas": [
+    {
+      "user": "admin",
+      "owner": true
+    }
+  ],
+  "tables": [
+    {
+      "user": "etl",
+      "catalog": "iceberg",
+      "schema": "lake",
+      "privileges": ["SELECT", "INSERT", "UPDATE", "DELETE"]
+    },
+    {
+      "user": "analyst",
+      "catalog": "iceberg",
+      "schema": "lake",
+      "table": "silver_orders",
+      "privileges": ["SELECT"]
+    },
+    {
+      "user": "analyst",
+      "catalog": "iceberg",
+      "schema": "lake",
+      "table": "gold_daily_revenue",
+      "privileges": ["SELECT"]
+    }
+  ]
+}

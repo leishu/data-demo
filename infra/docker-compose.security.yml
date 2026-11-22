@@ -1,0 +1,15 @@
+# 生产安全模板（profile=security）：给 Trino 开 LDAP + 文件级表授权。
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.security.yml \
+#     --profile security up -d trino
+#
+# 注意：本地 demo 没有 LDAP 服务，启用后 Trino 会起不来；这是生产配置模板，不是日常启动方式。
+# 用之前必须先改 infra/trino/auth/ 里的 LDAP 地址与 rules.json 的用户/角色。
+services:
+  trino:
+    volumes:
+      # 覆盖基础配置（基础文件里没有认证开关），其余 jvm/node/catalog 仍用 infra/trino/etc
+      - ./trino/auth/config.properties:/etc/trino/config.properties:ro
+      - ./trino/auth/password-authenticator.properties:/etc/trino/password-authenticator.properties:ro
+      - ./trino/auth/access-control.properties:/etc/trino/access-control.properties:ro
+      - ./trino/auth/rules.json:/etc/trino/access-control/rules.json:ro

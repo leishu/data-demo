@@ -20,6 +20,7 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
@@ -28,7 +29,8 @@ import java.util.List;
  *
  * <p>为什么不上 Spring Security：本项目为了离线可构建锁定了 Boot 4.1 + Spring Security 7.0.4，
  * 本地仓库里没有完全对齐的 starter；对 demo 来说一个无状态 Basic 过滤器足够，而且行为完全可控。
- * 生产环境请把 {@code lake.security.enabled} 关掉，改由网关 / IdP 做认证（见 README）。</p>
+ * 生产环境把 {@code lake.security.mode} 设为 external：网关完成认证后注入身份头，
+ * 服务只认带共享密钥的请求；没配密钥时一律拒绝（fail closed）。见 docs/SECURITY.md。</p>
  *
  * <p>角色是接口级的：QUERY 能查表和跑 SQL，BATCH 才能触发作业和看 actuator 指标；
  * 静态页面与健康检查公开，否则 K8s 探针和浏览器入口都会 401。</p>
@@ -38,6 +40,12 @@ import java.util.List;
 @Slf4j
 @RequiredArgsConstructor
 public class ApiAuthWebFilter implements WebFilter {
+
+    /** external 模式：只有带正确共享密钥的请求，身份头才会被信任 */
+    static final String HEADER_SHARED_SECRET = "X-Auth-Shared-Secret";
+    static final String HEADER_FORWARDED_USER = "X-Forwarded-User";
+    static final String HEADER_OAUTH_USER = "X-Auth-Request-User";
+    static final String HEADER_FORWARDED_ROLES = "X-Forwarded-Roles";
 
     private final LakeProperties props;
     private final AuditService audit;
@@ -52,30 +60,55 @@ public class ApiAuthWebFilter implements WebFilter {
 
         String path = exchange.getRequest().getPath().value();
         String role = requiredRole(path, exchange.getRequest().getMethod());
-        Credentials credentials = parseBasic(exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
-        if (credentials == null) {
-            return deny(exchange, HttpStatus.UNAUTHORIZED, "需要登录",
-                    "用 viewer / operator 账号做 HTTP Basic 认证", "missing-credentials");
-        }
-        LakeProperties.Security.Account account = conf.getAccounts().stream()
-                .filter(a -> constantEquals(a.getUsername(), credentials.username()))
-                .filter(a -> passwordMatches(a.getPassword(), credentials.password()))
-                .findFirst().orElse(null);
-        if (account == null) {
-            log.debug("认证失败: path={} user={}", path, credentials.username());
-            audit.record("auth.failed", credentials.username(),
-                    java.util.Map.of("path", path, "reason", "bad-credentials"));
-            return deny(exchange, HttpStatus.UNAUTHORIZED, "用户名或密码错误", null, "bad-credentials");
-        }
-        if (role != null && !account.getRoles().contains(role)) {
-            log.debug("权限不足: path={} user={} need={}", path, account.getUsername(), role);
-            audit.record("auth.denied", account.getUsername(),
-                    java.util.Map.of("path", path, "required_role", role));
-            return deny(exchange, HttpStatus.FORBIDDEN, "账号没有 " + role + " 权限",
-                    "触发批作业请用 operator 账号", "insufficient-role");
+        String user;
+        List<String> roles;
+
+        if (isExternal(conf)) {
+            var headers = exchange.getRequest().getHeaders();
+            // 密钥没配或不对就一律拒绝：绝不能因为「两边都是 null」而放过去
+            if (conf.getSharedSecret() == null || conf.getSharedSecret().isBlank()
+                    || !constantEquals(conf.getSharedSecret(), headers.getFirst(HEADER_SHARED_SECRET))) {
+                log.debug("网关共享密钥校验失败: path={}", path);
+                audit.record("auth.denied", "anonymous",
+                        java.util.Map.of("path", path, "reason", "bad-shared-secret"));
+                return deny(exchange, HttpStatus.UNAUTHORIZED, "网关凭据无效",
+                        "本服务由网关保护，请经网关访问", "bad-shared-secret");
+            }
+            user = firstNonBlank(headers.getFirst(HEADER_FORWARDED_USER), headers.getFirst(HEADER_OAUTH_USER));
+            if (user == null) {
+                return deny(exchange, HttpStatus.UNAUTHORIZED, "缺少身份头",
+                        "网关需要注入 X-Forwarded-User", "missing-identity");
+            }
+            roles = parseForwardedRoles(headers.getFirst(HEADER_FORWARDED_ROLES));
+        } else {
+            Credentials credentials = parseBasic(exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
+            if (credentials == null) {
+                return deny(exchange, HttpStatus.UNAUTHORIZED, "需要登录",
+                        "用 viewer / operator 账号做 HTTP Basic 认证", "missing-credentials");
+            }
+            LakeProperties.Security.Account account = conf.getAccounts().stream()
+                    .filter(a -> constantEquals(a.getUsername(), credentials.username()))
+                    .filter(a -> passwordMatches(a.getPassword(), credentials.password()))
+                    .findFirst().orElse(null);
+            if (account == null) {
+                log.debug("认证失败: path={} user={}", path, credentials.username());
+                audit.record("auth.failed", credentials.username(),
+                        java.util.Map.of("path", path, "reason", "bad-credentials"));
+                return deny(exchange, HttpStatus.UNAUTHORIZED, "用户名或密码错误", null, "bad-credentials");
+            }
+            user = account.getUsername();
+            roles = account.getRoles();
         }
 
-        ApiPrincipal principal = new ApiPrincipal(account.getUsername(), List.copyOf(account.getRoles()));
+        if (role != null && !roles.contains(role)) {
+            log.debug("权限不足: path={} user={} need={}", path, user, role);
+            audit.record("auth.denied", user,
+                    java.util.Map.of("path", path, "required_role", role));
+            return deny(exchange, HttpStatus.FORBIDDEN, "账号没有 " + role + " 权限",
+                    "请联系管理员分配角色", "insufficient-role");
+        }
+
+        ApiPrincipal principal = new ApiPrincipal(user, List.copyOf(roles));
         // 下游控制器通过 Principal 拿到用户名，查询配额按账号分桶
         return chain.filter(exchange.mutate().principal(Mono.just(principal)).build());
     }
@@ -112,6 +145,39 @@ public class ApiAuthWebFilter implements WebFilter {
             return "BATCH";
         }
         return null;
+    }
+
+    /** external 模式才信任网关头；mode 拼错时按 local 处理，避免误把身份头当凭据 */
+    static boolean isExternal(LakeProperties.Security conf) {
+        return "external".equalsIgnoreCase(conf.getMode());
+    }
+
+    /** 允许多个身份头别名（oauth2-proxy 用 X-Auth-Request-User），取第一个非空的 */
+    static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    /** X-Forwarded-Roles：逗号分隔，去空白与重复；空值就是没有任何角色 */
+    static List<String> parseForwardedRoles(String value) {
+        List<String> roles = new ArrayList<>();
+        if (value == null || value.isBlank()) {
+            return roles;
+        }
+        for (String part : value.split(",")) {
+            String role = part.trim();
+            if (!role.isEmpty() && !roles.contains(role)) {
+                roles.add(role);
+            }
+        }
+        return roles;
     }
 
     /** Basic 凭据解析；大小写不敏感 scheme，用户名里允许冒号（只按第一个冒号切） */

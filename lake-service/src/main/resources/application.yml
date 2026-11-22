@@ -53,9 +53,12 @@ lake:
     max-concurrent-queries: 4
     max-queries-per-minute: 60
     acquire-timeout-ms: 3000
-  # demo 级鉴权：HTTP Basic + 静态账号，无会话。生产请关掉并由网关/IdP 接管
+  # demo 级鉴权：HTTP Basic + 静态账号，无会话。生产把 mode 设为 external 并由网关/IdP 接管
   security:
     enabled: true
+    mode: local        # local=静态账号；external=信任网关注入的身份头 + 共享密钥
+    # external 模式必填，从环境变量 LAKE_SECURITY_SHARED_SECRET 注入，不写进配置文件
+    # shared-secret: ${LAKE_SECURITY_SHARED_SECRET:}
     realm: lakehouse
     accounts:
       - username: viewer

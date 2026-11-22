@@ -146,6 +146,13 @@ public class LakeProperties {
     public static class Security {
         private boolean enabled = true;
         private String realm = "lakehouse";
+        /**
+         * local=静态账号（demo 默认）；external=信任前置网关注入的身份头。
+         * external 模式下必须配 shared-secret，否则所有请求都被拒绝（fail closed）。
+         */
+        private String mode = "local";
+        /** external 模式下网关与服务的共享密钥，从 LAKE_SECURITY_SHARED_SECRET 注入，不进配置文件 */
+        private String sharedSecret = null;
         /** viewer 只读；operator 额外可以触发批作业、看 actuator 指标 */
         private List<Account> accounts = List.of(
                 new Account("viewer", "{noop}viewer", List.of("QUERY")),

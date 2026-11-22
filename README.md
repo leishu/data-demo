@@ -58,7 +58,9 @@ lakehouse-demo/
 ├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Trino
 │   ├── lake-service/         全栈模式的 lake-service 镜像（jar + JRE 21）
 │   ├── prometheus/           抓取配置与 SLO 告警规则
-│   └── grafana/              数据源、面板与自动装载配置
+│   ├── grafana/              数据源、面板与自动装载配置
+│   ├── trino/auth/           LDAP + 表级授权模板（profile=security）
+│   └── ranger/               HMS Ranger 插件配置模板与安装步骤
 ├── .github/workflows/ci.yml  CI：构建/单测 + 主分支 E2E
 ├── scheduler/                外部调度示例：Airflow DAG / DolphinScheduler 任务入口 / 接入说明
 ├── bin/                      便捷脚本（build / stack / smoke / scheduled-batch / dev-batch / infra ...）
@@ -332,6 +334,8 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
 - **外部调度（`scheduler/`）**：`bin/scheduled-batch.sh` 以 `(job, 逻辑日期)` 为幂等键调用服务并等终态，
   退出码直接当调度任务状态；Airflow DAG 把 `ingest → transform` 每日串跑、`maintain` 单独定时，
   DolphinScheduler 与 crontab 也有对应入口（详见 [`scheduler/README.md`](scheduler/README.md)）。
+- **权限（`docs/SECURITY.md`）**：服务支持 `lake.security.mode=external`，只信任网关注入的身份头 +
+  共享密钥（无密钥 fail closed）；另附 Trino LDAP + 表级授权规则与 HMS Ranger 插件模板。
 - **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
   语义层 render/query、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
   提交一次 `show` 并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
@@ -416,7 +420,6 @@ CoW 的代价是写放大，换来的是「Spark 写、Trino 读」零兼容问�
 
 ## 生产化 TODO
 
-- 权限：HMS 接 Ranger / Trino 接 LDAP + 系统访问控制，Iceberg 表级授权。
 - 并发写：Spark 与 Flink 同时写同一张表时，确认 catalog 支持乐观锁（HMS + Iceberg 1.5 已支持）。
 - 监控：把 `$files`、`$snapshots` 的指标打到 Prometheus（文件数、平均文件大小、快照数量）。
 - 存储：生产用对象存储时开 `write.metadata.delete-after-commit.enabled`（已开）并配合生命周期规则。

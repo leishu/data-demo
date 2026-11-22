@@ -47,11 +47,13 @@ jobs:
           find bin scheduler -name '*.sh' -print0 | xargs -0 -n1 bash -n
           python3 -m py_compile scheduler/airflow/*.py
 
-      # 监控栈是可选 profile：这里只做静态校验，不在 CI 里拉 Prometheus/Grafana 镜像
-      - name: Validate monitoring config
+      # 监控栈 / 安全栈都是可选 profile：这里只做静态校验，不在 CI 里拉镜像或连 LDAP
+      - name: Validate optional compose profiles
         run: |
           docker compose -f infra/docker-compose.yml --profile monitoring config >/dev/null
+          docker compose -f infra/docker-compose.yml -f infra/docker-compose.security.yml --profile security config >/dev/null
           python3 -m json.tool infra/grafana/dashboards/lake-service-slo.json >/dev/null
+          python3 -m json.tool infra/trino/auth/rules.json >/dev/null
 
       - name: Build console (lake-ui)
         run: |

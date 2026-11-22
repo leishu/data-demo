@@ -1,10 +1,12 @@
 package com.demo.lake.server.security;
 
+import com.demo.lake.server.config.LakeProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +49,22 @@ class ApiAuthWebFilterTest {
         assertEquals("BATCH", ApiAuthWebFilter.requiredRole("/actuator/metrics", HttpMethod.GET));
         assertEquals("AUDITOR", ApiAuthWebFilter.requiredRole("/api/audit/sql/abc", HttpMethod.GET));
         assertNull(ApiAuthWebFilter.requiredRole("/api/unknown", HttpMethod.GET));
+    }
+
+    @Test
+    void external模式解析网关身份头() {
+        LakeProperties.Security conf = new LakeProperties().getSecurity();
+        assertFalse(ApiAuthWebFilter.isExternal(conf));
+        conf.setMode("EXTERNAL");
+        assertTrue(ApiAuthWebFilter.isExternal(conf));
+        conf.setMode("garbage");
+        assertFalse(ApiAuthWebFilter.isExternal(conf));
+
+        assertEquals("alice", ApiAuthWebFilter.firstNonBlank("", " alice ", "bob"));
+        assertNull(ApiAuthWebFilter.firstNonBlank("", null));
+        assertEquals(List.of("QUERY", "BATCH"),
+                ApiAuthWebFilter.parseForwardedRoles(" QUERY, BATCH,QUERY, "));
+        assertTrue(ApiAuthWebFilter.parseForwardedRoles(null).isEmpty());
     }
 
     @Test
