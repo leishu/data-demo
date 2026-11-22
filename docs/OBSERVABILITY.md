@@ -22,6 +22,14 @@ lake-service 用 Micrometer 埋点，同时暴露 `GET /actuator/metrics`（人�
 | `lake.query.quota.rejected` | counter | `reason` | 配额拒绝（rate-limit / concurrency） |
 | `lake.auth.denied` | counter | `reason` | 鉴权拒绝（missing-credentials / bad-credentials / insufficient-role） |
 | `lake.audit.vault.decrypt.error` | counter | — | 查询原文密钥缺失/解密失败（需要人工介入，不能当作“记录不存在”） |
+| `lake.iceberg.files` | gauge | `table` | Iceberg 数据文件数（查 `$files`） |
+| `lake.iceberg.avg_file_size_bytes` | gauge | `table` | 平均文件大小（小文件多会降低查询效率） |
+| `lake.iceberg.total_size_bytes` | gauge | `table` | 数据文件总字节数 |
+| `lake.iceberg.snapshots` | gauge | `table` | 快照数（查 `$snapshots`，暴涨说明该跑 `maintain` 了） |
+
+表级指标由 `IcebergTableMetrics` 每 60s 从 Trino 查元数据表写入，可用
+`lake.metrics.iceberg.enabled/interval-seconds/tables` 调整；表还不存在或 Trino 没起时保留上次的值，
+不影响服务启动。元数据表在 Trino 里要写成 `iceberg.lake."silver_orders$files"`（`$` 必须加双引号）。
 
 Spring Boot 自带 `http.server.requests`、`jvm.*`、`hikari.*` 等基础指标，不再重复定义。
 

@@ -4,7 +4,7 @@
   "tags": ["lakehouse", "slo"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "refresh": "30s",
   "time": { "from": "now-6h", "to": "now" },
@@ -134,6 +134,33 @@
       ],
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "showHeader": true }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Iceberg 文件数 / 快照数",
+      "description": "来自 $files / $snapshots 元数据表；快照暴涨说明该跑 maintain 了。",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lake_iceberg_files", "legendFormat": "文件数 {{table}}", "refId": "A" },
+        { "expr": "lake_iceberg_snapshots", "legendFormat": "快照数 {{table}}", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "平均文件大小 (bytes)",
+      "description": "平均文件大小过小说明小文件问题，考虑 rewrite_data_files。",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lake_iceberg_avg_file_size_bytes", "legendFormat": "{{table}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
     }
   ]
 }

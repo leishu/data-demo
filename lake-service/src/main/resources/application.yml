@@ -70,6 +70,13 @@ lake:
       - username: auditor
         password: "{noop}auditor"
         roles: [AUDITOR]
+  # 湖表健康度：定时查 Iceberg 的 $files / $snapshots 元数据表，打进 Prometheus
+  metrics:
+    iceberg:
+      enabled: true
+      interval-seconds: 60
+      # 默认采集三层业务表；按需覆盖（表名只允许字母/数字/下划线）
+      # tables: [bronze_orders, silver_orders, gold_daily_revenue]
   # 合规用的查询原文保险箱：默认关；开启必须同时提供 LAKE_AUDIT_KEY（base64 32 字节）
   audit:
     sql-capture-enabled: false

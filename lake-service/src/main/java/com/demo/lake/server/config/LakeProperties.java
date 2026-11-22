@@ -31,6 +31,7 @@ public class LakeProperties {
     private final Batch batch = new Batch();
     private final Security security = new Security();
     private final Audit audit = new Audit();
+    private final Metrics metrics = new Metrics();
 
     @Getter
     @Setter
@@ -141,6 +142,25 @@ public class LakeProperties {
      * <p>生产环境请关掉这里的 enabled，改由前面的网关/IdP 做认证和授权；
      * 明文口令只适合本机演示（{noop} 前缀表示没有哈希）。</p>
      */
+    /** 从 Iceberg 元数据表采集的表级指标（文件数 / 平均文件大小 / 快照数） */
+    @Getter
+    @Setter
+    public static class Metrics {
+        private final Iceberg iceberg = new Iceberg();
+
+        @Getter
+        @Setter
+        public static class Iceberg {
+            private boolean enabled = true;
+            private int intervalSeconds = 60;
+            /** 要采集的表名；默认三层业务表，可用 lake.metrics.iceberg.tables 覆盖 */
+            private List<String> tables = List.of(
+                    com.demo.lake.common.catalog.LakeTables.BRONZE_ORDERS,
+                    com.demo.lake.common.catalog.LakeTables.SILVER_ORDERS,
+                    com.demo.lake.common.catalog.LakeTables.GOLD_DAILY_REVENUE);
+        }
+    }
+
     @Getter
     @Setter
     public static class Security {

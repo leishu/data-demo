@@ -338,6 +338,8 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
   共享密钥（无密钥 fail closed）；另附 Trino LDAP + 表级授权规则与 HMS Ranger 插件模板。
 - **并发写（`docs/CONCURRENCY.md`）**：`IcebergConcurrentWriteTest` 用两个写入者并发提交同一张表，
   验证乐观锁不会产生静默数据丢失；HMS catalog 的提交语义与集群手动确认步骤也写在文档里。
+- **湖表指标**：`IcebergTableMetrics` 每 60s 查 `$files` / `$snapshots`，把文件数、平均文件大小、
+  快照数打到 Prometheus（Grafana 面板已加两屏），配置见 `lake.metrics.iceberg.*`。
 - **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
   语义层 render/query、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
   提交一次 `show` 并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
@@ -423,5 +425,5 @@ CoW 的代价是写放大，换来的是「Spark 写、Trino 读」零兼容问�
 ## 生产化 TODO
 
 
-- 监控：把 `$files`、`$snapshots` 的指标打到 Prometheus（文件数、平均文件大小、快照数量）。
+
 - 存储：生产用对象存储时开 `write.metadata.delete-after-commit.enabled`（已开）并配合生命周期规则。
