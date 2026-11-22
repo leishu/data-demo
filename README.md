@@ -60,7 +60,8 @@ lakehouse-demo/
 │   ├── prometheus/           抓取配置与 SLO 告警规则
 │   └── grafana/              数据源、面板与自动装载配置
 ├── .github/workflows/ci.yml  CI：构建/单测 + 主分支 E2E
-├── bin/                      便捷脚本（build / stack / smoke / dev-batch / infra ...）
+├── scheduler/                外部调度示例：Airflow DAG / DolphinScheduler 任务入口 / 接入说明
+├── bin/                      便捷脚本（build / stack / smoke / scheduled-batch / dev-batch / infra ...）
 └── conf/platform.properties.example   集群模式配置模板
 ```
 
@@ -328,6 +329,9 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
 - **可观测性（P2）**：`lake-service` 内置 Micrometer Prometheus registry，`/actuator/prometheus`
   可被直接抓取；`bin/infra.sh up monitoring` 起 Prometheus + Grafana，自动装载 SLO 告警规则
   和「Lakehouse · lake-service SLI/SLO」面板（详见 [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md)）。
+- **外部调度（`scheduler/`）**：`bin/scheduled-batch.sh` 以 `(job, 逻辑日期)` 为幂等键调用服务并等终态，
+  退出码直接当调度任务状态；Airflow DAG 把 `ingest → transform` 每日串跑、`maintain` 单独定时，
+  DolphinScheduler 与 crontab 也有对应入口（详见 [`scheduler/README.md`](scheduler/README.md)）。
 - **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
   语义层 render/query、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
   提交一次 `show` 并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
@@ -412,7 +416,6 @@ CoW 的代价是写放大，换来的是「Spark 写、Trino 读」零兼容问�
 
 ## 生产化 TODO
 
-- 调度：把 `ingest/transform/maintain` 拆成 Airflow / DolphinScheduler 的日任务，`maintain` 单独跑。
 - 权限：HMS 接 Ranger / Trino 接 LDAP + 系统访问控制，Iceberg 表级授权。
 - 并发写：Spark 与 Flink 同时写同一张表时，确认 catalog 支持乐观锁（HMS + Iceberg 1.5 已支持）。
 - 监控：把 `$files`、`$snapshots` 的指标打到 Prometheus（文件数、平均文件大小、快照数量）。

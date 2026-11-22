@@ -804,6 +804,13 @@ Prometheus/Grafana 用 host 网络，同一 target 同时覆盖宿主机服务�
 实战验证 target=up、规则加载 5 条、Grafana 面板 7 个 panel，`mvn verify` 67 项通过，
 冒烟宿主机 22 项 / 容器 19 项。
 
+本轮 P2（外部调度，2026-11-22）：新增 `bin/scheduled-batch.sh`，以 `(job, 逻辑日期)` 生成
+`lake-<job>-<YYYY-MM-DD>` 幂等键调用 `POST /api/batch/{job}`，默认等终态，退出码 0/1/2 直接给调度器用；
+失败时回显 message 与日志尾部。`scheduler/airflow/` 提供两个 DAG（`lakehouse_daily`: ingest → transform；
+`lakehouse_maintain`: 单独定时），`scheduler/dolphinscheduler/run_lake_job.sh` 与
+`scheduler/README.md` 覆盖 DS / crontab 接入。CI 增加脚本与 DAG 语法检查。
+验证：dry-run 幂等键正确，真实提交 `show` 作业成功，同键重跑返回同一 runId。
+
 `〔INFER〕` 标注汇总（需人工确认）：（本轮无）
 
 已裁决并落实：原第 1 项（§4.8 `refund_rate` 口径不一致）已统一——以语义层为权威，ad-hoc `01_daily_revenue.sql` 已对齐同一表达式（`nullif` 防除零、返回比例、字段更名 `refund_rate`）。修改点：`sql/adhoc/01_daily_revenue.sql:4,11`；本文 §4.8 口径说明与 ADR-9 背景已同步。语义层定义与单测 `SemanticSqlRendererTest.退款率口径用nullif避免除零()` 保持不变。

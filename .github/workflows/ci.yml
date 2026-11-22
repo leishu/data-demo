@@ -42,8 +42,10 @@ jobs:
           cache: npm
           cache-dependency-path: lake-ui/package-lock.json
 
-      - name: Shell syntax check
-        run: for f in bin/*.sh; do bash -n "$f"; done
+      - name: Script & DAG syntax check
+        run: |
+          find bin scheduler -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          python3 -m py_compile scheduler/airflow/*.py
 
       # 监控栈是可选 profile：这里只做静态校验，不在 CI 里拉 Prometheus/Grafana 镜像
       - name: Validate monitoring config
