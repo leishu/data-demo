@@ -1,0 +1,14 @@
+# lake-service 镜像只需要 jar + conf，其余大目录不进构建上下文
+.git
+.github
+.idea
+.workbuddy
+.Trash-0
+lake-ui/node_modules
+conf
+warehouse
+data
+logs
+spark-warehouse
+**/target/*
+!lake-service/target/lake-service-*.jar

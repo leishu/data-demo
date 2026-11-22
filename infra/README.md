@@ -136,6 +136,25 @@ bin/infra.sh doctor        # 端口 / HTTP / Trino 端到端检查
 `select 1` → `show tables from iceberg.lake`。Trino 没起时相关几项会 WARN 跳过（默认模式就是这样），
 最后一项在还没跑过批处理时也是 WARN，都属于正常。
 
+### 2.1 全栈模式（infra + lake-service）
+
+`infra/docker-compose.full.yml` 在原有 infra 之上加一个 `lake-service` 容器，由 `bin/stack.sh` 编排：
+
+```bash
+bin/stack.sh up          # 构建 jar -> 起 infra/Trino -> 跑批 -> 起 lake-service 容器
+bin/stack.sh smoke       # 容器模式冒烟（SMOKE_BATCH=0）
+bin/stack.sh batch --job all   # 批作业在宿主机跑
+bin/stack.sh down        # 停服务与 infra，保留数据卷
+```
+
+容器里的服务用 `LAKE_*` 环境变量覆盖 `platform.*`（`hive-metastore` / `minio` / `trino`
+这些 compose 服务名），并设置 `LAKE_BATCH_ENABLED=false`：镜像只带 JRE 21，
+没有 `bin/dev-batch.sh` 需要的 Maven/Spark classpath。所以 `/api/batch/**` 在容器模式返回 403，
+批作业统一走 `bin/stack.sh batch`。
+
+`bin/stack.sh` 会生成 `conf/platform.stack.properties`（集群模式）给宿主批作业用，
+不会覆盖你自己的 `conf/platform.properties`；这个文件已在 `.gitignore` 里。
+
 ---
 
 ## 3. 日常运维（Docker 速查）

@@ -1,0 +1,151 @@
+name: CI
+
+# PR / push 上做「能编译 + 单测 + 前端打包」的快速反馈；
+# E2E（Docker + Trino + 真实 Spark 批作业 + HTTP 冒烟）只在 master/main 和手动触发时跑，
+# 避免每个 PR 都拉一遍 Trino/HMS 镜像。
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MAVEN_OPTS: -Xmx2g
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: lake-ui/package-lock.json
+
+      - name: Shell syntax check
+        run: for f in bin/*.sh; do bash -n "$f"; done
+
+      - name: Build console (lake-ui)
+        run: |
+          npm --prefix lake-ui ci
+          npm --prefix lake-ui run build
+
+      # verify = test + package：Spark 集成测试会真实建表/MERGE/加列/清理快照
+      - name: Maven verify
+        run: mvn -B -ntp verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: "**/target/surefire-reports/**"
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload service jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: lake-service-jar
+          path: lake-service/target/lake-service-*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+  e2e:
+    name: E2E (Docker + Trino + smoke)
+    # 只在主分支和手动触发时跑；PR 只跑 build，保持反馈速度
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(fromJSON('["refs/heads/master","refs/heads/main"]'), github.ref))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: lake-ui/package-lock.json
+
+      - name: Prepare cluster-mode config
+        run: |
+          cp conf/platform.properties.example conf/platform.properties
+          cat >> conf/platform.properties <<'EOF'
+          # CI runner 内存有限：批处理别吃满所有核
+          platform.spark.master=local[2]
+          platform.spark.shuffle.partitions=4
+          EOF
+
+      - name: Install console dependencies
+        run: npm --prefix lake-ui ci
+
+      - name: Build (skip tests; build job already ran them)
+        run: bin/build.sh -DskipTests
+
+      - name: Start Postgres + MinIO + HMS
+        run: bin/infra.sh up
+
+      - name: Run batch pipeline
+        run: bin/dev-batch.sh --job all --days 2 --orders-per-day 200
+
+      - name: Start Trino
+        run: bin/infra.sh up trino
+
+      - name: Start lake-service
+        run: bin/lake-service.sh start
+
+      - name: Smoke test
+        run: bin/smoke.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo '--- containers ---'
+          bin/infra.sh ps || true
+          echo '--- service log ---'
+          tail -200 logs/lake-service.out 2>/dev/null || true
+          echo '--- batch logs ---'
+          ls -lt logs/batch 2>/dev/null | head -10 || true
+          for f in $(ls -t logs/batch/*.log 2>/dev/null | head -2 || true); do
+            echo "--- $f ---"
+            tail -100 "$f" || true
+          done
+          echo '--- trino log ---'
+          docker logs --tail=100 lake-trino 2>&1 || true
+          echo '--- hms log ---'
+          docker logs --tail=100 lake-hms 2>&1 || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          bin/lake-service.sh stop || true
+          bin/infra.sh down || true

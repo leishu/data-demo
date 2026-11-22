@@ -1,0 +1,61 @@
+# 全栈编排：在 docker-compose.yml 之上增加 lake-service 容器。
+#
+#   bin/stack.sh up        # 构建 jar -> 起 infra -> 跑一遍批处理 -> 起服务
+#   bin/stack.sh smoke     # 端到端冒烟（批作业由宿主机执行，所以 SMOKE_BATCH=0）
+#   bin/stack.sh down      # 停服务与 infra（保留数据卷）
+#
+# 注意：容器里的 lake-service 关闭批作业（LAKE_BATCH_ENABLED=false）——
+# 容器内没有 bin/dev-batch.sh 所需的 Maven/Spark classpath。
+# 批作业请在宿主机跑：bin/stack.sh batch --job all
+#
+# 直接使用 compose 时：
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.full.yml up -d
+services:
+  lake-service:
+    build:
+      context: ..
+      dockerfile: infra/lake-service/Dockerfile
+    image: lakehouse-demo/lake-service:local
+    container_name: lake-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      hive-metastore:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+    environment:
+      # 镜像里不带 conf；置空避免启动时警告“conf/platform.properties 不存在”
+      LAKE_CONF_FILE: ""
+      # platform.* 覆盖：容器内用 compose 服务名，不能写 localhost
+      LAKE_CATALOG_TYPE: hive
+      LAKE_HIVE_URI: thrift://hive-metastore:9083
+      LAKE_WAREHOUSE: s3a://lake/warehouse
+      LAKE_S3_ENDPOINT: http://minio:9000
+      LAKE_S3_ACCESS__KEY: admin
+      LAKE_S3_SECRET__KEY: password
+      LAKE_TRINO_HOST: trino
+      LAKE_TRINO_PORT: "8080"
+      # 运行态库仍然接 Postgres（容器内地址），服务启动时会建 lake_batch.* 表
+      LAKE_BATCH_STATE_URL: jdbc:postgresql://postgres:5432/metastore
+      LAKE_BATCH_STATE_USER: hive
+      LAKE_BATCH_STATE_PASSWORD: hive
+      # 容器内没有 Spark/Maven 运行时；批作业由宿主机 bin/stack.sh batch 执行
+      LAKE_BATCH_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8088:8088"
+    volumes:
+      # 审计与业务日志落宿主机，方便和宿主批作业日志一起看
+      - ../logs:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8088'"]
+      interval: 15s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    mem_limit: 768m
+    stop_grace_period: 20s
+    restart: unless-stopped
+    networks: [lake]

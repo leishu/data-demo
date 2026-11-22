@@ -16,6 +16,8 @@ dep-tree.txt
 
 # 本地环境配置（含密钥，别提交）
 conf/platform.properties
+# bin/stack.sh 生成的全栈配置（集群模式），同样不入库
+conf/platform.stack.properties
 
 # 前端依赖与构建产物（由 bin/build-ui.sh 生成，不入库）
 lake-ui/node_modules/

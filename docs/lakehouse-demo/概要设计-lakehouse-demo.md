@@ -89,10 +89,11 @@ graph LR
 | `spark-batch/` | **批处理写侧**：7 个 Spark 作业（init / ingest / transform / evolve / maintain / show / verify-sql），负责建表、入湖、分层加工与记账。 | ✅ |
 | `lake-service/` | **服务层**：Spring Boot 4 应用，查询/语义/批作业/审计 REST + SSE，内置 Vue 控制台静态资源。 | ✅ |
 | `lake-ui/` | **控制台前端**：Vue 3 + Vite 源码（查询台/表浏览/批作业/指标/配置五页），构建产物写进 `lake-service` 的 `static/ui/`。 | ✅（源码）/ ❌（产物） |
-| `bin/` | **便捷脚本**：build、build-ui、dev-batch、infra、install-docker、lake-service、submit-batch、trino-query。 | ✅ |
+| `bin/` | **便捷脚本**：build、build-ui、dev-batch、infra、install-docker、lake-service、stack（一键全栈）、smoke（端到端冒烟）、submit-batch、trino-query。 | ✅ |
+| `.github/workflows/` | **CI**：PR/push 构建 + 单测，主分支 E2E（Docker infra + Trino + 冒烟）。 | ✅ |
 | `conf/` | **配置**：`platform.properties.example`（集群模式模板）与本地生效的 `platform.properties`（含密钥，不提交）。 | 模板 ✅ / 本地 ❌ |
 | `sql/` | **即席查询脚本**：`sql/adhoc/*.sql`，可直接交 Trino，也可经方言适配用 Spark 校验。 | ✅ |
-| `infra/` | **基础设施编排**：Docker Compose（Postgres + MinIO + Hive Metastore + Trino）及 HMS 补丁与使用说明。 | ✅ |
+| `infra/` | **基础设施编排**：Docker Compose（Postgres + MinIO + Hive Metastore + Trino）、全栈 override（`docker-compose.full.yml` + `lake-service` 镜像）及 HMS 补丁与使用说明。 | ✅ |
 | `docs/` | **项目文档**：本 HLD（`docs/lakehouse-demo/`）与可观测性定义（`OBSERVABILITY.md`）。 | ✅ |
 | `warehouse/` | **Iceberg 本地存储根**：Hadoop catalog 模式下三张表的 `data/`（Parquet）与 `metadata/`（版本/快照/manifest）；由 `platform.warehouse` 指向，集群模式替换为 `s3a://lake/warehouse`。 | ❌ |
 | `data/` | **模拟上游落地文件**：`data/raw/orders/dt=*/` 的 Parquet，由 IngestJob 生成，是入湖流的输入。 | ❌ |
@@ -778,6 +779,8 @@ WebFlux 请求线程即 Netty 事件循环；所有阻塞 IO（Hikari 取连接�
 本文为新建文档，已覆盖 6 个模块（platform-common、spark-batch、lake-adhoc、lake-service 查询链路、lake-service 编排链路、lake-ui）的数据流。已检索 `docs/` 下现有文档 `docs/OBSERVABILITY.md`，本文第 7.3 节与其指标/审计/SLO 定义一致，无需修改该文档；实现与设计意图未见明显偏离。
 
 本轮同步：即席查询由自研 `trino-adhoc` → 官方 CLI → 最终定为 **`lake-adhoc`（官方 trino-jdbc 薄封装 + `SqlParams` 预处理 + `TableFormatter` 显示）**。改动点：`pom.xml`（删 `trino-adhoc`、加 `lake-adhoc`）、`platform-common/cli/SqlParams.java`（新增，暴露 `prepare()`）、`lake-adhoc/`（新增模块：TrinoQuery / TrinoClient / TableFormatter）、`bin/trino-query.sh`（简化为一次 `mvn exec:java` 的参数转发）、`README.md`、`infra/README.md`；本文 §1.2/§1.4/§2.2/§3.3/§4.1/§4.14、ADR-11 同步更新。验证：`bash -n` 与 `mvn -pl lake-adhoc -am package` 通过；在 Trino 476 容器上实测中文列对齐、真实数据、`--stats` QueryStats、`01_daily_revenue.sql` 端到端、`04_time_travel.sql --params snapshot_id=...` 三条语句及缺参跳过，均通过（详见 §4.14）。
+
+本轮工程化收口（2026-11-22）：新增 `.github/workflows/ci.yml`（PR 构建 + 主分支 E2E）、`bin/smoke.sh`（鉴权/查询/SSE/语义层/审计/只读守卫/批作业，共 20 项）、`bin/stack.sh`（一键全栈）、`infra/docker-compose.full.yml` 与 `infra/lake-service/Dockerfile`。全栈模式下 `lake-service` 容器关闭批作业（镜像只带 JRE，无 Maven/Spark classpath），批作业由 `bin/stack.sh batch` 在宿主机执行；`bin/stack.sh` 生成 `conf/platform.stack.properties`，不覆盖本地 `conf/platform.properties`。验证：`bin/smoke.sh` 在宿主机模式 20 项全过，`bin/stack.sh up --no-data` + `bin/stack.sh smoke` 在容器模式 17 项全过。
 
 `〔INFER〕` 标注汇总（需人工确认）：
 1. §4.10 — K8s 执行器未实现日志搬运，是否接受其日志体验弱于本地模式。

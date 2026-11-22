@@ -20,6 +20,11 @@ find_jdk21() {
   if [[ -n "${JAVA21_HOME:-}" && -x "${JAVA21_HOME}/bin/java" ]]; then
     echo "${JAVA21_HOME}"; return 0
   fi
+  # CI / asdf / SDKMAN 通常只设 JAVA_HOME；只有确实是 21 才采用，避免把 JDK 11 当 21 用
+  if [[ -n "${JAVA_HOME:-}" && -x "${JAVA_HOME}/bin/java" ]] \
+      && "${JAVA_HOME}/bin/java" -version 2>&1 | grep -q '"21'; then
+    echo "${JAVA_HOME}"; return 0
+  fi
   local cand
   for cand in "${HOME}"/soft/jdk-21* "${HOME}"/soft/jdk21* /usr/lib/jvm/java-21-openjdk-*; do
     if [[ -x "${cand}/bin/java" ]] && "${cand}/bin/java" -version 2>&1 | grep -q '"21'; then

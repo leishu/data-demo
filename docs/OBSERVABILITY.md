@@ -114,4 +114,7 @@ curl -u operator:operator http://localhost:8088/actuator/metrics/lake.query.dura
 # 审计
 curl -u operator:operator 'http://localhost:8088/api/audit?limit=20'
 tail -20 logs/audit.log
+
+# 一条命令把上面这些（含 401/查询/SSE/语义层/审计/只读守卫）全验一遍
+bin/smoke.sh
 ```

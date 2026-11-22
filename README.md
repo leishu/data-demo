@@ -1,5 +1,7 @@
 # lakehouse-demo
 
+[![CI](https://github.com/leishu/data-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/leishu/data-demo/actions/workflows/ci.yml)
+
 Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的湖仓脚手架，外面套一个 Spring Boot 4
 服务层做查询接口与作业编排。三条命令就能在本地跑通，不装 Hadoop、不装 Docker 也行；要接集群时只改 3 个配置项。
 
@@ -51,10 +53,12 @@ lakehouse-demo/
 ├── spark-batch/              批处理：init / ingest / transform / evolve / maintain / show / verify-sql
 ├── lake-adhoc/               即席查询：官方 trino-jdbc 薄封装 + SqlParams 预处理 + 表格输出
 ├── lake-service/             Spring Boot 4 服务层：查询/作业 REST + SSE 流 + 控制台页面
-├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 配置
+├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 指标语义 / 配置
 ├── sql/adhoc/                可以直接丢给 Trino 的查询脚本
 ├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Trino
-├── bin/                      便捷脚本
+│   └── lake-service/         全栈模式的 lake-service 镜像（jar + JRE 21）
+├── .github/workflows/ci.yml  CI：构建/单测 + 主分支 E2E
+├── bin/                      便捷脚本（build / stack / smoke / dev-batch / infra ...）
 └── conf/platform.properties.example   集群模式配置模板
 ```
 
@@ -76,6 +80,10 @@ bin/dev-batch.sh --job verify-sql --sql-file sql/adhoc/01_daily_revenue.sql
 
 # 5. 起服务层（查询 REST + 作业编排 + 控制台）
 bin/lake-service.sh build && bin/lake-service.sh start   # http://localhost:8088/
+
+# 6. 或者：一键全栈（Docker infra + Trino + 容器化服务），再跑端到端冒烟
+bin/stack.sh up          # 首次会构建 jar、起 infra、跑一遍批处理、起服务
+bin/stack.sh smoke       # 端到端冒烟（容器模式自动跳过批作业项）
 ```
 
 > `bin/build.sh` 只收到 `-DskipTests` / `-pl ...` 这类参数时会自动补 `package`，不用手写生命周期目标。
@@ -202,6 +210,7 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 | 查询台 `#/query` | SQL 编辑器（Ctrl/⌘+Enter 执行）、结果边到边渲染（SSE）、表格（类型标注、数值右对齐、NULL 置灰）、耗时/截断提示、QueryStats、复制 TSV |
 | 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行，表头带字段中文名），一键「在查询台打开」 |
 | 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时用 SSE 实时跟） |
+| 指标语义 `#/semantics` | 选指标/维度/过滤，预览 Trino / Spark 两种方言 SQL，或直接执行语义查询 |
 | 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Trino 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
 
 ```bash
@@ -288,6 +297,31 @@ IDEA 侧同时确认：Maven 面板勾选 `s3` profile、`Settings → Build Too
 SPARK_MASTER=yarn bin/submit-batch.sh --job all \
   --catalog-type hive --hive-uri thrift://hms:9083 --warehouse s3a://lake/warehouse
 ```
+
+## 工程化：CI、全栈与冒烟
+
+功能能跑不等于可重复验证。这一层把「三条命令跑通」变成机器保证：
+
+```bash
+bin/stack.sh up          # 一键全栈：构建 jar → 起 infra/Trino → 跑批 → 起服务容器
+bin/stack.sh smoke       # 端到端冒烟（容器模式，批作业检查自动跳过）
+bin/stack.sh batch --job all   # 批作业在宿主机跑（容器内没有 Maven/Spark 运行时）
+bin/stack.sh down        # 停服务与 infra，保留数据卷
+```
+
+- **CI（`.github/workflows/ci.yml`）**：PR / push 跑 JDK 21 + Node 22 的 `mvn verify`
+  （含 Spark 真实建表/MERGE/加列/清理快照的集成测试），并归档 surefire 报告与 jar；
+  `master/main` 和手动触发额外跑 E2E：起 Postgres/MinIO/HMS/Trino、跑
+  `init → ingest → transform`、启动服务、执行 `bin/smoke.sh`。
+- **全栈模式（`infra/docker-compose.full.yml`）**：在原有 infra 之上加 `lake-service` 容器。
+  容器里的服务关闭批作业（`LAKE_BATCH_ENABLED=false`），因为镜像只带 JRE，没有
+  `bin/dev-batch.sh` 需要的 Maven/Spark classpath；批作业用 `bin/stack.sh batch` 在宿主机执行。
+  `bin/stack.sh` 会生成 `conf/platform.stack.properties`（集群模式：HMS + MinIO），
+  不覆盖你自己的 `conf/platform.properties`。
+- **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
+  语义层 render/query、审计事件、只读守卫；服务开了批作业时还会真的提交一次 `show`
+  并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
+  失败非零退出，可直接放进 CI。
 
 ## 批处理作业
 
