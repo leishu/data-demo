@@ -45,6 +45,11 @@ graph LR
         PG[("Postgres lake_batch<br/>运行态 + 日志 + 审计保险箱")]
         HMS["Hive Metastore<br/>（集群模式元数据）"]
     end
+    subgraph 运维与外部接入
+        SCHED["Airflow / DolphinScheduler<br/>外部调度器"]
+        GW["网关 / IdP<br/>（external 模式认证）"]
+        OBS["Prometheus + Grafana<br/>SLI/SLO 与湖表指标"]
+    end
 
     RAW -->|"生成并读取"| BATCH
     BATCH -->|"INSERT / MERGE / OVERWRITE"| ICE
@@ -53,15 +58,18 @@ graph LR
     COMMON -.->|"配置 + SqlParams 预处理 ${var}"| ADHOC
     UI -->|"HTTP / SSE"| SERVICE
     USER --> UI
+    GW -->|"注入身份头 + 共享密钥"| SERVICE
+    SCHED -->|"bin/scheduled-batch.sh → REST"| SERVICE
+    OBS -->|"抓取 /actuator/prometheus"| SERVICE
+    SERVICE -->|"运行状态/日志/审计"| PG
     SERVICE -->|"JDBC"| TRINO
     ADHOC -->|"官方 trino-jdbc"| TRINO
     TRINO -->|"读 Iceberg"| ICE
     TRINO -.->|"HMS catalog"| HMS
-    SERVICE -->|"运行状态/日志/审计"| PG
     BATCH -->|"终态归档 ops.batch_runs"| ICE
 ```
 
-**关键外部边界**：① 上游落地文件是「模拟」的，由 IngestJob 自己生成；② Trino 是查询侧唯一入口，Spark 是写入侧主力；③ Postgres 只服务 lake-service 的运行态，不是湖仓数据的一部分。〔FACT｜README.md:7-21〕〔FACT｜batch/service/RunStateStore.java:10-13〕
+**关键外部边界**：① 上游落地文件是「模拟」的，由 IngestJob 自己生成；② Trino 是查询侧唯一入口，Spark 是写入侧主力；③ Postgres 只服务 lake-service 的运行态，不是湖仓数据的一部分；④ 外部调度器/网关/监控都只通过服务层接口接入，不直接碰湖表或运行态库。〔FACT｜README.md:7-21〕〔FACT｜batch/service/RunStateStore.java:10-13〕〔FACT｜scheduler/README.md:1-20〕
 
 ### 1.3 技术栈摘要
 
@@ -75,8 +83,11 @@ graph LR
 | Vue | 3.5 + Vite 7 | 控制台，构建产物进 `static/ui/` |
 | 存储 | 本地 Hadoop catalog / MinIO(S3) | 由 `platform.warehouse` 决定 |
 | 运行态库 | Postgres | `lake_batch.*` 与审计保险箱 |
+| 监控 | Micrometer 1.17 + Prometheus 2.54 + Grafana 11 | `/actuator/prometheus` + 可选 `monitoring` profile |
+| 外部调度 | Airflow 2+ / DolphinScheduler / crontab | 经 REST 触发，不直连 Spark |
+| 存储清理 | bucket lifecycle + `remove_orphan_files` | S3/MinIO 非当前版本与孤儿文件 |
 
-〔FACT｜README.md:23-37〕〔FACT｜pom.xml:30-50〕
+〔FACT｜README.md:23-37〕〔FACT｜pom.xml:30-50〕〔FACT｜infra/prometheus/prometheus.yml:1-20〕
 
 ### 1.4 仓库目录结构（第一级）
 
@@ -89,12 +100,13 @@ graph LR
 | `spark-batch/` | **批处理写侧**：7 个 Spark 作业（init / ingest / transform / evolve / maintain / show / verify-sql），负责建表、入湖、分层加工与记账。 | ✅ |
 | `lake-service/` | **服务层**：Spring Boot 4 应用，查询/语义/批作业/审计 REST + SSE，内置 Vue 控制台静态资源。 | ✅ |
 | `lake-ui/` | **控制台前端**：Vue 3 + Vite 源码（查询台/表浏览/批作业/指标/配置五页），构建产物写进 `lake-service` 的 `static/ui/`。 | ✅（源码）/ ❌（产物） |
-| `bin/` | **便捷脚本**：build、build-ui、dev-batch、infra、install-docker、lake-service、stack（一键全栈）、smoke（端到端冒烟）、submit-batch、trino-query。 | ✅ |
-| `.github/workflows/` | **CI**：PR/push 构建 + 单测，主分支 E2E（Docker infra + Trino + 冒烟）。 | ✅ |
+| `bin/` | **便捷脚本**：build、build-ui、dev-batch、infra、install-docker、lake-service、stack（一键全栈）、smoke（端到端冒烟）、scheduled-batch（调度器入口）、storage-lifecycle（bucket 规则）、submit-batch、trino-query。 | ✅ |
+| `.github/workflows/` | **CI**：PR/push 构建 + 单测 + 脚本/DAG/JSON 静态校验，主分支 E2E（Docker infra + Trino + 冒烟）。 | ✅ |
+| `scheduler/` | **外部调度接入示例**：Airflow DAG（每日 ingest→transform / 单独 maintain）、DolphinScheduler 任务入口与接入说明。 | ✅ |
 | `conf/` | **配置**：`platform.properties.example`（集群模式模板）与本地生效的 `platform.properties`（含密钥，不提交）。 | 模板 ✅ / 本地 ❌ |
 | `sql/` | **即席查询脚本**：`sql/adhoc/*.sql`，可直接交 Trino，也可经方言适配用 Spark 校验。 | ✅ |
-| `infra/` | **基础设施编排**：Docker Compose（Postgres + MinIO + Hive Metastore + Trino）、全栈 override（`docker-compose.full.yml` + `lake-service` 镜像）及 HMS 补丁与使用说明。 | ✅ |
-| `docs/` | **项目文档**：本 HLD（`docs/lakehouse-demo/`）与可观测性定义（`OBSERVABILITY.md`）。 | ✅ |
+| `infra/` | **基础设施编排**：Docker Compose（Postgres + MinIO + HMS + Trino）、全栈 override（`docker-compose.full.yml` + `lake-service` 镜像）、监控 profile（`prometheus/` + `grafana/`）、安全模板（`trino/auth/`、`docker-compose.security.yml`、`ranger/`）、存储生命周期（`storage/lifecycle.json`）及 HMS 补丁与使用说明。 | ✅ |
+| `docs/` | **项目文档**：本 HLD（`docs/lakehouse-demo/`）与可观测性、安全、并发写、存储清理定义（`OBSERVABILITY.md` / `SECURITY.md` / `CONCURRENCY.md` / `STORAGE.md`）。 | ✅ |
 | `warehouse/` | **Iceberg 本地存储根**：Hadoop catalog 模式下三张表的 `data/`（Parquet）与 `metadata/`（版本/快照/manifest）；由 `platform.warehouse` 指向，集群模式替换为 `s3a://lake/warehouse`。 | ❌ |
 | `data/` | **模拟上游落地文件**：`data/raw/orders/dt=*/` 的 Parquet，由 IngestJob 生成，是入湖流的输入。 | ❌ |
 | `logs/` | **运行日志**：`audit.log`、批作业 `batch/`、`lake-service.log`。 | ❌ |
@@ -103,7 +115,7 @@ graph LR
 | `.idea/` | IntelliJ IDEA 项目配置。 | ❌ |
 | `.workbuddy/`、`.Trash-0/` | 工具记忆 / 回收站残留，与项目本身无关。 | ❌ |
 
-根目录文件：`pom.xml`（Maven reactor 入口，声明 4 个模块）、`README.md`（快速开始与设计说明）、`lombok.config`、`.gitignore`。
+根目录文件：`pom.xml`（Maven reactor 入口，声明 4 个模块）、`README.md`（快速开始与设计说明）、`lombok.config`、`.gitignore`、`.dockerignore`（全栈镜像构建上下文排除）。
 
 **与后续章节的对应关系**：4 个 Maven 模块 + 1 个前端工程在第 3 章逐一展开；`conf/` 是 §4.1 配置流的起点；`data/` 与 `warehouse/` 分别是 §4.3 入湖流的「输入」与各作业的「存储落点」；`sql/` 是 §4.14 即席查询与 SQL 校验的输入；`logs/` 是 §7.3 日志出口之一。
 
@@ -127,10 +139,12 @@ graph TD
     subgraph L4["交互层"]
         UI["lake-ui (Vue 3)"]
         ADHOC["lake-adhoc<br/>官方 trino-jdbc 薄封装"]
+        SCHED["外部调度器<br/>Airflow / DolphinScheduler"]
+        OBS["监控栈<br/>Prometheus / Grafana"]
     end
     subgraph L3["服务层 (lake-service, JDK21 / WebFlux)"]
         CTRL["Controller 层<br/>Query/Semantic/Batch/Audit"]
-        CROSS["横切: 鉴权 / 配额 / 审计 / 指标 / 访问日志"]
+        CROSS["横切: 鉴权(local/external) / 配额 / 审计 / 指标 / 访问日志"]
         DOMAIN["领域服务<br/>QueryService / BatchJobService / Dispatcher / Watcher"]
         INFRA["基础设施<br/>Hikari(Trino/PG) / Scheduler / FileLog"]
     end
@@ -147,6 +161,8 @@ graph TD
     end
 
     UI --> CTRL
+    SCHED -->|"REST + Idempotency-Key"| CTRL
+    OBS -->|"scrape"| CTRL
     COMMON -.->|"SqlParams ${var} 预处理"| ADHOC
     ADHOC --> TRINO
     CTRL --> CROSS --> DOMAIN --> INFRA
@@ -278,6 +294,14 @@ sequenceDiagram
 - **依赖**：`/api/config` 提供作业卡片、表 FQN 等所有元数据，前端不硬编码。〔FACT｜lake-ui/store.js:37-41〕〔FACT｜controller/QueryController.java:143-166〕
 - **关键约束**：全局状态在内存（Vue reactive），**只有 SQL 草稿写 localStorage**，查询结果只在内存不落盘。〔FACT｜lake-ui/store.js:4-12〕〔FACT｜README.md:210〕
 
+### 3.7 工程化支撑与外部接入（非业务模块）
+
+- **CI / 全栈 / 冒烟**：`.github/workflows/ci.yml` 在 PR/push 跑构建、单测、前端打包与脚本/DAG/JSON 静态校验，主分支额外跑 E2E；`bin/stack.sh` 一键起 infra + Trino + 容器化服务，`bin/smoke.sh` 做 22 项（容器 19 项）端到端检查。
+- **服务层鉴权扩展**：`local` 静态账号用于 demo，`external` 模式改由网关注入身份头 + 共享密钥，无密钥 fail closed。
+- **可观测性**：Micrometer + Prometheus registry 暴露 `/actuator/prometheus`，可选 `monitoring` profile 起 Prometheus/Grafana；`IcebergTableMetrics` 补表级指标。
+- **外部调度**：`bin/scheduled-batch.sh` 是调度器与服务之间的薄契约，Airflow/DolphinScheduler/crontab 都通过它触发作业。
+- **存储治理**：Iceberg 表属性 + bucket lifecycle + `remove_orphan_files` 三层清理。
+
 ---
 
 ## 4. 关键数据流详解（本文核心）
@@ -396,8 +420,8 @@ flowchart LR
 ### 4.6 表维护流（maintain）
 
 - 从哪儿来：三张业务表的数据文件与 Iceberg 元数据。
-- 怎么流转：逐表执行三个 Iceberg `CALL system.*` 存储过程——① `rewrite_data_files`（合并小文件，min-input-files=2、target 32MB）；② `rewrite_manifests`（控元数据规模）；③ `expire_snapshots`（清理快照，`retain_last` 默认 5）。〔FACT｜spark-batch/job/MaintainJob.java:41-65〕
-- 到哪儿去：重写后的数据文件、manifest、被裁剪的快照元数据（数据内容不变）。〔FACT｜spark-batch/job/MaintainJob.java:67-76〕
+- 怎么流转：逐表执行四个 Iceberg `CALL system.*` 存储过程——① `rewrite_data_files`（合并小文件，min-input-files=2、target 32MB）；② `rewrite_manifests`（控元数据规模）；③ `expire_snapshots`（清理快照，`retain_last` 默认 5）；④ `remove_orphan_files`（清理没有被任何有效快照引用、且早于 `--orphan-retention-hours`（默认 168h）的孤儿文件）。顺序是先过期快照再清孤儿文件，否则刚过期的快照引用的文件还不敢删。〔FACT｜spark-batch/job/MaintainJob.java:40-82〕
+- 到哪儿去：重写后的数据文件、manifest、被裁剪的快照与孤儿文件（数据内容不变）。对象存储侧再配合 bucket lifecycle 清未完成分片与非当前版本，见 `docs/STORAGE.md`。〔FACT｜infra/storage/lifecycle.json:1-22〕
 
 ### 4.7 即席查询流（SQL，JSON 接口）——读侧主干
 
@@ -537,6 +561,12 @@ sequenceDiagram
 这样 tail / SSE 在 K8s 模式下也从状态库读，和本地模式一致，不依赖 Pod 是否还在、也不要求请求
 落到提交 Job 的那台实例。〔FACT｜batch/service/KubernetesJobExecutor.java:130-240〕〔FACT｜batch/service/LogSink.java:7-10〕
 
+**外部调度触发**：调度器不直接跑 Spark，而是调 `bin/scheduled-batch.sh` → `POST /api/batch/{job}`。
+幂等键取 `lake-<job>-<逻辑日期>`（Airflow 用 `{{ ds }}`、DS 用 `${bizdate}`），同一逻辑日重跑返回同一条
+运行记录；脚本默认等终态，退出码 0/1/2 直接当调度任务状态，失败时回显日志尾部。
+`ingest → transform` 每日串跑，`maintain` 单独定时。详见 §4.15 与 `scheduler/README.md`。
+〔FACT｜bin/scheduled-batch.sh:1-25〕〔FACT｜scheduler/README.md:1-30〕
+
 ### 4.11 运行历史读取与僵死恢复流
 
 **读历史**：`GET /api/batch/runs` → `BatchJobService.list()` = 运行态库 `state.recent()` ∪ 湖表 `BatchHistoryService.recent()`（经 Trino 读 `ops.batch_runs`），按 id 合并、终态优先、按 started_ms 倒序。湖表读不到时降级为提示（`RunsView.history`），不把接口打成 500。〔FACT｜batch/service/BatchJobService.java:167-190〕〔FACT｜batch/model/RunsView.java:8-16〕
@@ -556,7 +586,9 @@ staleRunning(now - 120s) → 查湖表 ops.batch_runs
 
 - **审计三重出口**：`AuditService.record()` 生成 UUID eventId → 写 `logs/audit.log`（90 天滚动，独立 logger）+ 内存环形缓冲（最近 200 条，`GET /api/audit`）+ 返回 eventId 供保险箱关联。SQL 只写 SHA-256 前 16 位指纹，不写原文/口令。〔FACT｜observability/AuditService.java:14-47〕〔FACT｜OBSERVABILITY.md:45-58〕
 - **原文保险箱**（可选）：开启后 SQL 经 `SqlRedactor` 启发式脱敏 → AES-GCM 加密（eventId 作 AAD）→ Postgres `lake_audit.query_text`，同时记录 `key_id`；密钥按 `key_id` 组成密钥环，轮换后旧原文仍可读，缺密钥/解密失败会抛错并计 `lake.audit.vault.decrypt.error`，不再伪装成 404；读取需 AUDITOR 角色且每次读取再写一条审计。〔FACT｜observability/AuditTextStore.java:49-165〕〔FACT｜OBSERVABILITY.md:60-100〕
-- **指标**：Micrometer 埋点经 `/actuator/metrics` 暴露，`lake.query.*` / `lake.batch.*` / `lake.auth.denied` 等；SLI/SLO 与告警见 `docs/OBSERVABILITY.md`。〔FACT｜observability/LakeMetrics.java:11-24〕
+- **指标**：Micrometer 埋点同时经 `/actuator/metrics`（人看）与 `/actuator/prometheus`（抓取，需 BATCH 角色）暴露；内置 `micrometer-registry-prometheus`，名字含 `lake.query.*` / `lake.batch.*` / `lake.auth.denied` / `lake.iceberg.*`。SLI/SLO、PromQL 与 5 条告警规则见 `docs/OBSERVABILITY.md` 与 `infra/prometheus/rules/lake-slo.yml`。〔FACT｜observability/LakeMetrics.java:11-24〕〔FACT｜observability/IcebergTableMetrics.java:23-30〕
+- **湖表指标采集**：`IcebergTableMetrics` 每 60s 经 Trino 查 `iceberg.lake."{table}$files"` / `$snapshots`，把文件数、平均文件大小、总字节数、快照数写成带 `table` 标签的 gauge；Trino 没起或表不存在时保留上次值，不影响启动。Grafana 面板已加「Iceberg 文件数/快照数」「平均文件大小」两屏。〔FACT｜observability/IcebergTableMetrics.java:36-90〕〔FACT｜infra/grafana/dashboards/lake-service-slo.json:100-140〕
+- **监控栈**：可选 `monitoring` profile 起 Prometheus（host 网络，抓 `127.0.0.1:8088`，basic_auth=operator）与 Grafana（数据源/面板自动装载），同一 target 同时覆盖宿主机服务与全栈容器服务。〔FACT｜infra/docker-compose.yml:161-212〕〔FACT｜infra/prometheus/prometheus.yml:1-25〕
 
 ### 4.13 前端控制台流（lake-ui）
 
@@ -590,6 +622,54 @@ bin/trino-query.sh --sql-file <脚本> [--params k=v] [--explain] [--print-only]
 **端到端实测**（Trino 476 容器，2026-11-20，官方 trino-jdbc 版）：中文列对齐、真实数据查询、`--stats` 的 QueryStats 输出均正常；`01_daily_revenue.sql` 返回近 7 天大盘（列含 `refund_rate`，值为 0.09 的比例，与语义层口径一致）；`04_time_travel.sql --params snapshot_id=<真实快照ID>` 三条语句（快照列表 / 按快照读 / 按时间点读）均正常执行；不带参数时缺参语句正确跳过。
 
 另有 `VerifySqlJob`（批处理侧）：读 ad-hoc 脚本 → 跳过 `@trino-only` 语句 → `TrinoDialect.toSpark()` 做最小方言适配（`date_add`→`date_sub`、`INTERVAL '1' DAY`→`INTERVAL 1 DAYS`）→ `spark.sql` 校验，不落表。〔FACT｜spark-batch/job/VerifySqlJob.java:34-65〕〔FACT｜common/sql/TrinoDialect.java:18-61〕
+
+### 4.15 外部调度触发流（Airflow / DolphinScheduler）
+
+```
+调度器（Airflow DAG / DS Shell 任务 / cron）
+  → bin/scheduled-batch.sh --job <job> --date <逻辑日期> --wait
+      ① 生成幂等键 lake-<job>-<YYYY-MM-DD>（日期来自 {{ ds }} / ${bizdate}）
+      ② POST /api/batch/{job} + Idempotency-Key + Basic（或网关头）
+      ③ 202 + runId；同一键重跑返回同一 runId（服务日志「幂等命中」）
+      ④ 轮询 GET /api/batch/runs/{id}?tail=20 直到 SUCCEEDED / FAILED / TIMEOUT
+  → 退出码 0/1/2 = 调度任务状态；失败时打印 message + 日志尾部
+```
+
+```mermaid
+sequenceDiagram
+    participant S as 调度器
+    participant CLI as bin/scheduled-batch.sh
+    participant C as BatchController
+    participant PG as lake_batch.batch_runs
+    S->>CLI: job + 逻辑日期
+    CLI->>C: POST /api/batch/{job} + Idempotency-Key
+    C->>PG: 抢占幂等键 → QUEUED（重复键直接返回旧 runId）
+    C-->>CLI: 202 + runId
+    loop 每 5s
+        CLI->>C: GET /api/batch/runs/{id}?tail=20
+        C-->>CLI: run.status / tail
+    end
+    CLI-->>S: exit 0/1/2
+```
+
+**关键约束**：① 调度器只拿「提交 + 终态」两个语义，不知道 Spark 命令，也不知道 Postgres 在哪；
+② 幂等键是 `(job, 逻辑日期)`，重跑/重试不会产生第二条运行记录；
+③ `maintain` 不在每日链里，单独定时，避免和写入抢资源。
+〔FACT｜bin/scheduled-batch.sh:27-136〕〔FACT｜scheduler/airflow/dag_lakehouse_daily.py:20-47〕〔FACT｜scheduler/airflow/dag_lakehouse_maintain.py:12-33〕
+
+### 4.16 湖表指标采集流（$files / $snapshots）
+
+```
+Trino metadata 表（iceberg.lake."{table}$files" / $snapshots）
+  ← IcebergTableMetrics 虚拟线程每 60s 查一次（经 trinoDataSource，只读）
+  → Micrometer gauge：lake.iceberg.files / avg_file_size_bytes / total_size_bytes / snapshots（tag=table）
+  → /actuator/prometheus → Prometheus 抓取 → Grafana 面板
+```
+
+**为什么用 Trino 而不是 Iceberg 客户端**：服务侧已经有只读 Trino 连接池，元数据表查询只是两条 SQL，
+不需要再引一个 Iceberg runtime 依赖（版本与 Spark 绑死，容易冲突）。表名做白名单校验（`[A-Za-z0-9_]+`），
+`$` 元数据表名整体加双引号；查询失败只 debug 记日志并保留上次 gauge 值。
+〔FACT｜observability/IcebergTableMetrics.java:36-140〕〔FACT｜lake-service/src/main/resources/application.yml:38-46〕
 
 ---
 
@@ -759,18 +839,49 @@ erDiagram
 - **采用**：删 `trino-adhoc`，建 `lake-adhoc` 模块——`SqlParams`（在 platform-common，复用 `SqlScript.split()` 做 `${var}` 替换 + 缺参跳过）+ `TrinoClient`（官方 trino-jdbc 薄封装，协议层交给驱动）+ `TableFormatter`（纯显示层）。`bin/trino-query.sh` 只做一次 `mvn exec:java` 的参数转发。〔FACT｜lake-adhoc/TrinoQuery.java:17-22〕〔FACT｜platform-common/cli/SqlParams.java:9-17〕
 - **后果**：`verify-sql` 与 lake-service 查询链路不受影响；客户端截断（`--limit`，默认 200）、中文对齐、`--stats` 全部保留且实测通过（详见 §4.14）；唯一自研部分是显示层 `TableFormatter`，不涉及任何 Trino 协议实现。
 
+### ADR-12：外部调度经服务 API 触发，不直连 Spark
+- **背景**：Airflow / DolphinScheduler 需要日调度，但直接调 `spark-submit` 会绕过白名单、幂等、配额与运行态。
+- **采用**：`bin/scheduled-batch.sh` 以 `(job, 逻辑日期)` 生成幂等键调 REST；调度器只关心终态退出码。
+- **后果**：调度器与执行引擎解耦；同一逻辑日重跑不会重复执行，代价是多一次 HTTP 往返和等待。
+
+### ADR-13：生产鉴权用网关外部模式，fail closed
+- **背景**：demo 静态 Basic 账号不能上生产；服务直接暴露在公网时身份头可伪造。
+- **采用**：`lake.security.mode=external`，只信任带共享密钥的网关注入头；缺密钥/错密钥/缺身份头一律拒绝；Trino 侧 LDAP + 文件表授权，HMS 侧 Ranger 模板。
+- **后果**：鉴权边界移到网关，服务不再存口令；共享密钥与角色映射要三处（网关/Trino/Ranger）对齐。详见 `docs/SECURITY.md`。
+
+### ADR-14：湖表指标走 Trino 元数据表，不引 Iceberg 客户端
+- **背景**：服务已持 Trino 只读连接池；再引 Iceberg runtime 会与 Spark 版本绑死并增加 fat jar 体积。
+- **采用**：`IcebergTableMetrics` 用两条 SQL 查 `$files` / `$snapshots`，写 Micrometer gauge。
+- **后果**：指标有最多一个采集周期的延迟；查询失败不影响服务，但监控面板要能接受「上次值」。详见 §4.16。
+
+### ADR-15：存储清理分三层，不用 bucket 过期删当前数据
+- **背景**：Iceberg 旧元数据、崩溃遗留的分片上传、过期快照孤儿文件，单靠任何一层都清不干净。
+- **采用**：表属性（`delete-after-commit` + `previous-versions-max=20`）管元数据；bucket lifecycle 只清未完成分片/非当前版本/staging；`remove_orphan_files` 做引用感知的数据文件清理。
+- **后果**：绝不能在 `warehouse/` 前缀设当前对象 `Expiration`，否则会删掉 Iceberg 仍引用的文件；详见 `docs/STORAGE.md`。
+
 ---
 
 ## 7. 跨切面关注点
 
 ### 7.1 认证与授权
-HTTP Basic + 静态账号（`application.yml`），demo 级；viewer(QUERY)、operator(QUERY+BATCH)、auditor(AUDITOR)。路径角色映射：`/api/query*|tables*|semantics*|config`→QUERY，`/api/batch/**` GET→QUERY/非 GET→BATCH，`/api/audit/sql*`→AUDITOR，`/api/audit*|actuator/**`→BATCH。公开路径含 `/`、`/ui/**`、`/actuator/health|info`（保证探针与浏览器入口不 401）。生产应设 `lake.security.enabled=false` 由网关/IdP 接管。〔FACT｜security/ApiAuthWebFilter.java:83-109〕〔FACT｜README.md:150-152〕
+两种模式，由 `lake.security.mode` 选择：
+
+- **local（demo 默认）**：HTTP Basic + 静态账号，viewer(QUERY)、operator(QUERY+BATCH)、auditor(AUDITOR)。
+- **external（生产）**：网关完成认证后注入 `X-Forwarded-User` / `X-Forwarded-Roles` + `X-Auth-Shared-Secret`；缺密钥/错密钥/缺身份头一律 401（fail closed），静态账号完全不生效。网关必须剥离客户端自带的这些头。
+- 路径角色映射不变：`/api/query*|tables*|semantics*|config`→QUERY，`/api/batch/**` GET→QUERY/非 GET→BATCH，`/api/audit/sql*`→AUDITOR，`/api/audit*|actuator/**`→BATCH。公开路径含 `/`、`/ui/**`、`/actuator/health|info`。
+- 引擎侧另行授权：Trino LDAP + `rules.json` 做 catalog/schema/table 三级控制，HMS 用 Ranger 插件模板；三处角色要对齐。详见 `docs/SECURITY.md`。
+
+〔FACT｜security/ApiAuthWebFilter.java:47-120〕〔FACT｜infra/trino/auth/rules.json:1-47〕〔FACT｜docs/SECURITY.md:1-60〕
 
 ### 7.2 错误处理策略
 统一 `ErrorMapper` 映射：空/多语句/非只读→400、语义越界→400、Trino 拒绝→400、连不上 Trino→503、配额超限→429、404/白名单取自身状态码，兜底 500。JSON 接口由 `ApiExceptionHandler` 返回 `ApiError(status,error,message,hint)`；SSE 流开始后无法改状态码，改为发 `error` 事件。〔FACT｜exception/ErrorMapper.java:30-75〕〔FACT｜exception/ApiExceptionHandler.java:9-28〕
 
 ### 7.3 日志与可观测性
-三条独立出口：普通日志 `logs/lake-service.log`、审计 `logs/audit.log`（独立 logger，90 天）、批作业日志 `logs/batch/{id}.log`，指标经 Micrometer `/actuator/metrics`。访问日志在 `doFinally` 记录整段耗时（SSE 为全流时长），且因 SQL 走 POST body 不会记下原文。〔FACT｜observability/*〕〔FACT｜filter/WebAccessLogFilter.java:88-106〕
+三条独立日志出口：普通日志 `logs/lake-service.log`、审计 `logs/audit.log`（独立 logger，90 天）、批作业日志 `logs/batch/{id}.log`（同时实时搬进 Postgres `lake_batch.batch_log_lines`，本地/K8s 执行器共用）。
+
+指标侧：Micrometer 同时暴露 `/actuator/metrics` 与 `/actuator/prometheus`（后者需 BATCH 角色）；可选 `monitoring` profile 起 Prometheus + Grafana，告警规则与 SLO 一一对应；`IcebergTableMetrics` 每 60s 补 `$files` / `$snapshots` 表级指标。访问日志在 `doFinally` 记录整段耗时（SSE 为全流时长），且因 SQL 走 POST body 不会记下原文。详见 `docs/OBSERVABILITY.md`。
+
+〔FACT｜observability/*〕〔FACT｜filter/WebAccessLogFilter.java:88-106〕〔FACT｜infra/prometheus/rules/lake-slo.yml:1-59〕
 
 ### 7.4 配置管理方式
 两套配置分工：`platform.*`（连哪个湖，五级覆盖，全项目唯一来源）与 `lake.*`（服务怎么跑，`application.yml` 绑定）。`/api/config` 回显生效配置（S3 密钥打码）并下发作业卡片。〔FACT｜common/config/PlatformConfig.java:16-26〕〔FACT｜controller/QueryController.java:143-166〕
@@ -782,45 +893,47 @@ WebFlux 请求线程即 Netty 事件循环；所有阻塞 IO（Hikari 取连接�
 
 ## 8. 同步检查与待办
 
-本文为新建文档，已覆盖 6 个模块（platform-common、spark-batch、lake-adhoc、lake-service 查询链路、lake-service 编排链路、lake-ui）的数据流。已检索 `docs/` 下现有文档 `docs/OBSERVABILITY.md`，本文第 7.3 节与其指标/审计/SLO 定义一致，无需修改该文档；实现与设计意图未见明显偏离。
+### 8.1 覆盖范围与一致性
 
-本轮同步：即席查询由自研 `trino-adhoc` → 官方 CLI → 最终定为 **`lake-adhoc`（官方 trino-jdbc 薄封装 + `SqlParams` 预处理 + `TableFormatter` 显示）**。改动点：`pom.xml`（删 `trino-adhoc`、加 `lake-adhoc`）、`platform-common/cli/SqlParams.java`（新增，暴露 `prepare()`）、`lake-adhoc/`（新增模块：TrinoQuery / TrinoClient / TableFormatter）、`bin/trino-query.sh`（简化为一次 `mvn exec:java` 的参数转发）、`README.md`、`infra/README.md`；本文 §1.2/§1.4/§2.2/§3.3/§4.1/§4.14、ADR-11 同步更新。验证：`bash -n` 与 `mvn -pl lake-adhoc -am package` 通过；在 Trino 476 容器上实测中文列对齐、真实数据、`--stats` QueryStats、`01_daily_revenue.sql` 端到端、`04_time_travel.sql --params snapshot_id=...` 三条语句及缺参跳过，均通过（详见 §4.14）。
+本文覆盖 6 个业务/技术模块（platform-common、spark-batch、lake-adhoc、lake-service 查询链路、
+lake-service 编排链路、lake-ui）以及 §3.7 的支撑层（CI/全栈/冒烟、鉴权、监控、外部调度、存储治理）。
+同步检查过的外部文档：`README.md`、`infra/README.md`、`docs/OBSERVABILITY.md`、`docs/SECURITY.md`、
+`docs/CONCURRENCY.md`、`docs/STORAGE.md`、`scheduler/README.md`；指标名、告警规则、角色映射、
+幂等键与目录结构均与实现一致，未见明显偏离。
 
-本轮工程化收口（2026-11-22）：新增 `.github/workflows/ci.yml`（PR 构建 + 主分支 E2E）、`bin/smoke.sh`（鉴权/查询/SSE/语义层/审计/只读守卫/批作业，共 20 项）、`bin/stack.sh`（一键全栈）、`infra/docker-compose.full.yml` 与 `infra/lake-service/Dockerfile`。全栈模式下 `lake-service` 容器关闭批作业（镜像只带 JRE，无 Maven/Spark classpath），批作业由 `bin/stack.sh batch` 在宿主机执行；`bin/stack.sh` 生成 `conf/platform.stack.properties`，不覆盖本地 `conf/platform.properties`。验证：`bin/smoke.sh` 在宿主机模式 22 项全过（含指标抓取），`bin/stack.sh up --no-data` + `bin/stack.sh smoke` 在容器模式 19 项全过。
+### 8.2 历史演进记录
 
-本轮 P1（2026-11-22）：补齐 K8s 执行器的日志搬运缺口。`KubernetesJobExecutor` 现在依赖
-`LogSink`，提交 Job 时给 Pod 模板打 `lake-job` 标签，另起虚拟线程按标签定位 Pod 并用 follow
-流读日志，批量写进 `lake_batch.batch_log_lines`；终态到达后排空尾部再关流。
-`KubernetesJobExecutorTest` 用假 K8s API 覆盖创建 Job、终态轮询与日志搬运（3 项）。
-`mvn verify` 全量 67 项测试通过。§4.10 的「已知局限」已替换为实现说明，设计文档不再有待确认项。
+- **即席查询方案收敛**：自研 `trino-adhoc` → 官方 CLI → 最终定为 `lake-adhoc`（官方 trino-jdbc 薄封装 +
+  `SqlParams` 预处理 + `TableFormatter` 显示）。改动点：`pom.xml`、`platform-common/cli/SqlParams.java`、
+  `lake-adhoc/`、`bin/trino-query.sh`、`README.md`、`infra/README.md`；本文 §1.2/§1.4/§2.2/§3.3/
+  §4.1/§4.14、ADR-11 同步。验证：`bash -n`、`mvn -pl lake-adhoc -am package`，Trino 476 容器实测中文列对齐、
+  `--stats`、`01_daily_revenue.sql`、`04_time_travel.sql --params snapshot_id=...` 均通过。
+- **工程化收口（2026-11-22）**：新增 `.github/workflows/ci.yml`、`bin/smoke.sh`、`bin/stack.sh`、
+  `infra/docker-compose.full.yml`、`infra/lake-service/Dockerfile`。容器模式关闭批作业，
+  `bin/stack.sh` 生成 `conf/platform.stack.properties` 不覆盖本地配置。
+- **P1 K8s 日志搬运（2026-11-22）**：`KubernetesJobExecutor` 依赖 `LogSink`，Pod 打 `lake-job` 标签，
+  follow 流读日志批量入库；终态后排空尾部再关流，§4.10 旧「已知局限」已移除。
+- **P2 可观测性（2026-11-22）**：Prometheus registry + `/actuator/prometheus`，可选 `monitoring` profile，
+  5 条告警规则与 Grafana 面板自动装载；§4.12/§4.16、ADR-14 同步。
+- **P2 外部调度（2026-11-22）**：`bin/scheduled-batch.sh` + Airflow/DolphinScheduler/crontab 入口，
+  §4.10/§4.15、ADR-12 同步。
+- **生产化收口（2026-11-22）**：`external` 鉴权 + Trino/Ranger 授权模板（§7.1、ADR-13），
+  并发写乐观锁验证（§8.3 验证记录），
+  `IcebergTableMetrics` 湖表指标（§4.16），bucket lifecycle + `remove_orphan_files`（§4.6、ADR-15）。
 
-本轮 P2（2026-11-22）：让 SLI/SLO 真正可抓取。`lake-service` 加 `micrometer-registry-prometheus`
-并暴露 `/actuator/prometheus`（需 BATCH 角色）；新增可选 `monitoring` profile：
-`infra/prometheus/prometheus.yml`（抓 `127.0.0.1:8088`，basic_auth=operator）、
-`infra/prometheus/rules/lake-slo.yml`（5 条告警）、
-`infra/grafana/provisioning/`（数据源 + 面板自动装载）与 `infra/grafana/dashboards/lake-service-slo.json`。
-Prometheus/Grafana 用 host 网络，同一 target 同时覆盖宿主机服务和全栈容器服务。
-`bin/infra.sh up monitoring`、`bin/stack.sh up --monitoring`、`bin/smoke.sh` 增加指标抓取检查；
-实战验证 target=up、规则加载 5 条、Grafana 面板 7 个 panel，`mvn verify` 67 项通过，
-冒烟宿主机 22 项 / 容器 19 项。
+### 8.3 验证摘要
 
-本轮 P2（外部调度，2026-11-22）：新增 `bin/scheduled-batch.sh`，以 `(job, 逻辑日期)` 生成
-`lake-<job>-<YYYY-MM-DD>` 幂等键调用 `POST /api/batch/{job}`，默认等终态，退出码 0/1/2 直接给调度器用；
-失败时回显 message 与日志尾部。`scheduler/airflow/` 提供两个 DAG（`lakehouse_daily`: ingest → transform；
-`lakehouse_maintain`: 单独定时），`scheduler/dolphinscheduler/run_lake_job.sh` 与
-`scheduler/README.md` 覆盖 DS / crontab 接入。CI 增加脚本与 DAG 语法检查。
-验证：dry-run 幂等键正确，真实提交 `show` 作业成功，同键重跑返回同一 runId。
+| 项 | 结果 |
+|---|---|
+| `mvn -B -ntp verify` | 全量通过（Spark 集成测试真实建表/MERGE/加列/维护，含并发写与指标单测） |
+| `bin/smoke.sh`（宿主机 / 容器） | 22 项 / 19 项全过，含指标抓取；失败非零退出 |
+| Prometheus | target=up、规则 5 条、Grafana 面板 9 个 panel；实测 12 条 `lake_iceberg_*` 序列 |
+| 外部鉴权 | 无密钥/错密钥/缺身份头 401、越权 403、合法网关注入 200 |
+| 并发写 | 双写入者冲突为 `CommitFailedException` 或内部重试，最终行数与成功数一致 |
+| 存储清理 | `bin/dev-batch.sh --job maintain --orphan-retention-hours 168` 跑通，孤儿文件列为 0 |
+| 全栈 | `bin/stack.sh up --no-data` + `bin/stack.sh smoke` 容器模式 19 项全过 |
 
-本轮生产化收口（2026-11-22）：
-- 权限：`lake.security.mode=external` + 网关共享密钥（fail closed），Trino LDAP / 表级授权规则、
-  HMS Ranger 插件模板，见 `docs/SECURITY.md`。实测无密钥/错密钥 401、缺身份头 401、越权 403。
-- 并发写：`IcebergConcurrentWriteTest` 双写入者并发提交同一张表，验证乐观锁不会静默丢数据，
-  见 `docs/CONCURRENCY.md`；`mvn verify` 通过。
-- 湖表指标：`IcebergTableMetrics` 定时查 `$files` / `$snapshots`，输出文件数、平均文件大小、
-  快照数到 Prometheus，Grafana 加两屏；`/actuator/prometheus` 实测 12 条 `lake_iceberg_*` 序列。
-- 存储：沿用 `write.metadata.delete-after-commit.enabled=true` / `previous-versions-max=20`，
-  新增 bucket lifecycle 模板与 `bin/storage-lifecycle.sh`，并在 `maintain` 里加 `remove_orphan_files`；
-  实测 `bin/dev-batch.sh --job maintain --orphan-retention-hours 168` 跑通。见 `docs/STORAGE.md`。
+### 8.4 待确认项
 
 `〔INFER〕` 标注汇总（需人工确认）：（本轮无）
 
