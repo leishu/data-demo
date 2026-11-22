@@ -54,6 +54,7 @@ jobs:
           docker compose -f infra/docker-compose.yml -f infra/docker-compose.security.yml --profile security config >/dev/null
           python3 -m json.tool infra/grafana/dashboards/lake-service-slo.json >/dev/null
           python3 -m json.tool infra/trino/auth/rules.json >/dev/null
+          python3 -m json.tool infra/storage/lifecycle.json >/dev/null
 
       - name: Build console (lake-ui)
         run: |

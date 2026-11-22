@@ -340,6 +340,9 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
   验证乐观锁不会产生静默数据丢失；HMS catalog 的提交语义与集群手动确认步骤也写在文档里。
 - **湖表指标**：`IcebergTableMetrics` 每 60s 查 `$files` / `$snapshots`，把文件数、平均文件大小、
   快照数打到 Prometheus（Grafana 面板已加两屏），配置见 `lake.metrics.iceberg.*`。
+- **存储清理（`docs/STORAGE.md`）**：表属性已开 `write.metadata.delete-after-commit.enabled`；
+  另附 bucket lifecycle 模板（`bin/storage-lifecycle.sh`）与 `maintain` 的 `remove_orphan_files`，
+  前者清分片/非当前版本，后者做引用感知的孤儿文件清理。
 - **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
   语义层 render/query、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
   提交一次 `show` 并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
@@ -421,9 +424,3 @@ CoW 的代价是写放大，换来的是「Spark 写、Trino 读」零兼容问�
 - **跑批前先构建**：`bin/dev-batch.sh` 现在是 `java -cp` 薄封装，依赖 `bin/build.sh`
   生成的 jar 和 `spark-batch/target/classpath.txt`；没构建过会直接报错退出，
   不会再偷偷跑一次 `mvn package`（并发作业抢同一个 `target/` 的老问题已消除）。
-
-## 生产化 TODO
-
-
-
-- 存储：生产用对象存储时开 `write.metadata.delete-after-commit.enabled`（已开）并配合生命周期规则。

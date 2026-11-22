@@ -15,8 +15,11 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 
 /**
- * 表维护：小文件合并 + manifest 重写 + 过期快照清理。
- * 这三件事是 Iceberg 表长期跑下去的必需品，建议按天调度。
+ * 表维护：小文件合并 + manifest 重写 + 过期快照清理 + 孤儿文件清理。
+ * 这四件事是 Iceberg 表长期跑下去的必需品，建议按天调度。
+ *
+ * <p>对象存储的 bucket lifecycle 只能按前缀/时间删，不知道文件是否还被快照引用；
+ * remove_orphan_files 才是「引用感知」的清理，和生命周期规则互补（见 docs/STORAGE.md）。</p>
  */
 public class MaintainJob implements LakeJob {
 
@@ -32,6 +35,7 @@ public class MaintainJob implements LakeJob {
         String catalog = cfg.catalogName();
         String db = cfg.database();
         int retainLast = args.getInt("retain-last", 5);
+        int orphanRetentionHours = args.getInt("orphan-retention-hours", 168);
 
         for (String table : new String[]{LakeTables.BRONZE_ORDERS, LakeTables.SILVER_ORDERS,
                 LakeTables.GOLD_DAILY_REVENUE}) {
@@ -62,6 +66,15 @@ public class MaintainJob implements LakeJob {
                     + "table => '" + db + "." + table + "', "
                     + "older_than => TIMESTAMP '" + olderThan + "', "
                     + "retain_last => " + retainLast + ")")
+                    .show(false);
+
+            // 4) 清孤儿文件：只删「没有被任何有效快照引用」且早于阈值的数据文件。
+            //    写入失败留下的临时文件、过期快照遗留文件都靠它收尾（默认 7 天）。
+            String orphanBefore = LocalDateTime.now(ZoneOffset.UTC)
+                    .minusHours(orphanRetentionHours).format(TS);
+            spark.sql("CALL " + catalog + ".system.remove_orphan_files("
+                    + "table => '" + db + "." + table + "', "
+                    + "older_than => TIMESTAMP '" + orphanBefore + "')")
                     .show(false);
 
             printFileStats(spark, TableRef.of(cfg, table));

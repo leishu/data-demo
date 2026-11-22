@@ -1,0 +1,22 @@
+{
+  "Rules": [
+    {
+      "ID": "abort-incomplete-multipart-uploads",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "" },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    },
+    {
+      "ID": "expire-iceberg-metadata-old-versions",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "warehouse/" },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 }
+    },
+    {
+      "ID": "expire-staging-uploads",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "staging/" },
+      "Expiration": { "Days": 7 }
+    }
+  ]
+}

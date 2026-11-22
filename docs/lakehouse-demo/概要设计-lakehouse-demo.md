@@ -811,6 +811,17 @@ Prometheus/Grafana 用 host 网络，同一 target 同时覆盖宿主机服务�
 `scheduler/README.md` 覆盖 DS / crontab 接入。CI 增加脚本与 DAG 语法检查。
 验证：dry-run 幂等键正确，真实提交 `show` 作业成功，同键重跑返回同一 runId。
 
+本轮生产化收口（2026-11-22）：
+- 权限：`lake.security.mode=external` + 网关共享密钥（fail closed），Trino LDAP / 表级授权规则、
+  HMS Ranger 插件模板，见 `docs/SECURITY.md`。实测无密钥/错密钥 401、缺身份头 401、越权 403。
+- 并发写：`IcebergConcurrentWriteTest` 双写入者并发提交同一张表，验证乐观锁不会静默丢数据，
+  见 `docs/CONCURRENCY.md`；`mvn verify` 通过。
+- 湖表指标：`IcebergTableMetrics` 定时查 `$files` / `$snapshots`，输出文件数、平均文件大小、
+  快照数到 Prometheus，Grafana 加两屏；`/actuator/prometheus` 实测 12 条 `lake_iceberg_*` 序列。
+- 存储：沿用 `write.metadata.delete-after-commit.enabled=true` / `previous-versions-max=20`，
+  新增 bucket lifecycle 模板与 `bin/storage-lifecycle.sh`，并在 `maintain` 里加 `remove_orphan_files`；
+  实测 `bin/dev-batch.sh --job maintain --orphan-retention-hours 168` 跑通。见 `docs/STORAGE.md`。
+
 `〔INFER〕` 标注汇总（需人工确认）：（本轮无）
 
 已裁决并落实：原第 1 项（§4.8 `refund_rate` 口径不一致）已统一——以语义层为权威，ad-hoc `01_daily_revenue.sql` 已对齐同一表达式（`nullif` 防除零、返回比例、字段更名 `refund_rate`）。修改点：`sql/adhoc/01_daily_revenue.sql:4,11`；本文 §4.8 口径说明与 ADR-9 背景已同步。语义层定义与单测 `SemanticSqlRendererTest.退款率口径用nullif避免除零()` 保持不变。
