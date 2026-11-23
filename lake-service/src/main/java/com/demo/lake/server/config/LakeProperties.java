@@ -91,8 +91,7 @@ public class LakeProperties {
             private String namespace = "default";
             private String image = "spark:3.5.1";
             private String serviceAccount = "default";
-            /** 轮询 Job 终态的间隔与最长等待（秒） */
-            private int pollSeconds = 5;
+            /** 等待 Job 终态的最长时间（秒）；状态变化由 Watch API 推送，不再按间隔轮询 */
             private int timeoutSeconds = 1800;
         }
 

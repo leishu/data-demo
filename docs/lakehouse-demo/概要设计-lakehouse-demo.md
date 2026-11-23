@@ -615,14 +615,14 @@ sequenceDiagram
 4. **终态回流**：`JobCompletionService.completed()` 写终态到运行态库、令湖表历史缓存失效、打指标与审计。〔FACT｜batch/service/JobCompletionService.java:21-35〕
 5. **runId 对齐**：服务端生成 runId → 注入子进程 → `RunIds.resolve` 取出 → 既写 bronze 每行、又写 `ops.batch_runs`，二者指向同一批次。〔FACT｜common/batch/RunIds.java:14-19〕〔FACT｜spark-batch/BatchApp.java:80-88〕
 
-**K8s 执行方式**：`executor=kubernetes` 时改为通过 K8s Job API 创建 Job（JWT 从 in-cluster ServiceAccount 读取），注入同样的环境变量，虚拟线程轮询终态。〔FACT｜batch/service/KubernetesJobExecutor.java:60-130〕
+**K8s 执行方式**：`executor=kubernetes` 时改为通过 K8s Job API 创建 Job（JWT 从 in-cluster ServiceAccount 读取），注入同样的环境变量；终态不再定时轮询，而是用 `watch=true` 长连接把 Job status 变化推成 NDJSON 事件，虚拟线程收到 `succeeded`/`failed` 立即回调，服务端按 `timeoutSeconds` 关流后带 `resourceVersion` 续接、410 Gone 则重新建连。〔FACT｜batch/service/KubernetesJobExecutor.java:69-108,115-198〕
 
-**K8s 日志搬运**：Job 的 Pod 模板带 `lake-job=<jobName>` 标签，日志线程按该标签列 Pod，
-找到后用 `GET .../pods/{pod}/log?follow=true` 持续读 stdout/stderr，按 100 行/1 秒批量写进同一个
-`LogSink`（`lake_batch.batch_log_lines`）。Pod 还没创建时轮询等待，日志接口返回 4xx（容器未启动）时
-隔秒重试；终态到达后先给日志线程 2 秒排空尾部，再置停止位并关流，避免 follow 长连接泄漏。
-这样 tail / SSE 在 K8s 模式下也从状态库读，和本地模式一致，不依赖 Pod 是否还在、也不要求请求
-落到提交 Job 的那台实例。〔FACT｜batch/service/KubernetesJobExecutor.java:152-280〕〔FACT｜batch/service/LogSink.java:7-10〕
+**K8s 日志搬运**：Job 的 Pod 模板带 `lake-job=<jobName>` 标签，日志线程 watch 该标签的 PodList，
+拿到 Pod 名且 `status.phase` 离开 `Pending` 后用 `GET .../pods/{pod}/log?follow=true` 持续读 stdout/stderr，
+按 100 行/1 秒批量写进同一个 `LogSink`（`lake_batch.batch_log_lines`）；日志接口偶发 4xx（容器刚起的竞态）
+才短退避重试。终态到达后先等日志读到 EOF（最长 2 秒），再置停止位并关掉 watch / follow 长连接，
+避免虚拟线程挂在长连接上。这样 tail / SSE 在 K8s 模式下也从状态库读，和本地模式一致，不依赖 Pod 是否还在、
+也不要求请求落到提交 Job 的那台实例。〔FACT｜batch/service/KubernetesJobExecutor.java:202-344,406-428〕〔FACT｜batch/service/LogSink.java:7-10〕
 
 **外部调度触发**：调度器不直接跑 Spark，而是调 `bin/scheduled-batch.sh` → `POST /api/batch/{job}`。
 幂等键取 `lake-<job>-<逻辑日期>`（Airflow 用 `{{ ds }}`、DS 用 `${bizdate}`），同一逻辑日重跑返回同一条
@@ -983,6 +983,9 @@ lake-service 编排链路、lake-ui）以及 §3.7 的支撑层（CI/全栈/冒�
   `bin/stack.sh` 生成 `conf/platform.stack.properties` 不覆盖本地配置。
 - **P1 K8s 日志搬运（2026-11-22）**：`KubernetesJobExecutor` 依赖 `LogSink`，Pod 打 `lake-job` 标签，
   follow 流读日志批量入库；终态后排空尾部再关流，§4.10 旧「已知局限」已移除。
+- **K8s Watch 改造（2026-11-23）**：Job 终态与 Pod 发现从定时轮询改为 K8s Watch API 事件流（带
+  `resourceVersion` 续接），日志就绪由 Pod phase 驱动，`LogStream` 用 `CountDownLatch` + 关流取代定时 join，
+  §4.10 同步。
 - **P2 可观测性（2026-11-22）**：Prometheus registry + `/actuator/prometheus`，可选 `monitoring` profile，
   5 条告警规则与 Grafana 面板自动装载；§4.12/§4.16、ADR-14 同步。
 - **P2 外部调度（2026-11-22）**：`bin/scheduled-batch.sh` + Airflow/DolphinScheduler/crontab 入口，

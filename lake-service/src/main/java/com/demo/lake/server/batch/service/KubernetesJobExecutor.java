@@ -2,6 +2,8 @@ package com.demo.lake.server.batch.service;
 
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -23,20 +25,24 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Kubernetes 执行器：把一次批作业提交成 batch/v1 Job，虚拟线程轮询终态，并把 Pod 日志搬进 {@link LogSink}。
+ * Kubernetes 执行器：把一次批作业提交成 batch/v1 Job，用 K8s Watch API 推送终态，并把 Pod 日志搬进 {@link LogSink}。
  *
- * <p>直接用 JDK HttpClient 调 API，不引 fabric8 客户端：只需要 create/get/delete、列 Pod、读 Pod 日志，
+ * <p>直接用 JDK HttpClient 调 API，不引入 fabric8：只需要 create/get-watch/delete、列 Pod watch、读 Pod 日志，
  * 少一个重型依赖也更容易在离线环境构建。ServiceAccount token 从 in-cluster 固定路径读取；
  * 本地调试可把 api-url 指到 HTTP 代理。TLS 证书需要按集群 CA 配 JVM truststore。</p>
  *
+ * <p>状态不再按固定间隔轮询：对 Job 和 Pod 各开一条 {@code watch=true} 长连接，K8s 把
+ * status/phase 变化推成 NDJSON 事件，毫秒级就能发现终态，也省掉了「隔几秒打一次 API」的空轮询。
+ * 服务端按 timeoutSeconds 关流后带 resourceVersion 续接，410 Gone 则丢掉版本重新建连。</p>
+ *
  * <p>日志搬运和本地执行器走同一个 {@link LogSink}：tail / SSE 从状态库读，不依赖 Pod 是否还在，
- * 也不要求请求落到提交 Job 的那台实例。Pod 还没创建时先按 {@code lake-job} 标签轮询，
- * 创建后用 follow 流持续读；作业结束/超时/取消时主动关流，避免虚拟线程挂在长连接上。</p>
+ * 也不要求请求落到提交 Job 的那台实例。先 watch Pod 到容器启动再读日志；
+ * 作业结束/超时/取消时先把流读到 EOF，再强制关连接，避免虚拟线程挂在 watch / follow 长连接上。</p>
  */
 @Component("kubernetes")
 @Slf4j
@@ -44,14 +50,15 @@ import java.util.regex.Pattern;
 public class KubernetesJobExecutor implements JobExecutor {
 
     private static final Path TOKEN = Path.of("/var/run/secrets/kubernetes.io/serviceaccount/token");
-    private static final Pattern SUCCEEDED = Pattern.compile("\"succeeded\"\\s*:\\s*[1-9]");
-    private static final Pattern FAILED = Pattern.compile("\"failed\"\\s*:\\s*[1-9]");
-    /** PodList 里第一层 metadata.name；K8s 序列化时 name 在 generateName 之前 */
-    private static final Pattern POD_NAME = Pattern.compile("\"metadata\"\\s*:\\s*\\{\\s*\"name\"\\s*:\\s*\"([^\"]+)\"");
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final int LOG_BATCH_LINES = 100;
     private static final long LOG_FLUSH_MILLIS = 1000;
     /** 作业结束后给日志流留一点时间把尾部读完，再强制关连接 */
     private static final long LOG_DRAIN_MILLIS = 2000;
+    /** watch 长连接的服务端超时（秒），到期后带 resourceVersion 续接；不是业务的作业超时 */
+    private static final int WATCH_TIMEOUT_SECONDS = 300;
+    /** 只在建连失败 / 日志接口竞态时退避；正常流结束靠服务端 timeoutSeconds 自然收口 */
+    private static final long RETRY_MILLIS = 300;
 
     private final LakeProperties props;
     private final LogSink logSink;
@@ -78,7 +85,7 @@ public class KubernetesJobExecutor implements JobExecutor {
             }
         } catch (Exception e) {
             log.error("提交 K8s Job 失败 {}", run.id(), e);
-            listener.completed(run, BatchRun.FAILED, null, System.currentTimeMillis() - start,
+            listener.completed(run, BatchRun.FAILED, null, elapsed(start),
                     "提交 K8s Job 失败: " + e.getMessage());
             return "failed";
         }
@@ -91,7 +98,7 @@ public class KubernetesJobExecutor implements JobExecutor {
                 .start(() -> shipLogs(run, name, conf, stream, deadline));
         Thread.ofVirtual().name("k8s-job-" + name).start(() -> {
             try {
-                poll(run, name, statusUrl, conf, listener, start, deadline);
+                watchJob(run, name, statusUrl, conf, listener, start, deadline, stream);
             } finally {
                 stream.stopAndJoin();
                 logStreams.remove(name, stream);
@@ -100,54 +107,177 @@ public class KubernetesJobExecutor implements JobExecutor {
         return name;
     }
 
-    private void poll(BatchRun run, String name, String statusUrl, LakeProperties.Batch.Kubernetes conf,
-                      JobOutcomeListener listener, long start, long deadline) {
-        while (System.currentTimeMillis() < deadline) {
-            try {
-                HttpRequest request = HttpRequest.newBuilder(URI.create(statusUrl))
+    /**
+     * watch Job 资源直到出现终态，取代按固定间隔 GET 状态：
+     * K8s 把 status 变化推成 NDJSON 事件流，通常毫秒级就能拿到 SUCCEEDED/FAILED。
+     * 服务端按 timeoutSeconds 关流后带 resourceVersion 续接，410 Gone 则丢掉版本重新建连。
+     */
+    private void watchJob(BatchRun run, String name, String statusUrl, LakeProperties.Batch.Kubernetes conf,
+                          JobOutcomeListener listener, long start, long deadline, LogStream stream) {
+        String resourceVersion = "";
+        boolean terminal = false;
+        try {
+            while (System.currentTimeMillis() < deadline && !stream.stop.get()) {
+                String url = statusUrl + "?watch=true&allowWatchBookmarks=true&timeoutSeconds="
+                        + WATCH_TIMEOUT_SECONDS
+                        + (resourceVersion.isEmpty() ? "" : "&resourceVersion=" + enc(resourceVersion));
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                         .header("Authorization", "Bearer " + token())
+                        .header("Accept", "application/json")
                         .GET().timeout(Duration.ofSeconds(10)).build();
-                HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-                String body = response.body();
-                if (response.statusCode() == 404) {
-                    listener.completed(run, BatchRun.FAILED, 1, System.currentTimeMillis() - start, "K8s Job 不存在");
-                    return;
+                try {
+                    HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                    int code = response.statusCode();
+                    if (code == 404) {
+                        terminal = true;
+                        listener.completed(run, BatchRun.FAILED, 1, elapsed(start), "K8s Job 不存在");
+                        return;
+                    }
+                    if (code == 410) {
+                        resourceVersion = ""; // 版本过期，丢掉续接点重新 watch
+                        continue;
+                    }
+                    if (code / 100 != 2) {
+                        response.body().close();
+                        log.debug("watch K8s Job {} 失败: HTTP {}", name, code);
+                        Thread.sleep(RETRY_MILLIS);
+                        continue;
+                    }
+                    try (InputStream in = response.body();
+                         BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                        stream.jobWatch = in;
+                        String line;
+                        while (!stream.stop.get() && (line = reader.readLine()) != null) {
+                            if (System.currentTimeMillis() >= deadline) {
+                                break;
+                            }
+                            WatchEvent event = parseEvent(line);
+                            if (event == null) {
+                                continue;
+                            }
+                            if (!event.resourceVersion().isEmpty()) {
+                                resourceVersion = event.resourceVersion();
+                            }
+                            if ("ERROR".equals(event.type())) {
+                                log.debug("K8s Job {} watch 返回错误事件: {}", name, line);
+                                resourceVersion = "";
+                                break; // 丢掉续接点重连
+                            }
+                            if (event.succeeded()) {
+                                terminal = true;
+                                listener.completed(run, BatchRun.SUCCEEDED, 0, elapsed(start), "K8s Job 成功");
+                                return;
+                            }
+                            if (event.failed()) {
+                                terminal = true;
+                                listener.completed(run, BatchRun.FAILED, 1, elapsed(start), "K8s Job 失败");
+                                return;
+                            }
+                        }
+                    } finally {
+                        stream.jobWatch = null;
+                    }
+                } catch (IOException e) {
+                    if (stream.stop.get()) {
+                        return;
+                    }
+                    log.debug("watch K8s Job {} 中断: {}", name, e.getMessage());
+                    Thread.sleep(RETRY_MILLIS);
                 }
-                if (SUCCEEDED.matcher(body).find()) {
-                    listener.completed(run, BatchRun.SUCCEEDED, 0, System.currentTimeMillis() - start, "K8s Job 成功");
-                    return;
-                }
-                if (FAILED.matcher(body).find()) {
-                    listener.completed(run, BatchRun.FAILED, 1, System.currentTimeMillis() - start, "K8s Job 失败");
-                    return;
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                // 轮询线程没了就必须报终态，否则心跳会一直给这个 run 续命，变成永久 RUNNING
-                listener.completed(run, BatchRun.FAILED, 1, System.currentTimeMillis() - start,
-                        "K8s Job 状态轮询被中断");
-                return;
-            } catch (Exception e) {
-                log.debug("轮询 K8s Job {} 状态失败: {}", name, e.getMessage());
             }
-            try {
-                Thread.sleep(Math.max(1, conf.getPollSeconds()) * 1000L);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                listener.completed(run, BatchRun.FAILED, 1, System.currentTimeMillis() - start,
-                        "K8s Job 状态轮询被中断");
-                return;
-            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            listener.completed(run, BatchRun.FAILED, 1, elapsed(start), "K8s Job 状态监听被中断");
+            return;
+        } catch (Exception e) {
+            log.debug("watch K8s Job {} 异常: {}", name, e.getMessage());
+        }
+        if (terminal || stream.stop.get()) {
+            return; // 终态已回调（或回调本身抛错），或外部取消：不再重复报终态
         }
         cancel(name);
-        listener.completed(run, BatchRun.TIMEOUT, null, System.currentTimeMillis() - start, "K8s Job 等待超时");
+        listener.completed(run, BatchRun.TIMEOUT, null, elapsed(start), "K8s Job 等待超时");
+    }
+
+    /**
+     * watch PodList 直到本 Job 的 Pod 出现且容器已离开 Pending，取代「隔 1 秒列一次 Pod」。
+     * 用 labelSelector 精确匹配 Job 打的 lake-job 标签，不自己拼 Pod 名。
+     */
+    private String awaitPod(String jobName, LakeProperties.Batch.Kubernetes conf,
+                            LogStream stream, long deadline) throws InterruptedException {
+        String url = trimSlash(conf.getApiUrl()) + "/api/v1/namespaces/" + conf.getNamespace()
+                + "/pods?watch=true&allowWatchBookmarks=true&timeoutSeconds=" + WATCH_TIMEOUT_SECONDS
+                + "&labelSelector=" + enc("lake-job=" + jobName);
+        String resourceVersion = "";
+        String pod = null;
+        while (!stream.stop.get() && System.currentTimeMillis() < deadline) {
+            String watchUrl = url + (resourceVersion.isEmpty() ? "" : "&resourceVersion=" + enc(resourceVersion));
+            HttpRequest request = HttpRequest.newBuilder(URI.create(watchUrl))
+                    .header("Authorization", "Bearer " + token())
+                    .header("Accept", "application/json")
+                    .GET().timeout(Duration.ofSeconds(10)).build();
+            try {
+                HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                int code = response.statusCode();
+                if (code == 410) {
+                    resourceVersion = "";
+                    continue;
+                }
+                if (code / 100 != 2) {
+                    response.body().close();
+                    Thread.sleep(RETRY_MILLIS);
+                    continue;
+                }
+                try (InputStream in = response.body();
+                     BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                    stream.podWatch = in;
+                    String line;
+                    while (!stream.stop.get() && (line = reader.readLine()) != null) {
+                        if (System.currentTimeMillis() >= deadline) {
+                            break;
+                        }
+                        WatchEvent event = parseEvent(line);
+                        if (event == null || event.name().isEmpty()) {
+                            continue;
+                        }
+                        if (!event.resourceVersion().isEmpty()) {
+                            resourceVersion = event.resourceVersion();
+                        }
+                        if ("ERROR".equals(event.type())) {
+                            resourceVersion = "";
+                            break;
+                        }
+                        if ("DELETED".equals(event.type())) {
+                            if (event.name().equals(pod)) {
+                                pod = null;
+                            }
+                            continue;
+                        }
+                        pod = event.name();
+                        // Pending 阶段容器还没起，日志接口会 4xx；等 phase 推进再返回
+                        if (!"Pending".equalsIgnoreCase(event.phase())) {
+                            return pod;
+                        }
+                    }
+                } finally {
+                    stream.podWatch = null;
+                }
+            } catch (IOException e) {
+                if (stream.stop.get()) {
+                    break;
+                }
+                log.debug("watch K8s Job {} 的 Pod 中断: {}", jobName, e.getMessage());
+                Thread.sleep(RETRY_MILLIS);
+            }
+        }
+        return pod; // 超时/取消时若已看到 Pod 名也返回，让日志线程再试一次
     }
 
     /**
      * 找到 Job 创建的 Pod 并持续读它的 stdout/stderr，按批写进 LogSink。
      *
-     * <p>Pod 名不自己拼：Job 控制器会加后缀，且创建有延迟。先按 {@code lake-job} 标签列 Pod，
-     * 找到后再用 follow=true 读日志；日志接口在容器还没启动时可能返回 4xx，等一秒重试。</p>
+     * <p>Pod 名不自己拼：Job 控制器会加后缀，且创建有延迟。先 watch Pod 的 labelSelector，
+     * 拿到名字且容器启动后再用 follow=true 读日志。日志接口偶发 4xx（容器刚起的竞态）才短退避重试。</p>
      */
     private void shipLogs(BatchRun run, String jobName, LakeProperties.Batch.Kubernetes conf,
                           LogStream stream, long deadline) {
@@ -168,7 +298,7 @@ public class KubernetesJobExecutor implements JobExecutor {
                 if (response.statusCode() / 100 != 2) {
                     response.body().close();
                     log.debug("K8s Pod {} 日志暂不可读: HTTP {}", pod, response.statusCode());
-                    Thread.sleep(1000);
+                    Thread.sleep(RETRY_MILLIS);
                     continue;
                 }
                 try (InputStream body = response.body()) {
@@ -186,32 +316,9 @@ public class KubernetesJobExecutor implements JobExecutor {
             if (!stream.stop.get()) {
                 log.debug("搬运 K8s Job {} 日志失败: {}", jobName, e.getMessage());
             }
+        } finally {
+            stream.logsDone.countDown();
         }
-    }
-
-    /** 轮询 PodList 直到出现本 Job 的 Pod；超时/取消返回 null */
-    private String awaitPod(String jobName, LakeProperties.Batch.Kubernetes conf,
-                            LogStream stream, long deadline) throws InterruptedException {
-        String url = trimSlash(conf.getApiUrl()) + "/api/v1/namespaces/" + conf.getNamespace()
-                + "/pods?labelSelector=" + URLEncoder.encode("lake-job=" + jobName, StandardCharsets.UTF_8);
-        while (!stream.stop.get() && System.currentTimeMillis() < deadline) {
-            try {
-                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
-                        .header("Authorization", "Bearer " + token())
-                        .GET().timeout(Duration.ofSeconds(10)).build();
-                HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() / 100 == 2) {
-                    Matcher matcher = POD_NAME.matcher(response.body());
-                    if (matcher.find()) {
-                        return matcher.group(1);
-                    }
-                }
-            } catch (IOException e) {
-                log.debug("查询 K8s Job {} 的 Pod 失败: {}", jobName, e.getMessage());
-            }
-            Thread.sleep(1000);
-        }
-        return null;
     }
 
     private void streamLines(String runId, InputStream body, LogStream stream) throws IOException {
@@ -262,26 +369,73 @@ public class KubernetesJobExecutor implements JobExecutor {
         }
     }
 
-    /** 一条 Job 的日志流句柄：结束/取消时先让尾部读完，再强制关连接 */
+    /** watch NDJSON 事件流里只关心这几列：事件类型、续接版本、Pod 名/相位、Job 终态 */
+    private record WatchEvent(String type, String resourceVersion, String name, String phase,
+                              boolean succeeded, boolean failed) {
+    }
+
+    private static WatchEvent parseEvent(String line) {
+        if (line == null || line.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = JSON.readTree(line);
+            String type = node.path("type").asText("");
+            JsonNode obj = node.get("object");
+            if (obj == null || obj.isNull()) {
+                return new WatchEvent(type, "", "", "", false, false);
+            }
+            String resourceVersion = obj.path("metadata").path("resourceVersion").asText("");
+            String name = obj.path("metadata").path("name").asText("");
+            String phase = obj.path("status").path("phase").asText("");
+            long succeeded = obj.path("status").path("succeeded").asLong(0);
+            long failed = obj.path("status").path("failed").asLong(0);
+            JsonNode conditions = obj.path("status").path("conditions");
+            if (conditions.isArray()) {
+                for (JsonNode c : conditions) {
+                    if ("Failed".equals(c.path("type").asText())
+                            && "True".equalsIgnoreCase(c.path("status").asText())) {
+                        failed = Math.max(failed, 1);
+                        break;
+                    }
+                }
+            }
+            return new WatchEvent(type, resourceVersion, name, phase, succeeded > 0, failed > 0);
+        } catch (Exception e) {
+            log.debug("解析 K8s watch 事件失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 一条 Job 的日志流句柄：终态/取消时先等日志读到 EOF，再强制关掉所有长连接 */
     private static final class LogStream {
         private final AtomicBoolean stop = new AtomicBoolean();
+        /** 日志线程读到 EOF（或异常退出）时倒数，取代固定 join 时间 */
+        private final CountDownLatch logsDone = new CountDownLatch(1);
         private volatile InputStream body;
+        private volatile InputStream jobWatch;
+        private volatile InputStream podWatch;
         private volatile Thread thread;
 
         void stopAndJoin() {
-            // 先等日志线程自然读到 EOF（作业刚结束时可能还有几行在管道里），
-            // 等不到再置停止位并关流，避免虚拟线程挂在 follow 长连接上。
             Thread current = thread;
             if (current != null) {
                 try {
-                    current.join(LOG_DRAIN_MILLIS);
+                    logsDone.await(LOG_DRAIN_MILLIS, TimeUnit.MILLISECONDS);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
             }
             stop.set(true);
-            InputStream in = body;
+            close(body);
             body = null;
+            close(jobWatch);
+            jobWatch = null;
+            close(podWatch);
+            podWatch = null;
+        }
+
+        private static void close(InputStream in) {
             if (in != null) {
                 try {
                     in.close();
@@ -290,6 +444,14 @@ public class KubernetesJobExecutor implements JobExecutor {
                 }
             }
         }
+    }
+
+    private static long elapsed(long start) {
+        return System.currentTimeMillis() - start;
+    }
+
+    private static String enc(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private String token() {

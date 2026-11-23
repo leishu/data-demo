@@ -2,9 +2,11 @@ package com.demo.lake.server.batch.service;
 
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -19,13 +21,14 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** 用 JDK 自带的 HttpServer 假扮 K8s API，验证提交、终态轮询与 Pod 日志搬运，不依赖真实集群 */
+/** 用 JDK 自带的 HttpServer 假扮 K8s API，验证提交、watch 终态与 Pod 日志搬运，不依赖真实集群 */
 class KubernetesJobExecutorTest {
 
     @Test
-    void 创建Job并轮询到成功后回调() throws Exception {
+    void 创建Job并watch到成功后回调() throws Exception {
         AtomicReference<String> created = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         String prefix = "/apis/batch/v1/namespaces/default/jobs";
         server.createContext(prefix, exchange -> {
             created.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
@@ -34,17 +37,20 @@ class KubernetesJobExecutorTest {
             exchange.getResponseBody().write(body);
             exchange.close();
         });
-        server.createContext(prefix + "/lake-run-k8s1", exchange -> {
-            byte[] body = "{\"status\":{\"succeeded\":1}}".getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
+        server.createContext(prefix + "/lake-run-k8s1", exchange -> sendNdjson(exchange,
+                "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"name\":\"lake-run-k8s1\",\"resourceVersion\":\"1\"},\"status\":{}}}",
+                "{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"name\":\"lake-run-k8s1\",\"resourceVersion\":\"2\"},\"status\":{\"succeeded\":1}}}"));
+        server.createContext("/api/v1/namespaces/default/pods", exchange -> sendNdjson(exchange,
+                "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"name\":\"lake-run-k8s1-abcde\",\"resourceVersion\":\"1\"},\"status\":{\"phase\":\"Running\"}}}"));
+        server.createContext("/api/v1/namespaces/default/pods/lake-run-k8s1-abcde/log", exchange -> {
+            exchange.sendResponseHeaders(200, -1);
             exchange.close();
         });
         server.start();
         try {
             LakeProperties props = new LakeProperties();
             props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
-            props.getBatch().getKubernetes().setPollSeconds(1);
+            props.getBatch().getKubernetes().setTimeoutSeconds(30);
             KubernetesJobExecutor executor = new KubernetesJobExecutor(props, new RecordingLogSink());
 
             BatchRun run = new BatchRun("run-k8s1", "init", "--job init", BatchRun.QUEUED, null,
@@ -68,7 +74,6 @@ class KubernetesJobExecutorTest {
         CountDownLatch logsServed = new CountDownLatch(1);
         String pod = "lake-run-k8s2-abcde";
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        // 状态接口要等日志接口先写完，否则作业可能在日志线程读之前就结束
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         String prefix = "/apis/batch/v1/namespaces/default/jobs";
         server.createContext(prefix, exchange -> {
@@ -78,24 +83,19 @@ class KubernetesJobExecutorTest {
             exchange.getResponseBody().write(body);
             exchange.close();
         });
+        // 状态 watch 要等日志接口先写完，否则作业可能在日志线程读之前就结束
         server.createContext(prefix + "/lake-run-k8s2", exchange -> {
             try {
                 logsServed.await(5, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            byte[] body = "{\"status\":{\"succeeded\":1}}".getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
+            sendNdjson(exchange,
+                    "{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"name\":\"lake-run-k8s2\",\"resourceVersion\":\"2\"},\"status\":{\"succeeded\":1}}}");
         });
-        server.createContext("/api/v1/namespaces/default/pods", exchange -> {
-            byte[] body = ("{\"kind\":\"PodList\",\"items\":[{\"metadata\":{\"name\":\"" + pod + "\"}}]}")
-                    .getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, body.length);
-            exchange.getResponseBody().write(body);
-            exchange.close();
-        });
+        server.createContext("/api/v1/namespaces/default/pods", exchange -> sendNdjson(exchange,
+                "{\"type\":\"ADDED\",\"object\":{\"metadata\":{\"name\":\"" + pod + "\",\"resourceVersion\":\"1\"},\"status\":{\"phase\":\"Pending\"}}}",
+                "{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"name\":\"" + pod + "\",\"resourceVersion\":\"2\"},\"status\":{\"phase\":\"Running\"}}}"));
         server.createContext("/api/v1/namespaces/default/pods/" + pod + "/log", exchange -> {
             byte[] body = "hello from pod\nsecond line\n".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
@@ -107,7 +107,6 @@ class KubernetesJobExecutorTest {
         try {
             LakeProperties props = new LakeProperties();
             props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
-            props.getBatch().getKubernetes().setPollSeconds(1);
             props.getBatch().getKubernetes().setTimeoutSeconds(30);
             RecordingLogSink sink = new RecordingLogSink();
             KubernetesJobExecutor executor = new KubernetesJobExecutor(props, sink);
@@ -138,6 +137,15 @@ class KubernetesJobExecutorTest {
         assertTrue(json.contains("BATCH_RUN_ID"));
         assertTrue(json.contains("\"lake-job\":\"lake-run-x\""), json);
         assertTrue(!json.contains("echo \"hi\""), json);
+    }
+
+    /** 假 K8s watch 接口：按行返回 NDJSON 事件，读到流结束即为本次 watch 结束 */
+    private static void sendNdjson(HttpExchange exchange, String... lines) throws IOException {
+        byte[] body = (String.join("\n", lines) + "\n").getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, body.length);
+        exchange.getResponseBody().write(body);
+        exchange.close();
     }
 
     private static void awaitLine(RecordingLogSink sink, String expected) throws InterruptedException {
