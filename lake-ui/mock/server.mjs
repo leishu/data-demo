@@ -161,6 +161,7 @@ const config = {
 }
 
 const runs = []
+const idempotency = new Map() // Idempotency-Key -> runId，与后端去重语义保持一致
 let seq = 0
 
 function startRun(job) {
@@ -474,7 +475,16 @@ const server = http.createServer(async (req, res) => {
         hint: 'allowed = ' + config.batch.allowedJobs.join(', ')
       })
     }
-    return send(res, 202, startRun(job))
+    // 与真实服务一致：同一 key 的重复提交直接返回原记录，不重复起作业
+    const idemKey = req.headers['idempotency-key']
+    if (idemKey) {
+      const existingId = idempotency.get(idemKey)
+      const existing = existingId && runs.find((r) => r.id === existingId)
+      if (existing) return send(res, 202, existing)
+    }
+    const run = startRun(job)
+    if (idemKey) idempotency.set(idemKey, run.id)
+    return send(res, 202, run)
   }
 
   // 静态文件

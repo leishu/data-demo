@@ -11,12 +11,14 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body } = {}) {
+async function request(path, { method = 'GET', body, headers } = {}) {
   let res
   try {
+    const finalHeaders = { ...(headers || {}) }
+    if (body !== undefined) finalHeaders['Content-Type'] = 'application/json'
     res = await fetch(BASE + path, {
       method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: Object.keys(finalHeaders).length ? finalHeaders : undefined,
       body: body === undefined ? undefined : JSON.stringify(body)
     })
   } catch (e) {
@@ -47,7 +49,44 @@ async function request(path, { method = 'GET', body } = {}) {
   return data === null ? text : data
 }
 
+/**
+ * 幂等键：后端只接受 [A-Za-z0-9._:-]，UUID 的连字符合法；
+ * crypto.randomUUID 需要安全上下文（https / localhost），非安全上下文用时间戳+随机数兜底。
+ */
+function newIdempotencyKey() {
+  const uuid = globalThis.crypto?.randomUUID?.()
+  return uuid
+    ? `ui-${uuid}`
+    : `ui-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+/**
+ * 同一作业提交失败（含响应丢失）时重试复用上一个 key，让后端返回原运行记录；
+ * 提交成功后清掉，下次点击才算一次新作业。
+ */
+const pendingSubmitKeys = new Map()
+
+async function submitJob(job) {
+  let key = pendingSubmitKeys.get(job)
+  if (!key) {
+    key = newIdempotencyKey()
+    pendingSubmitKeys.set(job, key)
+  }
+  try {
+    const run = await request(`/api/batch/${encodeURIComponent(job)}`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key }
+    })
+    pendingSubmitKeys.delete(job)
+    return run
+  } catch (e) {
+    // 保留 key：请求可能已到达服务端并落库，重试必须命中同一条 run
+    throw e
+  }
+}
+
 export const api = {
+  submitJob,
   query: (sql, maxRows) => request('/api/query', { method: 'POST', body: { sql, maxRows } }),
   tables: () => request('/api/tables'),
   sample: (table, limit = 50) =>
@@ -57,7 +96,6 @@ export const api = {
   semanticRender: (payload) => request('/api/semantics/render', { method: 'POST', body: payload }),
   semanticQuery: (payload) => request('/api/semantics/query', { method: 'POST', body: payload }),
 
-  submitJob: (job) => request(`/api/batch/${encodeURIComponent(job)}`, { method: 'POST' }),
   runs: (limit = 20) => request(`/api/batch/runs?limit=${limit}`),
   run: (id, tail = 40) =>
     request(`/api/batch/runs/${encodeURIComponent(id)}?tail=${tail}`)
