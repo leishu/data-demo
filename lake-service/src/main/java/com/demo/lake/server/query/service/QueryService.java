@@ -11,8 +11,8 @@ import io.trino.jdbc.TrinoResultSet;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.StatementCallback;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -21,6 +21,7 @@ import reactor.core.scheduler.Scheduler;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -64,7 +65,12 @@ public class QueryService {
      * 周期性轮询（如运行历史列表）走这条：SQL 固定、几秒一次，INFO 会刷满日志，降到 debug 保留可查性。
      */
     public QueryResult executeQuiet(String sql, Integer maxRows) {
-        return execute(sql, maxRows, true);
+        return executeInternal(sql, maxRows, true, new Object[0]);
+    }
+
+    /** 带绑定参数的轮询版本：值走 {@code ?}，不拼进 SQL 字符串。 */
+    public QueryResult executeQuiet(String sql, Integer maxRows, Object... params) {
+        return executeInternal(sql, maxRows, true, params);
     }
 
     /**
@@ -74,52 +80,76 @@ public class QueryService {
      * {@code SqlGuard} 都在这里，重写一遍 JDBC 只会把同一个坑再踩一次。</p>
      */
     public QueryResult execute(String sql, Integer maxRows) {
-        return execute(sql, maxRows, false);
+        return executeInternal(sql, maxRows, false, new Object[0]);
     }
 
-    private QueryResult execute(String sql, Integer maxRows, boolean quiet) {
+    /** 带绑定参数的版本：Trino JDBC 会把 {@code ?} 转成 PREPARE/EXECUTE USING 在服务端绑定。 */
+    public QueryResult execute(String sql, Integer maxRows, Object... params) {
+        return executeInternal(sql, maxRows, false, params);
+    }
+
+    private QueryResult executeInternal(String sql, Integer maxRows, boolean quiet, Object[] params) {
         String safeSql = SqlGuard.requireReadOnly(sql, props.getQuery().isAllowWrites());
         int cap = props.getQuery().getMaxRows();
         int limit = (maxRows == null || maxRows <= 0) ? cap : Math.min(maxRows, cap);
 
         long start = System.nanoTime();
         try {
-            return jdbc.execute((StatementCallback<QueryResult>) stmt -> {
-                stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
-                try (ResultSet rs = stmt.executeQuery(safeSql)) {
-                    ResultSetMetaData md = rs.getMetaData();
-                    int columnCount = md.getColumnCount();
-                    List<Column> columns = new ArrayList<>(columnCount);
-                    for (int i = 1; i <= columnCount; i++) {
-                        columns.add(new Column(md.getColumnLabel(i), md.getColumnTypeName(i)));
-                    }
-
-                    List<List<String>> rows = new ArrayList<>();
-                    boolean truncated = false;
-                    while (rs.next()) {
-                        if (rows.size() >= limit) {
-                            truncated = true;
-                            break;
+            return jdbc.execute((ConnectionCallback<QueryResult>) conn -> {
+                // 无参时保留 Statement：即席查询可能是 SHOW/DESCRIBE/EXPLAIN，
+                // 这类语句塞不进 Trino 的 PREPARE / EXECUTE IMMEDIATE。
+                if (params.length == 0) {
+                    try (Statement stmt = conn.createStatement()) {
+                        stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
+                        try (ResultSet rs = stmt.executeQuery(safeSql)) {
+                            return read(rs, limit, start, safeSql, quiet);
                         }
-                        List<String> row = new ArrayList<>(columnCount);
-                        for (int i = 1; i <= columnCount; i++) {
-                            row.add(format(rs.getObject(i)));
-                        }
-                        rows.add(row);
                     }
-
-                    long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-                    if (quiet) {
-                        log.debug("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
-                    } else {
-                        log.info("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(safeSql)) {
+                    stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
+                    for (int i = 0; i < params.length; i++) {
+                        stmt.setObject(i + 1, params[i]);
                     }
-                    return new QueryResult(columns, rows, rows.size(), truncated, elapsedMs, stats(rs));
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        return read(rs, limit, start, safeSql, quiet);
+                    }
                 }
             });
         } catch (RuntimeException e) {
             throw translate(e);
         }
+    }
+
+    private QueryResult read(ResultSet rs, int limit, long start, String safeSql, boolean quiet) throws SQLException {
+        ResultSetMetaData md = rs.getMetaData();
+        int columnCount = md.getColumnCount();
+        List<Column> columns = new ArrayList<>(columnCount);
+        for (int i = 1; i <= columnCount; i++) {
+            columns.add(new Column(md.getColumnLabel(i), md.getColumnTypeName(i)));
+        }
+
+        List<List<String>> rows = new ArrayList<>();
+        boolean truncated = false;
+        while (rs.next()) {
+            if (rows.size() >= limit) {
+                truncated = true;
+                break;
+            }
+            List<String> row = new ArrayList<>(columnCount);
+            for (int i = 1; i <= columnCount; i++) {
+                row.add(format(rs.getObject(i)));
+            }
+            rows.add(row);
+        }
+
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        if (quiet) {
+            log.debug("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+        } else {
+            log.info("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+        }
+        return new QueryResult(columns, rows, rows.size(), truncated, elapsedMs, stats(rs));
     }
 
     /**
@@ -206,9 +236,9 @@ public class QueryService {
                     + " FROM " + catalog() + ".information_schema.tables t"
                     + " LEFT JOIN " + catalog() + ".information_schema.columns c"
                     + " ON c.table_schema = t.table_schema AND c.table_name = t.table_name"
-                    + " WHERE t.table_schema = '" + database() + "'"
+                    + " WHERE t.table_schema = ?"
                     + " ORDER BY t.table_name, c.ordinal_position";
-            QueryResult rs = execute(sql, null);
+            QueryResult rs = execute(sql, null, database());
             // 表名 → 表信息；left join 下没有列的表只出现一行，column_name 为 null
             Map<String, TableInfo> byTable = new LinkedHashMap<>();
             for (List<String> row : rs.rows()) {

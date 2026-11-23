@@ -2,6 +2,7 @@ package com.demo.lake.server.query;
 
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.service.QueryService;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import reactor.core.scheduler.Schedulers;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
@@ -47,5 +49,21 @@ class QueryServiceTest {
     void 流式查询的连接失败也归为依赖不可用() {
         QueryService service = serviceAgainstDeadPort();
         assertThrows(TrinoUnavailableException.class, () -> service.streamQuery("select 1", 10).blockLast());
+    }
+
+    /** 带参走 PreparedStatement，值按参数绑定；无参仍走 Statement（即席查询可能是 SHOW/EXPLAIN） */
+    @Test
+    void 参数绑定按值传入而不是拼进SQL() {
+        HikariConfig hc = new HikariConfig();
+        hc.setJdbcUrl("jdbc:h2:mem:trino-params;DB_CLOSE_DELAY=-1");
+        HikariDataSource ds = new HikariDataSource(hc);
+        QueryService service = new QueryService(new JdbcTemplate(ds), new LakeProperties(),
+                PlatformConfig.load(), Schedulers.immediate());
+
+        QueryResult bound = service.execute("SELECT ? AS v", null, "O'Reilly");
+        assertEquals("O'Reilly", bound.rows().getFirst().getFirst());
+
+        QueryResult plain = service.execute("SELECT 'plain' AS v", null);
+        assertEquals("plain", plain.rows().getFirst().getFirst());
     }
 }

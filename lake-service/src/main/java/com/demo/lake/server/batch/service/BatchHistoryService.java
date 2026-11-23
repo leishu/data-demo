@@ -48,7 +48,7 @@ public class BatchHistoryService {
      */
     private static final long CACHE_TTL_SECONDS = 10;
     private static final long CACHE_TTL_NANOS = TimeUnit.SECONDS.toNanos(CACHE_TTL_SECONDS);
-    /** run id 来自路径变量，拼进 SQL 前必须卡死字符集 */
+    /** run id 来自路径变量，虽已走 {@code ?} 绑定，仍卡死字符集作为输入校验 */
     private static final Pattern RUN_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:-]{0,79}");
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final int MAX_LIMIT = 100;
@@ -137,7 +137,7 @@ public class BatchHistoryService {
             if (!present()) {
                 return null;
             }
-            List<BatchRun> hits = select(" WHERE run_id = '" + id + "' LIMIT 1");
+            List<BatchRun> hits = select(" WHERE run_id = ? LIMIT 1", id);
             return hits.isEmpty() ? null : hits.getFirst();
         } catch (RuntimeException e) {
             invalidateProbe();
@@ -146,13 +146,13 @@ public class BatchHistoryService {
         }
     }
 
-    private List<BatchRun> select(String suffix) {
+    private List<BatchRun> select(String suffix, Object... params) {
         // 时间的权威列就是 epoch 毫秒：BatchApp 直接写入，InitJob 为老表回填。
         // 不再对 timestamp 做时区换算——绝对时刻编进 schema，而不是靠连接属性/约定。
         String sql = "SELECT run_id, job, command, status, exit_code,"
                 + " started_ms, finished_ms,"
                 + " duration_ms, log_file, message FROM " + table() + suffix;
-        QueryResult result = queries.executeQuiet(sql, null);
+        QueryResult result = queries.executeQuiet(sql, null, params);
         List<BatchRun> runs = new ArrayList<>(result.rows().size());
         for (List<String> row : result.rows()) {
             runs.add(toRun(row));
@@ -168,9 +168,9 @@ public class BatchHistoryService {
             return present;
         }
         String sql = "SELECT COUNT(*) FROM " + catalog() + ".information_schema.tables"
-                + " WHERE table_schema = '" + LakeTables.OPS_SCHEMA + "'"
-                + " AND table_name = '" + LakeTables.BATCH_RUNS + "'";
-        QueryResult result = queries.executeQuiet(sql, null);
+                + " WHERE table_schema = ?"
+                + " AND table_name = ?";
+        QueryResult result = queries.executeQuiet(sql, null, LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
         boolean found = !result.rows().isEmpty() && !"0".equals(result.rows().getFirst().getFirst());
         present = found;
         probedAtNanos = now;

@@ -82,9 +82,9 @@ public class MaintainJob implements LakeJob {
     }
 
     private void printFileStats(SparkSession spark, TableRef t) {
-        spark.sql("SELECT '" + t.table() + "' AS tbl, count(*) AS file_cnt, "
+        spark.sql("SELECT ? AS tbl, count(*) AS file_cnt, "
                 + "sum(file_size_in_bytes) AS total_bytes, "
                 + "cast(avg(file_size_in_bytes) AS bigint) AS avg_file_bytes "
-                + "FROM " + t.metadata("files")).show(false);
+                + "FROM " + t.metadata("files"), new Object[]{t.table()}).show(false);
     }
 }

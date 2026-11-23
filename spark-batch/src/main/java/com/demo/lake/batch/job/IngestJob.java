@@ -130,23 +130,28 @@ public class IngestJob implements LakeJob {
                 "rand(" + (seed + 6) + ") AS r_hour",
                 "rand(" + (seed + 7) + ") AS r_dup");
 
-        // 10% 的记录 event_time 落在前一天（迟到数据）
-        String dayExpr = "date_sub(date'" + dt + "', "
-                + "CASE WHEN r_late < 0.10 THEN 1 ELSE 0 END)";
+        // 值走 ? 绑定：selectExpr 没有带参重载，先把 base 挂成按日期命名的临时视图，
+        // 再用 spark.sql(sql, args) 绑 dt；每天一个视图互不覆盖（下游 Dataset 是懒执行的）。
+        String view = "ingest_base_" + dt.toString().replace("-", "");
+        base.createOrReplaceTempView(view);
 
-        Dataset<Row> clean = base.selectExpr(
-                "concat('ORD-', '" + dt + "-', lpad(cast(id AS string), 7, '0')) AS order_id",
-                "concat('U', lpad(cast(cast(r_user * 5000 AS int) AS string), 5, '0')) AS user_id",
-                "concat('M', lpad(cast(cast(r_merchant * 20 AS int) AS string), 3, '0')) AS merchant_id",
-                "element_at(array('3C','FASHION','GROCERY','HOME','BEAUTY'), "
-                        + "cast(r_category * 5 AS int) + 1) AS category",
-                "cast(round(10 + r_amount * 990, 2) AS decimal(12,2)) AS amount",
-                "'CNY' AS currency",
-                "CASE WHEN r_status < 0.06 THEN 'REFUNDED' "
-                        + "WHEN r_status < 0.10 THEN 'CANCELLED' ELSE 'PAID' END AS status",
-                "to_timestamp(concat(cast(" + dayExpr + " AS string), ' ', "
-                        + "lpad(cast(cast(r_hour * 24 AS int) AS string), 2, '0'), ':00:00')) AS event_time",
-                "r_dup");
+        // 10% 的记录 event_time 落在前一天（迟到数据）
+        Dataset<Row> clean = spark.sql(
+                "SELECT concat('ORD-', ?, '-', lpad(cast(id AS string), 7, '0')) AS order_id,"
+                        + " concat('U', lpad(cast(cast(r_user * 5000 AS int) AS string), 5, '0')) AS user_id,"
+                        + " concat('M', lpad(cast(cast(r_merchant * 20 AS int) AS string), 3, '0')) AS merchant_id,"
+                        + " element_at(array('3C','FASHION','GROCERY','HOME','BEAUTY'), "
+                        + "cast(r_category * 5 AS int) + 1) AS category,"
+                        + " cast(round(10 + r_amount * 990, 2) AS decimal(12,2)) AS amount,"
+                        + " 'CNY' AS currency,"
+                        + " CASE WHEN r_status < 0.06 THEN 'REFUNDED' "
+                        + "WHEN r_status < 0.10 THEN 'CANCELLED' ELSE 'PAID' END AS status,"
+                        + " to_timestamp(concat(cast(date_sub(CAST(? AS DATE), "
+                        + "CASE WHEN r_late < 0.10 THEN 1 ELSE 0 END) AS string), ' ', "
+                        + "lpad(cast(cast(r_hour * 24 AS int) AS string), 2, '0'), ':00:00')) AS event_time,"
+                        + " r_dup"
+                        + " FROM " + view,
+                new Object[]{dt.toString(), dt.toString()});
 
         // 约 3% 的 PAID 单再造一条 2 小时后的 REFUNDED 记录，制造重复
         Dataset<Row> refunded = clean
