@@ -172,24 +172,24 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public void heartbeat(String runId, Instant now) {
-        jdbc.update("UPDATE " + TABLE + " SET heartbeat_ms=?, updated_ms=? WHERE run_id=? AND status='" + S_RUNNING + "'",
-                new Object[]{now.toEpochMilli(), now.toEpochMilli(), runId},
-                new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR});
+        jdbc.update("UPDATE " + TABLE + " SET heartbeat_ms=?, updated_ms=? WHERE run_id=? AND status=?",
+                new Object[]{now.toEpochMilli(), now.toEpochMilli(), runId, S_RUNNING},
+                new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.VARCHAR});
     }
 
     @Override
     public List<BatchRun> staleRunning(Instant before) {
-        return jdbc.query(SELECT + " WHERE status='" + S_RUNNING + "' AND heartbeat_ms < ? ORDER BY started_ms",
+        return jdbc.query(SELECT + " WHERE status=? AND heartbeat_ms < ? ORDER BY started_ms",
                 (rs, n) -> map(rs),
-                new Object[]{before.toEpochMilli()});
+                new Object[]{S_RUNNING, before.toEpochMilli()});
     }
 
     @Override
     public void markLost(String id, String message, Instant now) {
-        jdbc.update("UPDATE " + TABLE + " SET status='" + S_FAILED + "', exit_code=1, finished_ms=?,"
-                        + " duration_ms=? - started_ms, message=?, updated_ms=? WHERE run_id=? AND status='" + S_RUNNING + "'",
-                new Object[]{now.toEpochMilli(), now.toEpochMilli(), message, now.toEpochMilli(), id},
-                new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.BIGINT, Types.VARCHAR});
+        jdbc.update("UPDATE " + TABLE + " SET status=?, exit_code=1, finished_ms=?,"
+                        + " duration_ms=? - started_ms, message=?, updated_ms=? WHERE run_id=? AND status=?",
+                new Object[]{S_FAILED, now.toEpochMilli(), now.toEpochMilli(), message, now.toEpochMilli(), id, S_RUNNING},
+                new int[]{Types.VARCHAR, Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.BIGINT, Types.VARCHAR, Types.VARCHAR});
     }
 
     @Override
@@ -238,7 +238,7 @@ public class JdbcRunStateStore implements RunStateStore {
             // 名额检查 + 认领在同一把全局行锁内完成，跨实例也不会一起超员
             return jdbc.execute((ConnectionCallback<BatchRun>) conn -> {
                 DbLocks.lock(conn, DbLocks.DISPATCH);
-                if (jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status='" + S_RUNNING + "'", Long.class)
+                if (jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status=?", Long.class, S_RUNNING)
                         >= maxConcurrent) {
                     status.setRollbackOnly();
                     return null;
@@ -249,18 +249,19 @@ public class JdbcRunStateStore implements RunStateStore {
     }
 
     private BatchRun claimOnConnection(String owner) {
-        List<String> ids = jdbc.query("SELECT run_id FROM " + TABLE + " WHERE status='" + S_QUEUED + "' ORDER BY started_ms LIMIT 1",
-                (rs, n) -> rs.getString(1));
+        List<String> ids = jdbc.query("SELECT run_id FROM " + TABLE + " WHERE status=? ORDER BY started_ms LIMIT 1",
+                (rs, n) -> rs.getString(1),
+                new Object[]{S_QUEUED});
         if (ids.isEmpty()) {
             return null;
         }
         String id = ids.getFirst();
         long now = System.currentTimeMillis();
         int changed = jdbc.update("UPDATE " + TABLE
-                + " SET status='" + S_RUNNING + "', owner=?, heartbeat_ms=?, updated_ms=?"
-                + " WHERE run_id=? AND status='" + S_QUEUED + "'",
-                new Object[]{owner, now, now, id},
-                new int[]{Types.VARCHAR, Types.BIGINT, Types.BIGINT, Types.VARCHAR});
+                + " SET status=?, owner=?, heartbeat_ms=?, updated_ms=?"
+                + " WHERE run_id=? AND status=?",
+                new Object[]{S_RUNNING, owner, now, now, id, S_QUEUED},
+                new int[]{Types.VARCHAR, Types.VARCHAR, Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.VARCHAR});
         // 多实例可能同时看到同一个候选；只有抢到 update 的那个实例真正执行
         if (changed == 0) {
             return null;
