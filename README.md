@@ -30,7 +30,7 @@ Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的
 | Spark | 3.5.1 (Scala 2.12) | 批处理 |
 | Iceberg | 1.5.2 | `iceberg-spark-runtime-3.5_2.12` |
 | Trino | 476 | 服务端镜像 `trinodb/trino:476` + 官方 `trino-jdbc`（lake-service 查询与 lake-adhoc 即席查询共用） |
-| Spring Boot | 4.1.2 | WebFlux + Actuator，Spring Framework 7 / Reactor Netty / Jakarta EE 11 |
+| Spring Boot | 4.2.0 | WebFlux + Actuator，Spring Framework 7 / Reactor Netty / Jakarta EE 11 |
 | 控制台 | Vue 3.5 + vue-router 4 + Vite 7 | 独立工程 `lake-ui/`，构建产物进 `static/ui/` |
 | 日志 | log4j2（批处理）/ logback（服务层） | Spark 发行版绑死 log4j2；Web 服务用 Boot 默认的 logback |
 | Hadoop | 3.3.4 | 由 Spark 传递依赖，无需单独装 |

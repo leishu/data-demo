@@ -27,7 +27,7 @@ import java.util.List;
 /**
  * API 鉴权：HTTP Basic + 静态账号，无会话（每次请求都带凭据）。
  *
- * <p>为什么不上 Spring Security：本项目为了离线可构建锁定了 Boot 4.1 + Spring Security 7.0.4，
+ * <p>为什么不上 Spring Security：本项目为了离线可构建锁定了 Boot 4 + Spring Security 7.0.x，
  * 本地仓库里没有完全对齐的 starter；对 demo 来说一个无状态 Basic 过滤器足够，而且行为完全可控。
  * 生产环境把 {@code lake.security.mode} 设为 external：网关完成认证后注入身份头，
  * 服务只认带共享密钥的请求；没配密钥时一律拒绝（fail closed）。见 docs/SECURITY.md。</p>

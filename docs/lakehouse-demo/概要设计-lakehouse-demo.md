@@ -79,11 +79,11 @@ graph LR
 | Spark | 3.5.1 (Scala 2.12) | 批处理 |
 | Iceberg | 1.5.2 | 表格式层，format-version=2，CoW |
 | Trino | 476 | 即席查询（JDBC） |
-| Spring Boot | 4.1.2 | WebFlux + Actuator（Reactor Netty） |
+| Spring Boot | 4.2.0 | WebFlux + Actuator（Reactor Netty） |
 | Vue | 3.5 + Vite 7 | 控制台，构建产物进 `static/ui/` |
 | 存储 | 本地 Hadoop catalog / MinIO(S3) | 由 `platform.warehouse` 决定 |
 | 运行态库 | Postgres | `lake_batch.*` 与审计保险箱 |
-| 监控 | Micrometer 1.17 + Prometheus 2.54 + Grafana 11 | `/actuator/prometheus` + 可选 `monitoring` profile |
+| 监控 | Micrometer 1.18 + Prometheus 2.54 + Grafana 11 | `/actuator/prometheus` + 可选 `monitoring` profile |
 | 外部调度 | Airflow 2+ / DolphinScheduler / crontab | 经 REST 触发，不直连 Spark |
 | 存储清理 | bucket lifecycle + `remove_orphan_files` | S3/MinIO 非当前版本与孤儿文件 |
 
@@ -920,6 +920,10 @@ lake-service 编排链路、lake-ui）以及 §3.7 的支撑层（CI/全栈/冒�
 - **生产化收口（2026-11-22）**：`external` 鉴权 + Trino/Ranger 授权模板（§7.1、ADR-13），
   并发写乐观锁验证（§8.3 验证记录），
   `IcebergTableMetrics` 湖表指标（§4.16），bucket lifecycle + `remove_orphan_files`（§4.6、ADR-15）。
+- **依赖升级（2026-11-23）**：Spring Boot 4.1.2 → 4.2.0（Spring Framework 7.1.0）。同步把
+  `micrometer.version` 从 1.17.2 提到 1.18.0，与 Boot 4.2.0 自带的 micrometer-core 对齐，
+  避免 registry 与 core/observation 版本错位。验证：`mvn verify` 70 项通过、
+  `/v3/api-docs`（16 个 path）/`/swagger-ui.html` 可访问、宿主机冒烟 22 项与容器冒烟 19 项通过。
 
 ### 8.3 验证摘要
 
