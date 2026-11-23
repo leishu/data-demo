@@ -276,10 +276,11 @@ mvn -Ps3 -pl spark-batch dependency:go-offline
 MVN_PROFILE=s3 bin/dev-batch.sh --job all
 bin/infra.sh doctor
 
-# 即席查询（Trino 默认没起，先拉起来）
+# 即席查询（首次先 bin/build.sh 生成 lake-adhoc classpath；Trino 默认没起，先拉起来）
+bin/build.sh
 bin/infra.sh up trino
 bin/trino-query.sh --sql "select count(*) from iceberg.lake.silver_orders" --stats
-# ${var} 占位符由 SqlParams 预处理，缺参语句跳过；执行用 lake-adhoc 的官方 trino-jdbc
+# ${var} 占位符由 SqlParams 预处理，缺参语句跳过；执行用 lake-adhoc 的官方 trino-jdbc（java -cp 直起）
 bin/trino-query.sh --sql-file sql/adhoc/04_time_travel.sql --params snapshot_id=123456
 ```
 

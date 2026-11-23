@@ -100,7 +100,7 @@ graph LR
 | `spark-batch/` | **批处理写侧**：7 个 Spark 作业（init / ingest / transform / evolve / maintain / show / verify-sql），负责建表、入湖、分层加工与记账。 | ✅ |
 | `lake-service/` | **服务层**：Spring Boot 4 应用，查询/语义/批作业/审计 REST + SSE，内置 Vue 控制台静态资源。 | ✅ |
 | `lake-ui/` | **控制台前端**：Vue 3 + Vite 源码（查询台/表浏览/批作业/指标/配置五页），构建产物写进 `lake-service` 的 `static/ui/`。 | ✅（源码）/ ❌（产物） |
-| `bin/` | **便捷脚本**：build、build-ui、dev-batch、infra、install-docker、lake-service、stack（一键全栈）、smoke（端到端冒烟）、scheduled-batch（调度器入口）、storage-lifecycle（bucket 规则）、submit-batch、trino-query。 | ✅ |
+| `bin/` | **便捷脚本**：build、build-ui、dev-batch、infra、install-docker、lake-service、stack（一键全栈）、smoke（端到端冒烟）、scheduled-batch（调度器入口）、storage-lifecycle（bucket 规则）、submit-batch、trino-query；按用途分类见 §1.5。 | ✅ |
 | `.github/workflows/` | **CI**：PR/push 构建 + 单测 + 脚本/DAG/JSON 静态校验，主分支 E2E（Docker infra + Trino + 冒烟）。 | ✅ |
 | `scheduler/` | **外部调度接入示例**：Airflow DAG（每日 ingest→transform / 单独 maintain）、DolphinScheduler 任务入口与接入说明。 | ✅ |
 | `conf/` | **配置**：`platform.properties.example`（集群模式模板）与本地生效的 `platform.properties`（含密钥，不提交）。 | 模板 ✅ / 本地 ❌ |
@@ -118,6 +118,67 @@ graph LR
 根目录文件：`pom.xml`（Maven reactor 入口，声明 4 个模块）、`README.md`（快速开始与设计说明）、`lombok.config`、`.gitignore`、`.dockerignore`（全栈镜像构建上下文排除）。
 
 **与后续章节的对应关系**：4 个 Maven 模块 + 1 个前端工程在第 3 章逐一展开；`conf/` 是 §4.1 配置流的起点；`data/` 与 `warehouse/` 分别是 §4.3 入湖流的「输入」与各作业的「存储落点」；`sql/` 是 §4.14 即席查询与 SQL 校验的输入；`logs/` 是 §7.3 日志出口之一。
+
+### 1.5 脚本与工具清单（按用途分类）
+
+`bin/` 下的 12 个脚本不是同一类东西。只有 `infra.sh` / `stack.sh` / `storage-lifecycle.sh` 是运维工具，
+其余分别属于构建、本地开发、验证、查询、调度。按「谁用、什么时候用」分成 7 类：
+
+#### 1.5.1 构建与打包（改代码后跑一次）
+
+| 脚本 | 作用 | 前置 / 产出 |
+|---|---|---|
+| `bin/build.sh` | 全量构建 reactor：前端 → 4 个模块 jar → 预生成两个运行时 classpath | JDK 21；产出 `*/target/*.jar`、`spark-batch/target/classpath.txt`、`lake-adhoc/target/classpath.txt`；支持 `-DskipTests`、`-pl <module> -am` |
+| `bin/build-ui.sh` | 只构建 Vue 控制台，产物写进 `lake-service/src/main/resources/static/ui` | Node 18+；`--clean` 先重装 `node_modules` |
+
+#### 1.5.2 本地开发运行（人直接跑）
+
+| 脚本 | 作用 | 说明 |
+|---|---|---|
+| `bin/dev-batch.sh` | 用预构建 classpath 直接起 Spark 作业（`--job all/ingest/transform/evolve/maintain/show/verify-sql`） | 必须先 `bin/build.sh`；运行时不再 `mvn package`，并发作业不抢 `target/` |
+| `bin/lake-service.sh` | 服务层 `build / run / start / stop` | 默认 8088；后台日志 `logs/lake-service.out`；需要 JDK 21 |
+
+#### 1.5.3 环境与全栈（运维 / 环境准备）
+
+| 脚本 | 作用 | 说明 |
+|---|---|---|
+| `bin/infra.sh` | 起停本地 infra：`up [trino\|tools\|monitoring]`、`stop`、`restart`、`down`、`clean`、`ps`、`logs`、`doctor`、`psql` | 只管 Docker 容器，不碰 jar；默认只起 Postgres + MinIO + HMS |
+| `bin/install-docker.sh` | 一次性安装 Docker Engine + Compose v2 + buildx | Ubuntu 22.04/24.04、Debian 12；可配 apt 镜像源 |
+| `bin/stack.sh` | 一键全栈：infra + 宿主机批处理 + 容器化 `lake-service`；子命令 `up/down/clean/smoke/batch/logs/ps/build` | 容器内关闭批作业（`LAKE_BATCH_ENABLED=false`），批作业走 `stack.sh batch` |
+
+#### 1.5.4 验证与质量（CI / 发布前）
+
+| 脚本 | 作用 | 说明 |
+|---|---|---|
+| `bin/smoke.sh` | 端到端冒烟：健康 / 鉴权 / 查询 / SSE / 语义层 / 批作业 / 审计 / 只读守卫 / 指标抓取 | 宿主机 22 项、容器 19 项；失败非零退出；`SMOKE_BATCH=0` 跳过批作业 |
+
+#### 1.5.5 查询与分析（人 / 脚本直接读湖表）
+
+| 脚本 | 作用 | 说明 |
+|---|---|---|
+| `bin/trino-query.sh` | 即席查询 CLI：`--sql` / `--sql-file` / `--params` / `--stats` / `--list` / `--explain` / `--print-only` | `java -cp` 直起 `lake-adhoc`（classpath 由 `bin/build.sh` 预生成，不再走 Maven）；直连 Trino，无鉴权 / 配额 / 审计，面向运维和本地脚本 |
+
+`sql/adhoc/*.sql` 是给 `trino-query.sh --sql-file` 用的查询资产，不是可执行工具；`@trino-only` 标记的语句由 `verify-sql` 跳过。
+
+#### 1.5.6 调度与集群集成（机器调用）
+
+| 脚本 / 文件 | 作用 | 说明 |
+|---|---|---|
+| `bin/scheduled-batch.sh` | 调度器 → `POST /api/batch/{job}`，按 `(job, 逻辑日期)` 生成幂等键，默认等终态 | 退出码 0/1/2 直接当调度任务状态；失败回显日志尾部 |
+| `bin/submit-batch.sh` | 直接 `spark-submit` 到已有 YARN / K8s / standalone 集群 | 绕过 lake-service；前置 `spark-submit` 与集群可访问 Maven 仓库 |
+| `scheduler/airflow/dag_lakehouse_daily.py` | 每日 `ingest → transform` DAG | 调 `scheduled-batch.sh`，不直跑 Spark |
+| `scheduler/airflow/dag_lakehouse_maintain.py` | `maintain` 单独定时 DAG | 避免和写入抢资源 |
+| `scheduler/dolphinscheduler/run_lake_job.sh` | DolphinScheduler SHELL 任务入口 | 参数：作业名 + 业务日期 |
+
+#### 1.5.7 存储治理（对象存储管理员）
+
+| 脚本 | 作用 | 说明 |
+|---|---|---|
+| `bin/storage-lifecycle.sh` | 把 `infra/storage/lifecycle.json` 应用到 S3 / MinIO bucket | 需要 AWS CLI v2 与 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`；`--dry-run` 只打印 |
+
+**怎么记**：`build*` 是构建期工具；`dev-batch` / `lake-service` / `trino-query` 是给人用的本地工具；
+`infra` / `stack` / `storage-lifecycle` 是运维工具；`smoke` 是 CI / 发布检查；
+`scheduled-batch` / `submit-batch` / `scheduler/*` 是给调度器或集群用的机器接口。
 
 ---
 
@@ -301,6 +362,8 @@ sequenceDiagram
 - **可观测性**：Micrometer + Prometheus registry 暴露 `/actuator/prometheus`，可选 `monitoring` profile 起 Prometheus/Grafana；`IcebergTableMetrics` 补表级指标。
 - **外部调度**：`bin/scheduled-batch.sh` 是调度器与服务之间的薄契约，Airflow/DolphinScheduler/crontab 都通过它触发作业。
 - **存储治理**：Iceberg 表属性 + bucket lifecycle + `remove_orphan_files` 三层清理。
+- **脚本分类**：构建、本地开发、环境运维、验证、查询、调度、存储治理七类工具互不替代，
+  完整清单与前置条件见 §1.5；本节只说明它们接入的架构位置。
 
 ---
 
@@ -601,8 +664,9 @@ staleRunning(now - 120s) → 查湖表 ops.batch_runs
 
 ```
 bin/trino-query.sh --sql-file <脚本> [--params k=v] [--explain] [--print-only]
-  → shell 只把 --sql 内联落到临时文件，其余参数原样转发
-  → 一次 mvn exec:java（lake-adhoc:TrinoQuery）：
+  → shell 把参数原样交给 java（只把 --sql=... 拆成 --sql value），不再落临时文件
+  → java -cp 直起（lake-adhoc/target/classes + platform-common/target/classes + 预生成 classpath.txt）
+       com.demo.lake.adhoc.TrinoQuery：
        ① PlatformConfig.load() 拿 trinoJdbcUrl()/trinoUser()/trinoSource()
        ② SqlParams.prepare()：SqlScript.split() 精确切句（跳过注释/字符串里的分号）
           · ${key} → value 替换；仍有残留占位符 = 缺参，整条语句跳过
@@ -613,11 +677,11 @@ bin/trino-query.sh --sql-file <脚本> [--params k=v] [--explain] [--print-only]
   → 输出：+----+ 边框表格（CJK 宽字符对齐由 TableFormatter 处理）
 ```
 
-〔FACT｜bin/trino-query.sh:1-58〕〔FACT｜lake-adhoc/TrinoQuery.java:39-113〕〔FACT｜lake-adhoc/TrinoClient.java:34-98〕
+〔FACT｜bin/trino-query.sh:1-47〕〔FACT｜bin/build.sh:91-101〕〔FACT｜lake-adhoc/TrinoQuery.java:39-113〕〔FACT｜lake-adhoc/TrinoClient.java:34-98〕
 
 **结果输出**：自研的 `TableFormatter`（纯显示层，约 110 行）按 code point 计算显示宽度，组合符号占 0 列、CJK/全角/emoji 占 2 列，实测中文表头不错位；`Timestamp` 输出 ISO-8601 绝对时刻，不受 JVM 时区影响。这是在官方 JDBC 驱动之上唯一保留的自研显示逻辑。
 
-与「官方 CLI 方案」相比：删掉了 `docker exec` / `TERM=dumb` / `--output-format=ALIGNED` 等进程外适配，链路从两次进程启动缩短为一次；结果行数恢复客户端截断（`--limit`，默认 200），不再依赖 SQL 的 `LIMIT`。保留的能力：`--params` 的 `${var}` 替换与缺参跳过、`--explain`、`--list`、`--print-only`、`--stats`。
+与「官方 CLI 方案」相比：删掉了 `docker exec` / `TERM=dumb` / `--output-format=ALIGNED` 等进程外适配，链路从两次进程启动缩短为一次；classpath 由 `bin/build.sh` 预生成后，运行时也不再启动 Maven（实测单次查询约 0.6s，旧 `mvn exec:java` 约 3s+）。结果行数恢复客户端截断（`--limit`，默认 200），不再依赖 SQL 的 `LIMIT`。保留的能力：`--params` 的 `${var}` 替换与缺参跳过、`--explain`、`--list`、`--print-only`、`--stats`。
 
 **端到端实测**（Trino 476 容器，2026-11-20，官方 trino-jdbc 版）：中文列对齐、真实数据查询、`--stats` 的 QueryStats 输出均正常；`01_daily_revenue.sql` 返回近 7 天大盘（列含 `refund_rate`，值为 0.09 的比例，与语义层口径一致）；`04_time_travel.sql --params snapshot_id=<真实快照ID>` 三条语句（快照列表 / 按快照读 / 按时间点读）均正常执行；不带参数时缺参语句正确跳过。
 
@@ -836,7 +900,7 @@ erDiagram
   | 官方 CLI（中间方案） | 执行层零自研 | 依赖 CLI 二进制/容器访问，跨环境失效；非 TTY 输出需脏适配；两次进程启动 |
   | 官方 trino-jdbc + 薄封装（**采用**） | 协议层用官方 client、与 lake-service 同一套；只需 JDBC URL；一次进程启动；配置同源 | 表格显示层需自研（纯显示逻辑，约 110 行） |
 
-- **采用**：删 `trino-adhoc`，建 `lake-adhoc` 模块——`SqlParams`（在 platform-common，复用 `SqlScript.split()` 做 `${var}` 替换 + 缺参跳过）+ `TrinoClient`（官方 trino-jdbc 薄封装，协议层交给驱动）+ `TableFormatter`（纯显示层）。`bin/trino-query.sh` 只做一次 `mvn exec:java` 的参数转发。〔FACT｜lake-adhoc/TrinoQuery.java:17-22〕〔FACT｜platform-common/cli/SqlParams.java:9-17〕
+- **采用**：删 `trino-adhoc`，建 `lake-adhoc` 模块——`SqlParams`（在 platform-common，复用 `SqlScript.split()` 做 `${var}` 替换 + 缺参跳过）+ `TrinoClient`（官方 trino-jdbc 薄封装，协议层交给驱动）+ `TableFormatter`（纯显示层）。`bin/trino-query.sh` 只做 `java -cp` 的参数转发，classpath 由 `bin/build.sh` 预生成，运行时不再依赖 Maven。〔FACT｜lake-adhoc/TrinoQuery.java:17-22〕〔FACT｜platform-common/cli/SqlParams.java:9-17〕
 - **后果**：`verify-sql` 与 lake-service 查询链路不受影响；客户端截断（`--limit`，默认 200）、中文对齐、`--stats` 全部保留且实测通过（详见 §4.14）；唯一自研部分是显示层 `TableFormatter`，不涉及任何 Trino 协议实现。
 
 ### ADR-12：外部调度经服务 API 触发，不直连 Spark
@@ -924,6 +988,10 @@ lake-service 编排链路、lake-ui）以及 §3.7 的支撑层（CI/全栈/冒�
   `micrometer.version` 从 1.17.2 提到 1.18.0，与 Boot 4.2.0 自带的 micrometer-core 对齐，
   避免 registry 与 core/observation 版本错位。验证：`mvn verify` 70 项通过、
   `/v3/api-docs`（16 个 path）/`/swagger-ui.html` 可访问、宿主机冒烟 22 项与容器冒烟 19 项通过。
+- **即席查询启动优化（2026-11-23）**：`bin/build.sh` 预生成 `lake-adhoc/target/classpath.txt`，
+  `bin/trino-query.sh` 从 `mvn exec:java` 改为 `java -cp` 直起，去掉每次查询的 Maven 启动；
+  `--sql` 不再需要落临时文件（参数直接交给 JVM）。新增 §1.5 按用途区分构建/开发/运维/验证/查询/调度/存储治理脚本。
+  验证：`select 1` 单次约 0.6s（旧方式 3s+），`--sql=...`、`--sql-file`、`--params`、缺参跳过均正常。
 
 ### 8.3 验证摘要
 
@@ -936,6 +1004,7 @@ lake-service 编排链路、lake-ui）以及 §3.7 的支撑层（CI/全栈/冒�
 | 并发写 | 双写入者冲突为 `CommitFailedException` 或内部重试，最终行数与成功数一致 |
 | 存储清理 | `bin/dev-batch.sh --job maintain --orphan-retention-hours 168` 跑通，孤儿文件列为 0 |
 | 全栈 | `bin/stack.sh up --no-data` + `bin/stack.sh smoke` 容器模式 19 项全过 |
+| 即席查询 CLI | `java -cp` 直起，单次 `select 1` 约 0.6s；`--sql=...` / `--sql-file` / `--params` / 缺参跳过正常 |
 
 ### 8.4 待确认项
 

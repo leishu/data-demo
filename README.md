@@ -267,7 +267,7 @@ bin/trino-query.sh --sql-file sql/adhoc/04_time_travel.sql --params snapshot_id=
 
 > 即席查询由 `lake-adhoc` 模块承载：协议层用**官方 `trino-jdbc`**（与 lake-service 同一套 client，只要 JDBC URL，不依赖 `trino` 命令或 `docker exec`），
 > 项目只保留 `${var}` 预处理（`platform-common` 的 `SqlParams`，复用 `SqlScript.split()` 切句）和表格显示层（`TableFormatter`，处理中文对齐）。
-> 一次 `mvn exec:java` 完成预处理 + 执行 + 输出；`--limit`（默认 200）做客户端截断。
+> `bin/build.sh` 预生成 classpath，`trino-query.sh` 用 `java -cp` 直起（不再每次走 Maven），一次 JVM 完成预处理 + 执行 + 输出；`--limit`（默认 200）做客户端截断。
 
 > 安装、镜像加速、端口、扩展新依赖（Kafka/ClickHouse/Redis……）和排错，全部见
 > **[`infra/README.md`](infra/README.md)**。

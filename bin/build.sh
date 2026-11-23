@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 全量构建：整个 reactor 要用 JDK 21（lake-service 编译目标是 21，其余模块编译目标仍是 11）
-#   bin/build.sh                     打包（含测试）
+#   bin/build.sh                     打包（含测试）+ 预生成 spark-batch / lake-adhoc 运行时 classpath
 #   bin/build.sh -DskipTests         跳过测试
 #   bin/build.sh -pl spark-batch -am 只构建单个模块（这种用法 JDK 11 也能跑）
 set -euo pipefail
@@ -86,4 +86,15 @@ if [[ -d spark-batch/target/classes ]]; then
   mvn -q -B "${REPO_ARGS[@]}" -Ps3 -pl spark-batch -am \
     dependency:build-classpath \
     -Dmdep.outputFile="${PWD}/spark-batch/target/classpath.txt"
+fi
+
+# 预生成 lake-adhoc 运行时 classpath：trino-query.sh 用 java -cp 直起，
+# 不再每次查询都付一遍 Maven + JVM 启动开销（SQL 参数也就不用再绕 exec.args 分词）。
+if [[ -d lake-adhoc/target/classes ]]; then
+  echo "生成 lake-adhoc 运行时 classpath ..."
+  # 固定插件版本，避免不同 Maven 默认版本（2.8 / 3.x）行为漂移；-DincludeScope=runtime 两者都支持
+  mvn -q -B "${REPO_ARGS[@]}" -pl lake-adhoc -am \
+    org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath \
+    -DincludeScope=runtime \
+    -Dmdep.outputFile=target/classpath.txt
 fi
