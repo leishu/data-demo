@@ -86,7 +86,7 @@ public class LakeProperties {
         @Getter
         @Setter
         public static class Kubernetes {
-            /** in-cluster 时用 https://kubernetes.default.svc，本地调试可指到代理 */
+            /** in-cluster 时用 <a href="https://kubernetes.default.svc">...</a>，本地调试可指到代理 */
             private String apiUrl = "https://kubernetes.default.svc";
             private String namespace = "default";
             private String image = "spark:3.5.1";
@@ -140,8 +140,8 @@ public class LakeProperties {
      *
      * <p>生产环境请关掉这里的 enabled，改由前面的网关/IdP 做认证和授权；
      * 明文口令只适合本机演示（{noop} 前缀表示没有哈希）。</p>
-     */
-    /** 从 Iceberg 元数据表采集的表级指标（文件数 / 平均文件大小 / 快照数） */
+     *
+    ** 从 Iceberg 元数据表采集的表级指标（文件数 / 平均文件大小 / 快照数） */
     @Getter
     @Setter
     public static class Metrics {

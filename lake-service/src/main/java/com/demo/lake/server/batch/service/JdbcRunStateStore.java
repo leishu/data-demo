@@ -90,7 +90,8 @@ public class JdbcRunStateStore implements RunStateStore {
         List<Long> found = jdbc.query(
                 "SELECT 1 FROM information_schema.columns WHERE LOWER(table_schema)='lake_batch'"
                         + " AND LOWER(table_name)='batch_runs' AND LOWER(column_name)=?",
-                new Object[]{name}, (rs, n) -> rs.getLong(1));
+                (rs, n) -> rs.getLong(1),
+                new Object[]{name});
         if (found.isEmpty()) {
             jdbc.execute("ALTER TABLE " + TABLE + " ADD COLUMN " + ddl);
         }
@@ -108,9 +109,10 @@ public class JdbcRunStateStore implements RunStateStore {
             DbLocks.lock(conn, DbLocks.SUBMIT);
             List<String> existing = jdbc.query(
                     "SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?",
-                    new Object[]{key}, (rs, n) -> rs.getString(1));
+                    (rs, n) -> rs.getString(1),
+                    new Object[]{key});
             if (!existing.isEmpty()) {
-                return existing.get(0);
+                return existing.getFirst();
             }
             jdbc.update(INSERT_RUN, bindRun(run, owner), INSERT_RUN_TYPES);
             jdbc.update("INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)", key, run.id());
@@ -150,13 +152,17 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public Optional<BatchRun> find(String id) {
-        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?", new Object[]{id}, (rs, n) -> map(rs));
+        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?",
+                (rs, n) -> map(rs),
+                new Object[]{id});
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Override
     public List<BatchRun> recent(int limit) {
-        return jdbc.query(SELECT + " ORDER BY started_ms DESC LIMIT ?", new Object[]{limit}, (rs, n) -> map(rs));
+        return jdbc.query(SELECT + " ORDER BY started_ms DESC LIMIT ?",
+                (rs, n) -> map(rs),
+                new Object[]{limit});
     }
 
     @Override
@@ -169,7 +175,8 @@ public class JdbcRunStateStore implements RunStateStore {
     @Override
     public List<BatchRun> staleRunning(Instant before) {
         return jdbc.query(SELECT + " WHERE status='RUNNING' AND heartbeat_ms < ? ORDER BY started_ms",
-                new Object[]{before.toEpochMilli()}, (rs, n) -> map(rs));
+                (rs, n) -> map(rs),
+                new Object[]{before.toEpochMilli()});
     }
 
     @Override
@@ -183,8 +190,9 @@ public class JdbcRunStateStore implements RunStateStore {
     @Override
     public Optional<BatchRun> findByIdempotencyKey(String key) {
         List<String> ids = jdbc.query("SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?",
-                new Object[]{key}, (rs, n) -> rs.getString(1));
-        return ids.isEmpty() ? Optional.empty() : find(ids.get(0));
+                (rs, n) -> rs.getString(1),
+                new Object[]{key});
+        return ids.isEmpty() ? Optional.empty() : find(ids.getFirst());
     }
 
     @Override
@@ -241,7 +249,7 @@ public class JdbcRunStateStore implements RunStateStore {
         if (ids.isEmpty()) {
             return null;
         }
-        String id = ids.get(0);
+        String id = ids.getFirst();
         long now = System.currentTimeMillis();
         int changed = jdbc.update("UPDATE " + TABLE
                 + " SET status='RUNNING', owner=?, heartbeat_ms=?, updated_ms=?"
@@ -252,8 +260,10 @@ public class JdbcRunStateStore implements RunStateStore {
         if (changed == 0) {
             return null;
         }
-        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?", new Object[]{id}, (rs, n) -> map(rs));
-        return rows.isEmpty() ? null : rows.get(0);
+        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?",
+                (rs, n) -> map(rs),
+                new Object[]{id});
+        return rows.isEmpty() ? null : rows.getFirst();
     }
 
     @Override
