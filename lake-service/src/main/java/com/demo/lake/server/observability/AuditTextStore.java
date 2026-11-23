@@ -6,19 +6,16 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import javax.sql.DataSource;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
@@ -42,16 +39,16 @@ public class AuditTextStore {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final LakeProperties props;
-    private final DataSource dataSource;
+    private final JdbcTemplate jdbc;
     private final MeterRegistry registry;
     /** 按 key_id 存的密钥环：轮换后旧编号仍然能解出老原文 */
     private final Map<String, SecretKeySpec> keys = new HashMap<>();
     private Counter decryptErrors;
 
-    public AuditTextStore(LakeProperties props, @Qualifier("stateDataSource") DataSource dataSource,
+    public AuditTextStore(LakeProperties props, @Qualifier("stateJdbc") JdbcTemplate jdbc,
                           MeterRegistry registry) {
         this.props = props;
-        this.dataSource = dataSource;
+        this.jdbc = jdbc;
         this.registry = registry;
     }
 
@@ -82,24 +79,20 @@ public class AuditTextStore {
                     + "，请先补齐 LAKE_AUDIT_KEY 或 lake.audit.keys." + props.getAudit().getKeyId());
         }
         decryptErrors = registry.counter("lake.audit.vault.decrypt.error");
-        try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
-            stmt.execute("CREATE SCHEMA IF NOT EXISTS lake_audit");
-            stmt.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
-                    + "  event_id VARCHAR(64) PRIMARY KEY,\n"
-                    + "  actor VARCHAR(80) NOT NULL,\n"
-                    + "  client_ip VARCHAR(64),\n"
-                    + "  at_ms BIGINT NOT NULL,\n"
-                    + "  expires_at BIGINT NOT NULL,\n"
-                    + "  legal_hold BOOLEAN NOT NULL DEFAULT FALSE,\n"
-                    + "  key_id VARCHAR(32) NOT NULL,\n"
-                    + "  redacted BOOLEAN NOT NULL,\n"
-                    + "  nonce BYTEA,\n"
-                    + "  payload BYTEA\n"
-                    + ")");
-            log.info("查询原文保险箱就绪: {} (retention={}d)", TABLE, props.getAudit().getRetentionDays());
-        } catch (SQLException e) {
-            throw new IllegalStateException("查询原文保险箱表初始化失败", e);
-        }
+        jdbc.execute("CREATE SCHEMA IF NOT EXISTS lake_audit");
+        jdbc.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
+                + "  event_id VARCHAR(64) PRIMARY KEY,\n"
+                + "  actor VARCHAR(80) NOT NULL,\n"
+                + "  client_ip VARCHAR(64),\n"
+                + "  at_ms BIGINT NOT NULL,\n"
+                + "  expires_at BIGINT NOT NULL,\n"
+                + "  legal_hold BOOLEAN NOT NULL DEFAULT FALSE,\n"
+                + "  key_id VARCHAR(32) NOT NULL,\n"
+                + "  redacted BOOLEAN NOT NULL,\n"
+                + "  nonce BYTEA,\n"
+                + "  payload BYTEA\n"
+                + ")");
+        log.info("查询原文保险箱就绪: {} (retention={}d)", TABLE, props.getAudit().getRetentionDays());
     }
 
     /** 审计事件落库后调用，eventId 用来把原文和普通审计事件关联起来 */
@@ -116,23 +109,12 @@ public class AuditTextStore {
                     keys.get(props.getAudit().getKeyId()));
             long now = System.currentTimeMillis();
             long expires = now + Math.max(1, props.getAudit().getRetentionDays()) * 86_400_000L;
-
-            try (Connection conn = dataSource.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(
-                         "INSERT INTO " + TABLE + " (event_id, actor, client_ip, at_ms, expires_at,"
-                                 + " legal_hold, key_id, redacted, nonce, payload) VALUES (?,?,?,?,?,?,?,?,?,?)")) {
-                ps.setString(1, eventId);
-                ps.setString(2, actor == null ? "-" : actor);
-                ps.setString(3, clientIp);
-                ps.setLong(4, now);
-                ps.setLong(5, expires);
-                ps.setBoolean(6, false);
-                ps.setString(7, props.getAudit().getKeyId());
-                ps.setBoolean(8, redacted);
-                ps.setBytes(9, nonce);
-                ps.setBytes(10, payload);
-                ps.executeUpdate();
-            }
+            jdbc.update("INSERT INTO " + TABLE + " (event_id, actor, client_ip, at_ms, expires_at,"
+                            + " legal_hold, key_id, redacted, nonce, payload) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    new Object[]{eventId, actor == null ? "-" : actor, clientIp, now, expires,
+                            false, props.getAudit().getKeyId(), redacted, nonce, payload},
+                    new int[]{Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.BIGINT, Types.BIGINT,
+                            Types.BOOLEAN, Types.VARCHAR, Types.BOOLEAN, Types.BINARY, Types.BINARY});
         } catch (Exception e) {
             // 保险箱是合规能力，但不能让一次审计写入把用户查询搞挂
             log.error("查询原文写入保险箱失败 event={}: {}", eventId, e.getMessage());
@@ -143,36 +125,35 @@ public class AuditTextStore {
         if (!enabled() || eventId == null || !EVENT_ID.matcher(eventId).matches()) {
             return Optional.empty();
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT actor, client_ip, at_ms, expires_at, legal_hold, key_id, redacted, nonce, payload"
-                             + " FROM " + TABLE + " WHERE event_id=?")) {
-            ps.setString(1, eventId);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    return Optional.empty();
-                }
-                String rowKeyId = rs.getString("key_id");
-                SecretKeySpec rowKey = keys.get(rowKeyId);
-                if (rowKey == null) {
-                    throw new IllegalStateException("审计密钥环缺少 key_id=" + rowKeyId
-                            + "（记录 event=" + eventId + "），请把旧密钥加进 lake.audit.keys 后重试");
-                }
-                byte[] nonce = rs.getBytes("nonce");
-                byte[] payload = rs.getBytes("payload");
-                byte[] plain;
-                try {
-                    plain = open(payload, eventId, nonce, rowKey);
-                } catch (Exception e) {
-                    throw new IllegalStateException("查询原文解密失败 event=" + eventId
-                            + " key_id=" + rowKeyId + "，密钥可能配错或数据已损坏", e);
-                }
-                String sql = new String(plain, StandardCharsets.UTF_8);
-                return Optional.of(new TextRecord(eventId, rs.getString("actor"), rs.getString("client_ip"),
-                        rs.getLong("at_ms"), rs.getLong("expires_at"), rs.getBoolean("legal_hold"),
-                        rowKeyId, rs.getBoolean("redacted"), sql));
-            }
-        } catch (SQLException e) {
+        try {
+            return jdbc.query("SELECT actor, client_ip, at_ms, expires_at, legal_hold, key_id, redacted, nonce, payload"
+                            + " FROM " + TABLE + " WHERE event_id=?",
+                    new Object[]{eventId},
+                    rs -> {
+                        if (!rs.next()) {
+                            return Optional.empty();
+                        }
+                        String rowKeyId = rs.getString("key_id");
+                        SecretKeySpec rowKey = keys.get(rowKeyId);
+                        if (rowKey == null) {
+                            throw new IllegalStateException("审计密钥环缺少 key_id=" + rowKeyId
+                                    + "（记录 event=" + eventId + "），请把旧密钥加进 lake.audit.keys 后重试");
+                        }
+                        byte[] nonce = rs.getBytes("nonce");
+                        byte[] payload = rs.getBytes("payload");
+                        byte[] plain;
+                        try {
+                            plain = open(payload, eventId, nonce, rowKey);
+                        } catch (Exception e) {
+                            throw new IllegalStateException("查询原文解密失败 event=" + eventId
+                                    + " key_id=" + rowKeyId + "，密钥可能配错或数据已损坏", e);
+                        }
+                        String sql = new String(plain, StandardCharsets.UTF_8);
+                        return Optional.of(new TextRecord(eventId, rs.getString("actor"), rs.getString("client_ip"),
+                                rs.getLong("at_ms"), rs.getLong("expires_at"), rs.getBoolean("legal_hold"),
+                                rowKeyId, rs.getBoolean("redacted"), sql));
+                    });
+        } catch (DataAccessException e) {
             log.warn("读取查询原文失败 event={}: {}", eventId, e.getMessage());
             return Optional.empty();
         } catch (IllegalStateException e) {
@@ -188,13 +169,10 @@ public class AuditTextStore {
         if (!enabled() || eventId == null || !EVENT_ID.matcher(eventId).matches()) {
             return false;
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "UPDATE " + TABLE + " SET legal_hold=? WHERE event_id=?")) {
-            ps.setBoolean(1, hold);
-            ps.setString(2, eventId);
-            return ps.executeUpdate() > 0;
-        } catch (SQLException e) {
+        try {
+            return jdbc.update("UPDATE " + TABLE + " SET legal_hold=? WHERE event_id=?",
+                    new Object[]{hold, eventId}, new int[]{Types.BOOLEAN, Types.VARCHAR}) > 0;
+        } catch (DataAccessException e) {
             log.warn("设置法律保全失败 event={}: {}", eventId, e.getMessage());
             return false;
         }
@@ -205,12 +183,9 @@ public class AuditTextStore {
         if (!enabled()) {
             return 0;
         }
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "DELETE FROM " + TABLE + " WHERE expires_at<? AND NOT legal_hold")) {
-            ps.setLong(1, now.toEpochMilli());
-            return ps.executeUpdate();
-        } catch (SQLException e) {
+        try {
+            return jdbc.update("DELETE FROM " + TABLE + " WHERE expires_at<? AND NOT legal_hold", now.toEpochMilli());
+        } catch (DataAccessException e) {
             log.warn("清理过期查询原文失败: {}", e.getMessage());
             return 0;
         }

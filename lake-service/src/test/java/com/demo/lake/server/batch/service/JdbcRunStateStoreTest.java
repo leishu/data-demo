@@ -4,6 +4,9 @@ import com.demo.lake.server.batch.model.BatchRun;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -31,7 +34,8 @@ class JdbcRunStateStoreTest {
     void setUp() {
         ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:state-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
-        store = new JdbcRunStateStore(ds);
+        store = new JdbcRunStateStore(new JdbcTemplate(ds),
+                new TransactionTemplate(new DataSourceTransactionManager(ds)));
         store.init();
     }
 

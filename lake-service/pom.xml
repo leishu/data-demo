@@ -60,6 +60,12 @@
       <groupId>com.zaxxer</groupId>
       <artifactId>HikariCP</artifactId>
     </dependency>
+    <!-- spring-jdbc：状态库 / 审计保险箱 / 配额的数据库访问改用 JdbcTemplate，
+         这种「手写 SQL + 自定义映射」场景要 JdbcTemplate 是足够轻，引入 JPA 反而过重 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
     <dependency>
       <groupId>io.trino</groupId>
       <artifactId>trino-jdbc</artifactId>

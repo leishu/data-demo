@@ -4,12 +4,18 @@ import com.demo.lake.common.config.PlatformConfig;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
+import javax.sql.DataSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -98,5 +104,29 @@ public class LakeConfiguration {
         hikari.setInitializationFailTimeout(-1);
         log.info("运行状态库 -> {} (pool={})", state.getUrl(), state.getPoolSize());
         return new HikariDataSource(hikari);
+    }
+
+    /** 状态库（Postgres）的数据库访问：运行态/审计保险箱/配额/日志都走 JdbcTemplate，统一从这里拿 */
+    @Bean
+    public JdbcTemplate stateJdbc(@Qualifier("stateDataSource") DataSource ds) {
+        return new JdbcTemplate(ds);
+    }
+
+    /** 状态库事务管理器：事务包住「查键+插记录+锁行+登记幂等键」等跨语句操作 */
+    @Bean
+    public PlatformTransactionManager stateTxManager(@Qualifier("stateDataSource") DataSource ds) {
+        return new DataSourceTransactionManager(ds);
+    }
+
+    /** 便于 TransactionTemplate 式的调用：事务包住多条 SQL */
+    @Bean
+    public TransactionTemplate stateTx(PlatformTransactionManager txManager) {
+        return new TransactionTemplate(txManager);
+    }
+
+    /** Trino 连接池的 JdbcTemplate；流式查询路径（SSE）仍从 getDataSource 原生取 */
+    @Bean
+    public JdbcTemplate trinoJdbc(@Qualifier("trinoDataSource") DataSource ds) {
+        return new JdbcTemplate(ds);
     }
 }

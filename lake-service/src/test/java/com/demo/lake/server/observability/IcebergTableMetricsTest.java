@@ -3,7 +3,9 @@ package com.demo.lake.server.observability;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.config.LakeProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,9 +31,10 @@ class IcebergTableMetricsTest {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         LakeProperties props = new LakeProperties();
         props.getMetrics().getIceberg().setTables(java.util.List.of("silver_orders"));
-        IcebergTableMetrics collector = new IcebergTableMetrics(registry, cfg, props, null);
+        // 用无元数据表的 H2 占位：collect 会抛 DataAccessException 被吞掉，只验证 gauge 写入
+        IcebergTableMetrics collector = new IcebergTableMetrics(registry, cfg, props, new JdbcTemplate(new JdbcDataSource()));
         collector.start();
-        collector.stop(); // 不真的连 Trino（DataSource=null 会被 collect 吞掉），只验证 gauge 写入
+        collector.stop();
 
         collector.update("silver_orders", 12, 4096.5, 49158, 3);
         assertEquals(12.0, registry.get("lake.iceberg.files").tag("table", "silver_orders").gauge().value());

@@ -11,13 +11,14 @@ import io.trino.jdbc.TrinoResultSet;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.StatementCallback;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 
-import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -48,8 +49,8 @@ public class QueryService {
     /** SSE 每批发多少行：太小帧数爆炸，太大首屏等得久 */
     private static final int STREAM_BATCH_ROWS = 200;
 
-    @Qualifier("trinoDataSource")
-    private final DataSource dataSource;
+    @Qualifier("trinoJdbc")
+    private final JdbcTemplate jdbc;
     private final LakeProperties props;
     private final PlatformConfig cfg;
     private final Scheduler blocking;
@@ -82,40 +83,41 @@ public class QueryService {
         int limit = (maxRows == null || maxRows <= 0) ? cap : Math.min(maxRows, cap);
 
         long start = System.nanoTime();
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement()) {
-            stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
-            try (ResultSet rs = stmt.executeQuery(safeSql)) {
-                ResultSetMetaData md = rs.getMetaData();
-                int columnCount = md.getColumnCount();
-                List<Column> columns = new ArrayList<>(columnCount);
-                for (int i = 1; i <= columnCount; i++) {
-                    columns.add(new Column(md.getColumnLabel(i), md.getColumnTypeName(i)));
-                }
-
-                List<List<String>> rows = new ArrayList<>();
-                boolean truncated = false;
-                while (rs.next()) {
-                    if (rows.size() >= limit) {
-                        truncated = true;
-                        break;
-                    }
-                    List<String> row = new ArrayList<>(columnCount);
+        try {
+            return jdbc.execute((StatementCallback<QueryResult>) stmt -> {
+                stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
+                try (ResultSet rs = stmt.executeQuery(safeSql)) {
+                    ResultSetMetaData md = rs.getMetaData();
+                    int columnCount = md.getColumnCount();
+                    List<Column> columns = new ArrayList<>(columnCount);
                     for (int i = 1; i <= columnCount; i++) {
-                        row.add(format(rs.getObject(i)));
+                        columns.add(new Column(md.getColumnLabel(i), md.getColumnTypeName(i)));
                     }
-                    rows.add(row);
-                }
 
-                long elapsedMs = (System.nanoTime() - start) / 1_000_000;
-                if (quiet) {
-                    log.debug("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
-                } else {
-                    log.info("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+                    List<List<String>> rows = new ArrayList<>();
+                    boolean truncated = false;
+                    while (rs.next()) {
+                        if (rows.size() >= limit) {
+                            truncated = true;
+                            break;
+                        }
+                        List<String> row = new ArrayList<>(columnCount);
+                        for (int i = 1; i <= columnCount; i++) {
+                            row.add(format(rs.getObject(i)));
+                        }
+                        rows.add(row);
+                    }
+
+                    long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+                    if (quiet) {
+                        log.debug("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+                    } else {
+                        log.info("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
+                    }
+                    return new QueryResult(columns, rows, rows.size(), truncated, elapsedMs, stats(rs));
                 }
-                return new QueryResult(columns, rows, rows.size(), truncated, elapsedMs, stats(rs));
-            }
-        } catch (SQLException e) {
+            });
+        } catch (RuntimeException e) {
             throw translate(e);
         }
     }
@@ -139,7 +141,7 @@ public class QueryService {
                 sink.error(e);
                 return;
             }
-            try (Connection conn = dataSource.getConnection();
+            try (Connection conn = jdbc.getDataSource().getConnection();
                  Statement stmt = conn.createStatement()) {
                 stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
                 try (ResultSet rs = stmt.executeQuery(safeSql)) {
@@ -243,13 +245,30 @@ public class QueryService {
         return raw;
     }
 
-    private static RuntimeException translate(SQLException e) {
-        String msg = e.getMessage() == null ? e.toString() : e.getMessage();
-        if (isConnectionIssue(e)) {
+    private static RuntimeException translate(Throwable e) {
+        SQLException se = findSqlException(e);
+        String msg = messageOf(se != null ? se : e);
+        if (se != null && isConnectionIssue(se)) {
             return new TrinoUnavailableException(
-                    "连不上 Trino，确认 coordinator 已启动（bin/infra.sh up trino）且 platform.trino.host/port 正确：" + msg, e);
+                    "连不上 Trino，确认 coordinator 已启动（bin/infra.sh up trino）且 platform.trino.host/port 正确：" + msg, se);
         }
-        return new QueryFailedException(msg, e.getSQLState(), e.getErrorCode(), e);
+        return new QueryFailedException(msg, se != null ? se.getSQLState() : null,
+                se != null ? se.getErrorCode() : 0, e);
+    }
+
+    /** jdbcTemplate 把 SQLException 翻译成 DataAccessException 后，原 SQLException 在 cause 链里 */
+    private static SQLException findSqlException(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof SQLException s) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    private static String messageOf(Throwable e) {
+        String m = e.getMessage();
+        return m != null ? m : e.toString();
     }
 
     /**

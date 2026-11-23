@@ -6,6 +6,7 @@ import com.demo.lake.server.query.service.QueryService;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import reactor.core.scheduler.Schedulers;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -28,7 +29,7 @@ class QueryServiceTest {
         hc.setConnectionTimeout(800);
         hc.setInitializationFailTimeout(-1);
         HikariDataSource ds = new HikariDataSource(hc);
-        return new QueryService(ds, new LakeProperties(), PlatformConfig.load(), Schedulers.immediate());
+        return new QueryService(new JdbcTemplate(ds), new LakeProperties(), PlatformConfig.load(), Schedulers.immediate());
     }
 
     @Test

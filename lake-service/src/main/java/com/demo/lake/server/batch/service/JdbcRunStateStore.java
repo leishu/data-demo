@@ -6,21 +6,22 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.Types;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * 用 Postgres 存运行态（复用 infra 的元数据库，不引入新组件）。
+ * 用 Postgres 存运行态（复用 infra 的元数据库；数据库访问走 `spring-jdbc` 的
+ * `JdbcTemplate` / `TransactionTemplate`，不引入新的数据库组件）。
  *
  * <p>表在服务启动时幂等创建；SQL 全是固定语句 + 占位符，没有 SQL 注入面。
  * 每条记录带 owner / heartbeat_ms：心跳只由「执行器还活着」的 run 续期，失联的对账后落终态。</p>
@@ -32,15 +33,29 @@ public class JdbcRunStateStore implements RunStateStore {
 
     private static final String TABLE = "lake_batch.batch_runs";
 
-    @Qualifier("stateDataSource")
-    private final DataSource dataSource;
+    private static final String SELECT = "SELECT run_id, job, command, status, exit_code, started_ms,"
+            + " finished_ms, duration_ms, log_file, message FROM " + TABLE;
+
+    private static final String INSERT_RUN = "INSERT INTO " + TABLE + " (run_id, job, command, status, exit_code,"
+            + " started_ms, finished_ms, duration_ms, log_file, message, owner, heartbeat_ms, updated_ms)"
+            + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+    // insert 各列的类型：null 值按列类型 setNull（默认推断会丢失列类型，跨 H2/Postgres 不稳）
+    private static final int[] INSERT_RUN_TYPES = new int[]{
+            Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.INTEGER,
+            Types.BIGINT, Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.VARCHAR,
+            Types.VARCHAR, Types.BIGINT, Types.BIGINT};
+
+    @Qualifier("stateJdbc")
+    private final JdbcTemplate jdbc;
+    @Qualifier("stateTx")
+    private final TransactionTemplate tx;
 
     @PostConstruct
     public void init() {
-        try (Connection conn = dataSource.getConnection();
-             var stmt = conn.createStatement()) {
-            stmt.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
-            stmt.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
+        try {
+            jdbc.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
+            jdbc.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
                     + "  run_id VARCHAR(80) PRIMARY KEY,\n"
                     + "  job VARCHAR(64) NOT NULL,\n"
                     + "  command VARCHAR(1000),\n"
@@ -56,174 +71,120 @@ public class JdbcRunStateStore implements RunStateStore {
                     + "  updated_ms BIGINT NOT NULL,\n"
                     + "  handle VARCHAR(255)\n"
                     + ")");
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_lake_batch_runs_started ON " + TABLE + "(started_ms DESC)");
+            jdbc.execute("CREATE INDEX IF NOT EXISTS idx_lake_batch_runs_started ON " + TABLE + "(started_ms DESC)");
             // 老库升级：幂等/调度引入的新列按需补上（Postgres 与 H2 都支持 information_schema）
-            ensureColumn(conn, "handle", "handle VARCHAR(255)");
-            stmt.execute("CREATE TABLE IF NOT EXISTS lake_batch.idempotency (\n"
+            ensureColumn("handle", "handle VARCHAR(255)");
+            jdbc.execute("CREATE TABLE IF NOT EXISTS lake_batch.idempotency (\n"
                     + "  idem_key VARCHAR(128) PRIMARY KEY,\n"
                     + "  run_id VARCHAR(80) NOT NULL\n"
                     + ")");
-            DbLocks.ensure(dataSource, DbLocks.SUBMIT, DbLocks.DISPATCH);
+            DbLocks.ensure(jdbc.getDataSource(), DbLocks.SUBMIT, DbLocks.DISPATCH);
             log.info("运行状态表就绪: {}", TABLE);
-        } catch (SQLException e) {
+        } catch (DataAccessException e) {
             // 不阻止启动：infra 没起时只读查询还能用，批作业接口会返回 503
             log.warn("运行状态表初始化失败（批作业接口暂不可用）: {}", e.getMessage());
         }
     }
 
-    private static void ensureColumn(Connection conn, String name, String ddl) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
+    private void ensureColumn(String name, String ddl) {
+        List<Long> found = jdbc.query(
                 "SELECT 1 FROM information_schema.columns WHERE LOWER(table_schema)='lake_batch'"
-                        + " AND LOWER(table_name)='batch_runs' AND LOWER(column_name)=?")) {
-            ps.setString(1, name);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return;
-                }
-            }
-        }
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute("ALTER TABLE " + TABLE + " ADD COLUMN " + ddl);
+                        + " AND LOWER(table_name)='batch_runs' AND LOWER(column_name)=?",
+                new Object[]{name}, (rs, n) -> rs.getLong(1));
+        if (found.isEmpty()) {
+            jdbc.execute("ALTER TABLE " + TABLE + " ADD COLUMN " + ddl);
         }
     }
 
-    private static final String SELECT = "SELECT run_id, job, command, status, exit_code, started_ms,"
-            + " finished_ms, duration_ms, log_file, message FROM " + TABLE;
-
-    private static final String INSERT_RUN = "INSERT INTO " + TABLE + " (run_id, job, command, status, exit_code,"
-            + " started_ms, finished_ms, duration_ms, log_file, message, owner, heartbeat_ms, updated_ms)"
-            + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
-
     @Override
     public void insert(BatchRun run, String owner) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(INSERT_RUN)) {
-            bindRun(ps, run, owner);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("运行状态库写入失败: " + e.getMessage(), e);
-        }
+        jdbc.update(INSERT_RUN, bindRun(run, owner), INSERT_RUN_TYPES);
     }
 
     @Override
     public String insertWithIdempotency(BatchRun run, String owner, String key) {
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                // 全局提交锁：同一时刻只有一个请求在做「查键 + 插记录 + 登记键」
-                DbLocks.lock(conn, DbLocks.SUBMIT);
-                String existing = findIdempotencyRunId(conn, key);
-                if (existing != null) {
-                    conn.commit();
-                    return existing;
-                }
-                try (PreparedStatement ps = conn.prepareStatement(INSERT_RUN)) {
-                    bindRun(ps, run, owner);
-                    ps.executeUpdate();
-                }
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)")) {
-                    ps.setString(1, key);
-                    ps.setString(2, run.id());
-                    ps.executeUpdate();
-                }
-                conn.commit();
-                return run.id();
-            } catch (Exception e) {
-                conn.rollback();
-                throw e;
+        return tx.execute(status -> jdbc.execute((ConnectionCallback<String>) conn -> {
+            // 全局提交锁：同一时刻只有一个请求在做「查键 + 插记录 + 登记键」
+            DbLocks.lock(conn, DbLocks.SUBMIT);
+            List<String> existing = jdbc.query(
+                    "SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?",
+                    new Object[]{key}, (rs, n) -> rs.getString(1));
+            if (!existing.isEmpty()) {
+                return existing.get(0);
             }
-        } catch (SQLException e) {
-            throw new IllegalStateException("运行状态库写入失败: " + e.getMessage(), e);
-        }
+            jdbc.update(INSERT_RUN, bindRun(run, owner), INSERT_RUN_TYPES);
+            jdbc.update("INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)", key, run.id());
+            return run.id();
+        }));
     }
 
-    private static void bindRun(PreparedStatement ps, BatchRun run, String owner) throws SQLException {
-        ps.setString(1, run.id());
-        ps.setString(2, run.job());
-        ps.setString(3, run.command());
-        ps.setString(4, run.status());
-        setInt(ps, 5, run.exitCode());
-        ps.setLong(6, run.startedAt().toEpochMilli());
-        setNullableLong(ps, 7, run.finishedAt() == null ? null : run.finishedAt().toEpochMilli());
-        setNullableLong(ps, 8, run.durationMs());
-        ps.setString(9, run.logFile());
-        ps.setString(10, run.message());
-        ps.setString(11, owner);
-        ps.setLong(12, System.currentTimeMillis());
-        ps.setLong(13, System.currentTimeMillis());
+    private static Object[] bindRun(BatchRun run, String owner) {
+        long now = System.currentTimeMillis();
+        return new Object[]{
+                run.id(),
+                run.job(),
+                run.command(),
+                run.status(),
+                run.exitCode(),
+                run.startedAt().toEpochMilli(),
+                run.finishedAt() == null ? null : run.finishedAt().toEpochMilli(),
+                run.durationMs(),
+                run.logFile(),
+                run.message(),
+                owner,
+                now,
+                now,
+        };
     }
 
     @Override
     public void finish(BatchRun run) {
-        execute("UPDATE " + TABLE + " SET status=?, exit_code=?, finished_ms=?, duration_ms=?,"
-                        + " message=?, updated_ms=? WHERE run_id=?", ps -> {
-            ps.setString(1, run.status());
-            setInt(ps, 2, run.exitCode());
-            ps.setLong(3, run.finishedAt() == null ? System.currentTimeMillis() : run.finishedAt().toEpochMilli());
-            setNullableLong(ps, 4, run.durationMs());
-            ps.setString(5, run.message());
-            ps.setLong(6, System.currentTimeMillis());
-            ps.setString(7, run.id());
-        });
+        jdbc.update("UPDATE " + TABLE + " SET status=?, exit_code=?, finished_ms=?, duration_ms=?,"
+                        + " message=?, updated_ms=? WHERE run_id=?",
+                new Object[]{run.status(), run.exitCode(),
+                        run.finishedAt() == null ? System.currentTimeMillis() : run.finishedAt().toEpochMilli(),
+                        run.durationMs(), run.message(), System.currentTimeMillis(), run.id()},
+                new int[]{Types.VARCHAR, Types.INTEGER, Types.BIGINT, Types.BIGINT, Types.VARCHAR,
+                        Types.BIGINT, Types.VARCHAR});
     }
 
     @Override
     public Optional<BatchRun> find(String id) {
-        return queryOne(SELECT + " WHERE run_id=?", ps -> ps.setString(1, id));
+        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?", new Object[]{id}, (rs, n) -> map(rs));
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Override
     public List<BatchRun> recent(int limit) {
-        return queryList(SELECT + " ORDER BY started_ms DESC LIMIT ?", ps -> ps.setInt(1, limit));
+        return jdbc.query(SELECT + " ORDER BY started_ms DESC LIMIT ?", new Object[]{limit}, (rs, n) -> map(rs));
     }
 
     @Override
     public void heartbeat(String runId, Instant now) {
-        execute("UPDATE " + TABLE + " SET heartbeat_ms=?, updated_ms=? WHERE run_id=? AND status='RUNNING'", ps -> {
-            ps.setLong(1, now.toEpochMilli());
-            ps.setLong(2, now.toEpochMilli());
-            ps.setString(3, runId);
-        });
+        jdbc.update("UPDATE " + TABLE + " SET heartbeat_ms=?, updated_ms=? WHERE run_id=? AND status='RUNNING'",
+                new Object[]{now.toEpochMilli(), now.toEpochMilli(), runId},
+                new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR});
     }
 
     @Override
     public List<BatchRun> staleRunning(Instant before) {
-        return queryList(SELECT + " WHERE status='RUNNING' AND heartbeat_ms < ? ORDER BY started_ms",
-                ps -> ps.setLong(1, before.toEpochMilli()));
+        return jdbc.query(SELECT + " WHERE status='RUNNING' AND heartbeat_ms < ? ORDER BY started_ms",
+                new Object[]{before.toEpochMilli()}, (rs, n) -> map(rs));
     }
 
     @Override
     public void markLost(String id, String message, Instant now) {
-        execute("UPDATE " + TABLE + " SET status='FAILED', exit_code=1, finished_ms=?, duration_ms=? - started_ms,"
-                        + " message=?, updated_ms=? WHERE run_id=? AND status='RUNNING'", ps -> {
-            ps.setLong(1, now.toEpochMilli());
-            ps.setLong(2, now.toEpochMilli());
-            ps.setString(3, message);
-            ps.setLong(4, now.toEpochMilli());
-            ps.setString(5, id);
-        });
+        jdbc.update("UPDATE " + TABLE + " SET status='FAILED', exit_code=1, finished_ms=?, duration_ms=? - started_ms,"
+                        + " message=?, updated_ms=? WHERE run_id=? AND status='RUNNING'",
+                new Object[]{now.toEpochMilli(), now.toEpochMilli(), message, now.toEpochMilli(), id},
+                new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.BIGINT, Types.VARCHAR});
     }
 
     @Override
     public Optional<BatchRun> findByIdempotencyKey(String key) {
-        String runId;
-        try (Connection conn = dataSource.getConnection()) {
-            runId = findIdempotencyRunId(conn, key);
-        } catch (SQLException e) {
-            throw new IllegalStateException("读幂等键失败: " + e.getMessage(), e);
-        }
-        return runId == null ? Optional.empty() : find(runId);
-    }
-
-    private static String findIdempotencyRunId(Connection conn, String key) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?")) {
-            ps.setString(1, key);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getString(1) : null;
-            }
-        }
+        List<String> ids = jdbc.query("SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?",
+                new Object[]{key}, (rs, n) -> rs.getString(1));
+        return ids.isEmpty() ? Optional.empty() : find(ids.get(0));
     }
 
     @Override
@@ -232,10 +193,7 @@ public class JdbcRunStateStore implements RunStateStore {
             return;
         }
         try {
-            execute("INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)", ps -> {
-                ps.setString(1, key);
-                ps.setString(2, runId);
-            });
+            jdbc.update("INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)", key, runId);
         } catch (RuntimeException e) {
             // 并发重复提交：别人先插了，按已存在的记录处理
             log.debug("幂等键已存在 {}: {}", key, e.getMessage());
@@ -253,148 +211,56 @@ public class JdbcRunStateStore implements RunStateStore {
     }
 
     private int countByStatus(String status) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT COUNT(*) FROM " + TABLE + " WHERE status=?")) {
-            ps.setString(1, status);
-            try (ResultSet rs = ps.executeQuery()) {
-                rs.next();
-                return rs.getInt(1);
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("读运行状态失败: " + e.getMessage(), e);
-        }
+        return jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status=?", Long.class, status).intValue();
     }
 
     @Override
     public BatchRun claimNext(String owner) {
-        try (Connection conn = dataSource.getConnection()) {
-            return claimNextOnConnection(conn, owner);
-        } catch (SQLException e) {
-            throw new IllegalStateException("运行状态库读取失败: " + e.getMessage(), e);
-        }
+        return tx.execute(status -> claimOnConnection(owner));
     }
 
     @Override
     public BatchRun claimNextIfSlotAvailable(String owner, int maxConcurrent) {
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                // 名额检查 + 认领在同一把全局行锁内完成，跨实例也不会一起超员
+        return tx.execute(status -> {
+            // 名额检查 + 认领在同一把全局行锁内完成，跨实例也不会一起超员
+            return jdbc.execute((ConnectionCallback<BatchRun>) conn -> {
                 DbLocks.lock(conn, DbLocks.DISPATCH);
-                if (countRunning(conn) >= maxConcurrent) {
-                    conn.rollback();
+                if (jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status='RUNNING'", Long.class)
+                        >= maxConcurrent) {
+                    status.setRollbackOnly();
                     return null;
                 }
-                BatchRun claimed = claimNextOnConnection(conn, owner);
-                conn.commit();
-                return claimed;
-            } catch (Exception e) {
-                conn.rollback();
-                throw e;
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("运行状态库读取失败: " + e.getMessage(), e);
-        }
+                return claimOnConnection(owner);
+            });
+        });
     }
 
-    private static BatchRun claimNextOnConnection(Connection conn, String owner) throws SQLException {
-        String id = null;
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT run_id FROM " + TABLE + " WHERE status='QUEUED' ORDER BY started_ms LIMIT 1");
-             ResultSet rs = ps.executeQuery()) {
-            if (rs.next()) {
-                id = rs.getString(1);
-            }
-        }
-        if (id == null) {
+    private BatchRun claimOnConnection(String owner) {
+        List<String> ids = jdbc.query("SELECT run_id FROM " + TABLE + " WHERE status='QUEUED' ORDER BY started_ms LIMIT 1",
+                (rs, n) -> rs.getString(1));
+        if (ids.isEmpty()) {
             return null;
         }
+        String id = ids.get(0);
         long now = System.currentTimeMillis();
-        int changed;
-        try (PreparedStatement ps = conn.prepareStatement("UPDATE " + TABLE
+        int changed = jdbc.update("UPDATE " + TABLE
                 + " SET status='RUNNING', owner=?, heartbeat_ms=?, updated_ms=?"
-                + " WHERE run_id=? AND status='QUEUED'")) {
-            ps.setString(1, owner);
-            ps.setLong(2, now);
-            ps.setLong(3, now);
-            ps.setString(4, id);
-            changed = ps.executeUpdate();
-        }
+                + " WHERE run_id=? AND status='QUEUED'",
+                new Object[]{owner, now, now, id},
+                new int[]{Types.VARCHAR, Types.BIGINT, Types.BIGINT, Types.VARCHAR});
         // 多实例可能同时看到同一个候选；只有抢到 update 的那个实例真正执行
-        return changed == 0 ? null : findOnConnection(conn, id).orElse(null);
-    }
-
-    private static Optional<BatchRun> findOnConnection(Connection conn, String id) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(SELECT + " WHERE run_id=?")) {
-            ps.setString(1, id);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? Optional.of(map(rs)) : Optional.empty();
-            }
+        if (changed == 0) {
+            return null;
         }
-    }
-
-    private static int countRunning(Connection conn) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM " + TABLE + " WHERE status='RUNNING'");
-             ResultSet rs = ps.executeQuery()) {
-            rs.next();
-            return rs.getInt(1);
-        }
+        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?", new Object[]{id}, (rs, n) -> map(rs));
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     @Override
     public void setHandle(String runId, String handle) {
-        execute("UPDATE " + TABLE + " SET handle=?, updated_ms=? WHERE run_id=?", ps -> {
-            ps.setString(1, handle);
-            ps.setLong(2, System.currentTimeMillis());
-            ps.setString(3, runId);
-        });
-    }
-
-    @FunctionalInterface
-    private interface StatementBinder {
-        void bind(PreparedStatement ps) throws SQLException;
-    }
-
-    private void execute(String sql, StatementBinder binder) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            binder.bind(ps);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("运行状态库写入失败: " + e.getMessage(), e);
-        }
-    }
-
-    private int executeCount(String sql, StatementBinder binder) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            binder.bind(ps);
-            return ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("运行状态库写入失败: " + e.getMessage(), e);
-        }
-    }
-
-    private Optional<BatchRun> queryOne(String sql, StatementBinder binder) {
-        List<BatchRun> rows = queryList(sql, binder);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
-    }
-
-    private List<BatchRun> queryList(String sql, StatementBinder binder) {
-        List<BatchRun> out = new ArrayList<>();
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            binder.bind(ps);
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    out.add(map(rs));
-                }
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("运行状态库读取失败: " + e.getMessage(), e);
-        }
-        return out;
+        jdbc.update("UPDATE " + TABLE + " SET handle=?, updated_ms=? WHERE run_id=?",
+                new Object[]{handle, System.currentTimeMillis(), runId},
+                new int[]{Types.VARCHAR, Types.BIGINT, Types.VARCHAR});
     }
 
     private static BatchRun map(ResultSet rs) throws SQLException {
@@ -412,21 +278,5 @@ public class JdbcRunStateStore implements RunStateStore {
                 duration,
                 rs.getString("log_file"),
                 rs.getString("message"));
-    }
-
-    private static void setInt(PreparedStatement ps, int index, Integer value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.INTEGER);
-        } else {
-            ps.setInt(index, value);
-        }
-    }
-
-    private static void setNullableLong(PreparedStatement ps, int index, Long value) throws SQLException {
-        if (value == null) {
-            ps.setNull(index, java.sql.Types.BIGINT);
-        } else {
-            ps.setLong(index, value);
-        }
     }
 }

@@ -6,6 +6,9 @@ import com.demo.lake.server.query.QueryQuotaExceededException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.scheduler.Schedulers;
 
 import java.sql.Connection;
@@ -28,7 +31,8 @@ class QueryQuotaServiceTest {
         ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:quota-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
         QueryQuotaService quotas = new QueryQuotaService(props, Schedulers.immediate(),
-                new LakeMetrics(new SimpleMeterRegistry()), ds);
+                new LakeMetrics(new SimpleMeterRegistry()),
+                new JdbcTemplate(ds), new TransactionTemplate(new DataSourceTransactionManager(ds)));
         quotas.init();
         return quotas;
     }

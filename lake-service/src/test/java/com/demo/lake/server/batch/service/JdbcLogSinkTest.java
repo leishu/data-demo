@@ -3,6 +3,9 @@ package com.demo.lake.server.batch.service;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -21,7 +24,8 @@ class JdbcLogSinkTest {
     void setUp() {
         JdbcDataSource ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:logs-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
-        sink = new JdbcLogSink(ds);
+        sink = new JdbcLogSink(new JdbcTemplate(ds),
+                new TransactionTemplate(new DataSourceTransactionManager(ds)));
         sink.init();
     }
 

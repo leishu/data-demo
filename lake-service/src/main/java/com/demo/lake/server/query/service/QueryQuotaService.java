@@ -7,16 +7,15 @@ import com.demo.lake.server.support.DbLocks;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.Types;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -46,36 +45,39 @@ public class QueryQuotaService {
     private final LakeProperties props;
     private final Scheduler blocking;
     private final LakeMetrics metrics;
-    private final DataSource dataSource;
+    private final JdbcTemplate jdbc;
+    private final TransactionTemplate tx;
 
     public QueryQuotaService(LakeProperties props, Scheduler blocking, LakeMetrics metrics,
-                             @Qualifier("stateDataSource") DataSource dataSource) {
+                             @Qualifier("stateJdbc") JdbcTemplate jdbc,
+                             @Qualifier("stateTx") TransactionTemplate tx) {
         this.props = props;
         this.blocking = blocking;
         this.metrics = metrics;
-        this.dataSource = dataSource;
+        this.jdbc = jdbc;
+        this.tx = tx;
     }
 
     @PostConstruct
     public void init() {
-        try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
-            stmt.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
-            stmt.execute("CREATE TABLE IF NOT EXISTS " + LEASES + " (\n"
+        try {
+            jdbc.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
+            jdbc.execute("CREATE TABLE IF NOT EXISTS " + LEASES + " (\n"
                     + "  permit_id VARCHAR(64) PRIMARY KEY,\n"
                     + "  client VARCHAR(80) NOT NULL,\n"
                     + "  acquired_ms BIGINT NOT NULL,\n"
                     + "  expires_ms BIGINT NOT NULL\n"
                     + ")");
-            stmt.execute("CREATE TABLE IF NOT EXISTS " + EVENTS + " (client VARCHAR(80) NOT NULL, at_ms BIGINT NOT NULL)");
+            jdbc.execute("CREATE TABLE IF NOT EXISTS " + EVENTS + " (client VARCHAR(80) NOT NULL, at_ms BIGINT NOT NULL)");
             try {
-                stmt.execute("CREATE INDEX IF NOT EXISTS idx_query_events_at ON " + EVENTS + "(at_ms)");
-                stmt.execute("CREATE INDEX IF NOT EXISTS idx_query_leases_expires ON " + LEASES + "(expires_ms)");
-            } catch (SQLException ignored) {
+                jdbc.execute("CREATE INDEX IF NOT EXISTS idx_query_events_at ON " + EVENTS + "(at_ms)");
+                jdbc.execute("CREATE INDEX IF NOT EXISTS idx_query_leases_expires ON " + LEASES + "(expires_ms)");
+            } catch (DataAccessException ignored) {
                 // 老版本 H2 可能不支持 IF NOT EXISTS；索引只是优化，缺了不影响正确性
             }
-            DbLocks.ensure(dataSource, DbLocks.QUERY_QUOTA);
+            DbLocks.ensure(jdbc.getDataSource(), DbLocks.QUERY_QUOTA);
             log.info("查询配额已落库: {} / {}", LEASES, EVENTS);
-        } catch (SQLException e) {
+        } catch (DataAccessException e) {
             log.warn("查询配额表初始化失败（配额接口暂不可用）: {}", e.getMessage());
         }
     }
@@ -120,82 +122,40 @@ public class QueryQuotaService {
 
     /** @return null 表示拿到名额；否则是拒绝原因（rate-limit / concurrency） */
     private String tryOnce(String client, int maxRate, int maxConcurrent, String permitId, long leaseMs) {
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
-                DbLocks.lock(conn, DbLocks.QUERY_QUOTA);
-                long now = System.currentTimeMillis();
-                try (PreparedStatement ps = conn.prepareStatement("DELETE FROM " + EVENTS + " WHERE at_ms < ?")) {
-                    ps.setLong(1, now - WINDOW_MS);
-                    ps.executeUpdate();
-                }
-                // 崩溃实例没来得及 close 的租约，到期后在这里顺手回收
-                try (PreparedStatement ps = conn.prepareStatement("DELETE FROM " + LEASES + " WHERE expires_ms <= ?")) {
-                    ps.setLong(1, now);
-                    ps.executeUpdate();
-                }
-                int usedInWindow;
-                try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM " + EVENTS + " WHERE client=?")) {
-                    ps.setString(1, client);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        rs.next();
-                        usedInWindow = rs.getInt(1);
-                    }
-                }
-                if (usedInWindow >= maxRate) {
-                    conn.rollback();
-                    return "rate-limit";
-                }
-                int leased;
-                try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM " + LEASES);
-                     ResultSet rs = ps.executeQuery()) {
-                    rs.next();
-                    leased = rs.getInt(1);
-                }
-                if (leased >= maxConcurrent) {
-                    conn.rollback();
-                    return "concurrency";
-                }
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "INSERT INTO " + LEASES + " (permit_id, client, acquired_ms, expires_ms) VALUES (?,?,?,?)")) {
-                    ps.setString(1, permitId);
-                    ps.setString(2, client);
-                    ps.setLong(3, now);
-                    ps.setLong(4, now + leaseMs);
-                    ps.executeUpdate();
-                }
-                try (PreparedStatement ps = conn.prepareStatement("INSERT INTO " + EVENTS + " (client, at_ms) VALUES (?,?)")) {
-                    ps.setString(1, client);
-                    ps.setLong(2, now);
-                    ps.executeUpdate();
-                }
-                conn.commit();
-                return null;
-            } catch (Exception e) {
-                conn.rollback();
-                throw e;
+        return tx.execute(status -> jdbc.execute((ConnectionCallback<String>) conn -> {
+            DbLocks.lock(conn, DbLocks.QUERY_QUOTA);
+            long now = System.currentTimeMillis();
+            jdbc.update("DELETE FROM " + EVENTS + " WHERE at_ms < ?", now - WINDOW_MS);
+            // 崩溃实例没来得及 close 的租约，到期后在这里顺手回收
+            jdbc.update("DELETE FROM " + LEASES + " WHERE expires_ms <= ?", now);
+            int usedInWindow = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM " + EVENTS + " WHERE client=?", Long.class, client).intValue();
+            if (usedInWindow >= maxRate) {
+                status.setRollbackOnly();
+                return "rate-limit";
             }
-        } catch (SQLException e) {
-            throw new IllegalStateException("查询配额库不可用: " + e.getMessage(), e);
-        }
+            int leased = jdbc.queryForObject("SELECT COUNT(*) FROM " + LEASES, Long.class).intValue();
+            if (leased >= maxConcurrent) {
+                status.setRollbackOnly();
+                return "concurrency";
+            }
+            jdbc.update("INSERT INTO " + LEASES + " (permit_id, client, acquired_ms, expires_ms) VALUES (?,?,?,?)",
+                    new Object[]{permitId, client, now, now + leaseMs},
+                    new int[]{Types.VARCHAR, Types.VARCHAR, Types.BIGINT, Types.BIGINT});
+            jdbc.update("INSERT INTO " + EVENTS + " (client, at_ms) VALUES (?,?)",
+                    new Object[]{client, now}, new int[]{Types.VARCHAR, Types.BIGINT});
+            return null;
+        }));
     }
 
     private void releaseSlot(String permitId) {
-        try (Connection conn = dataSource.getConnection()) {
-            conn.setAutoCommit(false);
-            try {
+        try {
+            tx.execute(status -> jdbc.execute((ConnectionCallback<Void>) conn -> {
                 DbLocks.lock(conn, DbLocks.QUERY_QUOTA);
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "DELETE FROM " + LEASES + " WHERE permit_id=?")) {
-                    ps.setString(1, permitId);
-                    ps.executeUpdate();
-                }
-                conn.commit();
-            } catch (Exception e) {
-                conn.rollback();
-                throw e;
-            }
-        } catch (SQLException e) {
+                jdbc.update("DELETE FROM " + LEASES + " WHERE permit_id=?", permitId);
+                return null;
+            }));
+        } catch (DataAccessException e) {
             log.error("归还查询名额失败: {}", e.getMessage());
         }
     }

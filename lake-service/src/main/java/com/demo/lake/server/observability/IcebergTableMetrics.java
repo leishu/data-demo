@@ -8,12 +8,10 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,17 +37,17 @@ public class IcebergTableMetrics {
     private final MeterRegistry registry;
     private final PlatformConfig cfg;
     private final LakeProperties props;
-    private final DataSource trino;
+    private final JdbcTemplate jdbc;
     private final AtomicBoolean running = new AtomicBoolean();
     private final Map<String, TableGauges> gauges = new ConcurrentHashMap<>();
     private Thread worker;
 
     public IcebergTableMetrics(MeterRegistry registry, PlatformConfig cfg, LakeProperties props,
-                               @Qualifier("trinoDataSource") DataSource trino) {
+                               @Qualifier("trinoJdbc") JdbcTemplate jdbc) {
         this.registry = registry;
         this.cfg = cfg;
         this.props = props;
-        this.trino = trino;
+        this.jdbc = jdbc;
     }
 
     @PostConstruct
@@ -99,23 +97,22 @@ public class IcebergTableMetrics {
     private void collect(String table) {
         String filesSql = filesSql(cfg.catalogName(), cfg.database(), table);
         String snapshotsSql = snapshotsSql(cfg.catalogName(), cfg.database(), table);
-        try (Connection conn = trino.getConnection(); Statement stmt = conn.createStatement()) {
+        try {
             long files = 0, total = 0, snapshots = 0;
             double avg = 0;
-            try (ResultSet rs = stmt.executeQuery(filesSql)) {
-                if (rs.next()) {
-                    files = rs.getLong(1);
-                    avg = rs.getDouble(2);
-                    total = rs.getLong(3);
-                }
+            List<Object[]> filesRows = jdbc.query(filesSql, (rs, n) -> new Object[]{rs.getLong(1), rs.getDouble(2), rs.getLong(3)});
+            if (!filesRows.isEmpty()) {
+                Object[] row = filesRows.get(0);
+                files = ((Number) row[0]).longValue();
+                avg = ((Number) row[1]).doubleValue();
+                total = ((Number) row[2]).longValue();
             }
-            try (ResultSet rs = stmt.executeQuery(snapshotsSql)) {
-                if (rs.next()) {
-                    snapshots = rs.getLong(1);
-                }
+            List<Long> snapshotRows = jdbc.query(snapshotsSql, (rs, n) -> rs.getLong(1));
+            if (!snapshotRows.isEmpty()) {
+                snapshots = snapshotRows.get(0);
             }
             update(table, files, avg, total, snapshots);
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
             // 元数据表不存在 / Trino 未就绪都很正常，保留上次的值
             log.debug("采集 Iceberg 表指标失败 table={}: {}", table, e.getMessage());
         }

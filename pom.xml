@@ -175,6 +175,12 @@
         <artifactId>spring-boot-starter-webflux</artifactId>
         <version>${spring.boot.version}</version>
       </dependency>
+      <!-- lake-service 的状态库/审计/配额等数据访问改用 JdbcTemplate；Boot 4.2 已带，这里做版本管理 -->
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-jdbc</artifactId>
+        <version>${spring.boot.version}</version>
+      </dependency>
       <dependency>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-actuator</artifactId>

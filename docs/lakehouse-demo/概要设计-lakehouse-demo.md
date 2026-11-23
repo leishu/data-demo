@@ -345,7 +345,7 @@ sequenceDiagram
 
 - **职责**：把 batch 作业包装成可提交、可排队、可跟踪、可恢复、跨实例共享状态的 HTTP 作业。
 - **对外接口**：`POST /api/batch/{job}`、`GET /api/batch/runs[/{id}]`、`GET /api/batch/runs/{id}/events`。〔FACT｜controller/BatchController.java:43-74〕
-- **依赖**：`platform-common`（runId / 作业白名单）；Postgres（运行态+日志）、Trino（读湖表历史）、本地进程或 K8s（执行）。
+- **依赖**：`platform-common`（runId / 作业白名单）；Postgres（运行态+日志）、Trino（读湖表历史）、本地进程或 K8s（执行）。数据库访问统一用 `spring-jdbc` 的 `JdbcTemplate` / `TransactionTemplate`（见 `LakeConfiguration.stateJdbc` / `stateTx`）；不再手写 `Connection`/`PreparedStatement`，SQL 行为用 H2 单测验证。〔FACT｜lake-service/pom.xml（spring-boot-starter-jdbc）〕〔FACT｜lake-service/config/LakeConfiguration.java:110-130〕
 - **关键约束**：请求线程不直接 fork 子进程，只落 QUEUED；幂等键与 QUEUED 在同一事务内抢占；Dispatcher 在数据库行锁内检查名额并认领，多实例共享同一个并发上限。〔FACT｜batch/service/JobDispatcher.java:55-75〕
 
 ### 3.6 lake-ui —— Vue 3 控制台
@@ -967,6 +967,12 @@ lake-service 编排链路、lake-ui）以及 §3.7 的支撑层（CI/全栈/冒�
 
 ### 8.2 历史演进记录
 
+- **状态库访问迁移到 `spring-jdbc`（2026-11-23）**：`lake-service` 的 Postgres 状态库（运行态/
+  审计保险箱/配额/日志/锁/Trino 健康）从手写 `Connection`/`PreparedStatement` 改为 `spring-boot-starter-jdbc`
+  的 `JdbcTemplate` / `TransactionTemplate`，事务场景（幂等抢占、认领名额、租约归还、日志追加）统一落到
+  `stateTx`。改动：`pom.xml`（管理 `spring-boot-starter-jdbc` 版本）、`LakeConfiguration`（`stateJdbc`、
+  `stateTxManager`、`stateTx`、`trinoJdbc` Bean）、8 个主类 + 6 个测试类；H2 单测覆盖仍全过。
+  同步更新 §3.5、§3.7 与本节。
 - **即席查询方案收敛**：自研 `trino-adhoc` → 官方 CLI → 最终定为 `lake-adhoc`（官方 trino-jdbc 薄封装 +
   `SqlParams` 预处理 + `TableFormatter` 显示）。改动点：`pom.xml`、`platform-common/cli/SqlParams.java`、
   `lake-adhoc/`、`bin/trino-query.sh`、`README.md`、`infra/README.md`；本文 §1.2/§1.4/§2.2/§3.3/

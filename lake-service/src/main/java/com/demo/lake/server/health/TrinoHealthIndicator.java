@@ -6,12 +6,12 @@ import org.springframework.beans.factory.annotation.Qualifier;
 // Boot 4 把 actuator 的 health 抽到了独立模块 spring-boot-health，包名从 actuator.health 改为 health.contributor
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.ReactiveHealthIndicator;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.StatementCallback;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
 import java.sql.Statement;
 
 /**
@@ -29,8 +29,8 @@ import java.sql.Statement;
 @RequiredArgsConstructor
 public class TrinoHealthIndicator implements ReactiveHealthIndicator {
 
-    @Qualifier("trinoDataSource")
-    private final DataSource dataSource;
+    @Qualifier("trinoJdbc")
+    private final JdbcTemplate jdbc;
     private final Scheduler blocking;
 
     @Override
@@ -40,10 +40,12 @@ public class TrinoHealthIndicator implements ReactiveHealthIndicator {
     }
 
     private Health check() {
-        try (Connection conn = dataSource.getConnection();
-             Statement stmt = conn.createStatement()) {
-            stmt.setQueryTimeout(3);
-            stmt.execute("SELECT 1");
+        try {
+            jdbc.execute((StatementCallback<Void>) stmt -> {
+                stmt.setQueryTimeout(3);
+                stmt.execute("SELECT 1");
+                return null;
+            });
             return Health.up().build();
         } catch (Exception e) {
             log.debug("Trino 健康检查失败", e);

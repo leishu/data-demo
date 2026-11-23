@@ -4,6 +4,7 @@ import com.demo.lake.server.config.LakeProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -28,7 +29,7 @@ class AuditTextStoreTest {
         props.getAudit().setRetentionDays(1);
         JdbcDataSource ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:vault-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
-        AuditTextStore store = new AuditTextStore(props, ds, new SimpleMeterRegistry());
+        AuditTextStore store = new AuditTextStore(props, new JdbcTemplate(ds), new SimpleMeterRegistry());
         store.init();
         return store;
     }
@@ -71,7 +72,7 @@ class AuditTextStoreTest {
         old.getAudit().setSqlCaptureEnabled(true);
         old.getAudit().setKeyId("v1");
         old.getAudit().setKey(KEY);
-        AuditTextStore before = new AuditTextStore(old, ds, new SimpleMeterRegistry());
+        AuditTextStore before = new AuditTextStore(old, new JdbcTemplate(ds), new SimpleMeterRegistry());
         before.init();
         before.save("evt-rotate", "operator", null, "select 1");
 
@@ -80,7 +81,7 @@ class AuditTextStoreTest {
         rotated.getAudit().setKeyId("v2");
         rotated.getAudit().setKey(newKey);
         rotated.getAudit().getKeys().put("v1", KEY);
-        AuditTextStore after = new AuditTextStore(rotated, ds, new SimpleMeterRegistry());
+        AuditTextStore after = new AuditTextStore(rotated, new JdbcTemplate(ds), new SimpleMeterRegistry());
         after.init();
         AuditTextStore.TextRecord record = after.find("evt-rotate").orElseThrow();
         assertEquals("v1", record.keyId());
@@ -90,7 +91,7 @@ class AuditTextStoreTest {
         noHistory.getAudit().setSqlCaptureEnabled(true);
         noHistory.getAudit().setKeyId("v2");
         noHistory.getAudit().setKey(newKey);
-        AuditTextStore broken = new AuditTextStore(noHistory, ds, new SimpleMeterRegistry());
+        AuditTextStore broken = new AuditTextStore(noHistory, new JdbcTemplate(ds), new SimpleMeterRegistry());
         broken.init();
         assertThrows(IllegalStateException.class, () -> broken.find("evt-rotate"));
     }
