@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
 import tools.jackson.databind.JsonNode;
@@ -85,7 +86,7 @@ public class KubernetesJobExecutor implements JobExecutor {
             }
         } catch (Exception e) {
             log.error("提交 K8s Job 失败 {}", run.id(), e);
-            listener.completed(run, BatchRun.FAILED, null, elapsed(start),
+            listener.completed(run, BatchRunStatus.FAILED, null, elapsed(start),
                     "提交 K8s Job 失败: " + e.getMessage());
             return "failed";
         }
@@ -130,7 +131,7 @@ public class KubernetesJobExecutor implements JobExecutor {
                     int code = response.statusCode();
                     if (code == 404) {
                         terminal = true;
-                        listener.completed(run, BatchRun.FAILED, 1, elapsed(start), "K8s Job 不存在");
+                        listener.completed(run, BatchRunStatus.FAILED, 1, elapsed(start), "K8s Job 不存在");
                         return;
                     }
                     if (code == 410) {
@@ -165,12 +166,12 @@ public class KubernetesJobExecutor implements JobExecutor {
                             }
                             if (event.succeeded()) {
                                 terminal = true;
-                                listener.completed(run, BatchRun.SUCCEEDED, 0, elapsed(start), "K8s Job 成功");
+                                listener.completed(run, BatchRunStatus.SUCCEEDED, 0, elapsed(start), "K8s Job 成功");
                                 return;
                             }
                             if (event.failed()) {
                                 terminal = true;
-                                listener.completed(run, BatchRun.FAILED, 1, elapsed(start), "K8s Job 失败");
+                                listener.completed(run, BatchRunStatus.FAILED, 1, elapsed(start), "K8s Job 失败");
                                 return;
                             }
                         }
@@ -187,7 +188,7 @@ public class KubernetesJobExecutor implements JobExecutor {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            listener.completed(run, BatchRun.FAILED, 1, elapsed(start), "K8s Job 状态监听被中断");
+            listener.completed(run, BatchRunStatus.FAILED, 1, elapsed(start), "K8s Job 状态监听被中断");
             return;
         } catch (Exception e) {
             log.debug("watch K8s Job {} 异常: {}", name, e.getMessage());
@@ -196,7 +197,7 @@ public class KubernetesJobExecutor implements JobExecutor {
             return; // 终态已回调（或回调本身抛错），或外部取消：不再重复报终态
         }
         cancel(name);
-        listener.completed(run, BatchRun.TIMEOUT, null, elapsed(start), "K8s Job 等待超时");
+        listener.completed(run, BatchRunStatus.TIMEOUT, null, elapsed(start), "K8s Job 等待超时");
     }
 
     /**

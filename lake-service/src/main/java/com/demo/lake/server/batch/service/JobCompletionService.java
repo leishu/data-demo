@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.observability.AuditService;
@@ -21,7 +22,7 @@ public class JobCompletionService implements JobOutcomeListener {
     private final LakeMetrics metrics;
 
     @Override
-    public void completed(BatchRun run, String status, Integer exitCode, long elapsedMs, String message) {
+    public void completed(BatchRun run, BatchRunStatus status, Integer exitCode, long elapsedMs, String message) {
         // 先摘心跳：终态写库失败时也要让对账接管，而不是留下永久 RUNNING
         liveRuns.remove(run.id());
         BatchRun done = run.finished(status, exitCode, message, elapsedMs);
@@ -34,7 +35,8 @@ public class JobCompletionService implements JobOutcomeListener {
         history.invalidate();
         metrics.batchCompleted(status, elapsedMs);
         audit.record("batch.completed", "batch-service", java.util.Map.of(
-                "run_id", run.id(), "job", run.job(), "status", status, "duration_ms", String.valueOf(elapsedMs)));
-        log.info("批作业 {} {} -> {} ({}ms)", run.job(), run.id(), status, elapsedMs);
+                "run_id", run.id(), "job", run.job(), "status", status.name(),
+                "duration_ms", String.valueOf(elapsedMs)));
+        log.info("批作业 {} {} -> {}（{}）({}ms)", run.job(), run.id(), status, status.description(), elapsedMs);
     }
 }

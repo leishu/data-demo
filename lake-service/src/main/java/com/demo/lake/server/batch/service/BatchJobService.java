@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.batch.RunIds;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
@@ -110,8 +111,8 @@ public class BatchJobService {
         Instant cutoff = Instant.now().minusSeconds(Math.max(30, props.getBatch().getState().getStaleAfterSeconds()));
         for (BatchRun stale : state.staleRunning(cutoff)) {
             BatchRun archived = history.find(stale.id());
-            if (archived != null && !BatchRun.RUNNING.equals(archived.status())
-                    && !BatchRun.QUEUED.equals(archived.status())) {
+            if (archived != null && archived.status() != BatchRunStatus.RUNNING
+                    && archived.status() != BatchRunStatus.QUEUED) {
                 state.finish(archived);
                 log.info("对账：{} 采纳湖表终态 {}", stale.id(), archived.status());
             } else {
@@ -155,7 +156,7 @@ public class BatchJobService {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "无法创建日志目录: " + logFile.getParent(), e);
         }
 
-        BatchRun run = new BatchRun(id, job, command, BatchRun.QUEUED, null,
+        BatchRun run = new BatchRun(id, job, command, BatchRunStatus.QUEUED, null,
                 Instant.now(), null, null, logFile.toString(), "已排队，等待调度");
         try {
             if (key == null) {
@@ -232,8 +233,8 @@ public class BatchJobService {
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这个运行记录: " + id);
     }
 
-    private static boolean isTerminal(String status) {
-        return status != null && !BatchRun.QUEUED.equals(status) && !BatchRun.RUNNING.equals(status);
+    private static boolean isTerminal(BatchRunStatus status) {
+        return status != null && status.isTerminal();
     }
 
     /** 读日志尾部，够定位失败原因就行，别把整个 spark 日志甩给调用方 */

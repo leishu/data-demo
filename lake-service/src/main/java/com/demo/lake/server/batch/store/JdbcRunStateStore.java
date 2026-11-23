@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.store;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.support.DbLocks;
 import jakarta.annotation.PostConstruct;
@@ -32,6 +33,10 @@ import java.util.Optional;
 public class JdbcRunStateStore implements RunStateStore {
 
     private static final String TABLE = "lake_batch.batch_runs";
+    /** SQL 里的状态字面量统一取自枚举，避免与 Java 侧定义漂移 */
+    private static final String S_RUNNING = BatchRunStatus.RUNNING.name();
+    private static final String S_QUEUED = BatchRunStatus.QUEUED.name();
+    private static final String S_FAILED = BatchRunStatus.FAILED.name();
 
     private static final String SELECT = "SELECT run_id, job, command, status, exit_code, started_ms,"
             + " finished_ms, duration_ms, log_file, message FROM " + TABLE;
@@ -126,7 +131,7 @@ public class JdbcRunStateStore implements RunStateStore {
                 run.id(),
                 run.job(),
                 run.command(),
-                run.status(),
+                run.status() == null ? null : run.status().name(),
                 run.exitCode(),
                 run.startedAt().toEpochMilli(),
                 run.finishedAt() == null ? null : run.finishedAt().toEpochMilli(),
@@ -143,7 +148,7 @@ public class JdbcRunStateStore implements RunStateStore {
     public void finish(BatchRun run) {
         jdbc.update("UPDATE " + TABLE + " SET status=?, exit_code=?, finished_ms=?, duration_ms=?,"
                         + " message=?, updated_ms=? WHERE run_id=?",
-                new Object[]{run.status(), run.exitCode(),
+                new Object[]{run.status() == null ? null : run.status().name(), run.exitCode(),
                         run.finishedAt() == null ? System.currentTimeMillis() : run.finishedAt().toEpochMilli(),
                         run.durationMs(), run.message(), System.currentTimeMillis(), run.id()},
                 new int[]{Types.VARCHAR, Types.INTEGER, Types.BIGINT, Types.BIGINT, Types.VARCHAR,
@@ -167,22 +172,22 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public void heartbeat(String runId, Instant now) {
-        jdbc.update("UPDATE " + TABLE + " SET heartbeat_ms=?, updated_ms=? WHERE run_id=? AND status='RUNNING'",
+        jdbc.update("UPDATE " + TABLE + " SET heartbeat_ms=?, updated_ms=? WHERE run_id=? AND status='" + S_RUNNING + "'",
                 new Object[]{now.toEpochMilli(), now.toEpochMilli(), runId},
                 new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR});
     }
 
     @Override
     public List<BatchRun> staleRunning(Instant before) {
-        return jdbc.query(SELECT + " WHERE status='RUNNING' AND heartbeat_ms < ? ORDER BY started_ms",
+        return jdbc.query(SELECT + " WHERE status='" + S_RUNNING + "' AND heartbeat_ms < ? ORDER BY started_ms",
                 (rs, n) -> map(rs),
                 new Object[]{before.toEpochMilli()});
     }
 
     @Override
     public void markLost(String id, String message, Instant now) {
-        jdbc.update("UPDATE " + TABLE + " SET status='FAILED', exit_code=1, finished_ms=?, duration_ms=? - started_ms,"
-                        + " message=?, updated_ms=? WHERE run_id=? AND status='RUNNING'",
+        jdbc.update("UPDATE " + TABLE + " SET status='" + S_FAILED + "', exit_code=1, finished_ms=?,"
+                        + " duration_ms=? - started_ms, message=?, updated_ms=? WHERE run_id=? AND status='" + S_RUNNING + "'",
                 new Object[]{now.toEpochMilli(), now.toEpochMilli(), message, now.toEpochMilli(), id},
                 new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.BIGINT, Types.VARCHAR});
     }
@@ -210,16 +215,16 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public int runningCount() {
-        return countByStatus("RUNNING");
+        return countByStatus(BatchRunStatus.RUNNING);
     }
 
     @Override
     public int queuedCount() {
-        return countByStatus("QUEUED");
+        return countByStatus(BatchRunStatus.QUEUED);
     }
 
-    private int countByStatus(String status) {
-        return jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status=?", Long.class, status).intValue();
+    private int countByStatus(BatchRunStatus status) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status=?", Long.class, status.name()).intValue();
     }
 
     @Override
@@ -233,7 +238,7 @@ public class JdbcRunStateStore implements RunStateStore {
             // 名额检查 + 认领在同一把全局行锁内完成，跨实例也不会一起超员
             return jdbc.execute((ConnectionCallback<BatchRun>) conn -> {
                 DbLocks.lock(conn, DbLocks.DISPATCH);
-                if (jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status='RUNNING'", Long.class)
+                if (jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status='" + S_RUNNING + "'", Long.class)
                         >= maxConcurrent) {
                     status.setRollbackOnly();
                     return null;
@@ -244,7 +249,7 @@ public class JdbcRunStateStore implements RunStateStore {
     }
 
     private BatchRun claimOnConnection(String owner) {
-        List<String> ids = jdbc.query("SELECT run_id FROM " + TABLE + " WHERE status='QUEUED' ORDER BY started_ms LIMIT 1",
+        List<String> ids = jdbc.query("SELECT run_id FROM " + TABLE + " WHERE status='" + S_QUEUED + "' ORDER BY started_ms LIMIT 1",
                 (rs, n) -> rs.getString(1));
         if (ids.isEmpty()) {
             return null;
@@ -252,8 +257,8 @@ public class JdbcRunStateStore implements RunStateStore {
         String id = ids.getFirst();
         long now = System.currentTimeMillis();
         int changed = jdbc.update("UPDATE " + TABLE
-                + " SET status='RUNNING', owner=?, heartbeat_ms=?, updated_ms=?"
-                + " WHERE run_id=? AND status='QUEUED'",
+                + " SET status='" + S_RUNNING + "', owner=?, heartbeat_ms=?, updated_ms=?"
+                + " WHERE run_id=? AND status='" + S_QUEUED + "'",
                 new Object[]{owner, now, now, id},
                 new int[]{Types.VARCHAR, Types.BIGINT, Types.BIGINT, Types.VARCHAR});
         // 多实例可能同时看到同一个候选；只有抢到 update 的那个实例真正执行
@@ -281,7 +286,7 @@ public class JdbcRunStateStore implements RunStateStore {
                 rs.getString("run_id"),
                 rs.getString("job"),
                 rs.getString("command"),
-                rs.getString("status"),
+                BatchRunStatus.from(rs.getString("status")),
                 exit,
                 Instant.ofEpochMilli(rs.getLong("started_ms")),
                 finished == null ? null : Instant.ofEpochMilli(finished),

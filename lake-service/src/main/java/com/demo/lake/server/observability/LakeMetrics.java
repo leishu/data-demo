@@ -1,5 +1,6 @@
 package com.demo.lake.server.observability;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -27,9 +28,10 @@ public class LakeMetrics {
         registry.counter("lake.batch.submitted", "job", job == null ? "unknown" : job).increment();
     }
 
-    public void batchCompleted(String status, long durationMs) {
-        registry.counter("lake.batch.completed", "status", status == null ? "unknown" : status).increment();
-        registry.timer("lake.batch.duration", "status", status == null ? "unknown" : status)
+    public void batchCompleted(BatchRunStatus status, long durationMs) {
+        String label = status == null ? "unknown" : status.name();
+        registry.counter("lake.batch.completed", "status", label).increment();
+        registry.timer("lake.batch.duration", "status", label)
                 .record(Duration.ofMillis(Math.max(0, durationMs)));
     }
 

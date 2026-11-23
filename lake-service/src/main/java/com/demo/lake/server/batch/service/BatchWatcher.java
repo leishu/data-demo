@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchEvent;
 import com.demo.lake.server.batch.model.BatchRun;
 import lombok.RequiredArgsConstructor;
@@ -132,7 +133,7 @@ public class BatchWatcher {
                 }
             }
 
-            if (!BatchRun.RUNNING.equals(run.status()) && !BatchRun.QUEUED.equals(run.status())) {
+            if (run.status() != BatchRunStatus.RUNNING && run.status() != BatchRunStatus.QUEUED) {
                 // 终态前再抽干一次，避免最后几行日志被 end 事件抢跑
                 switchToSharedIfReady(events);
                 addLogs(events, pollLogs());

@@ -1,5 +1,6 @@
 package com.demo.lake.server.observability;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -14,7 +15,7 @@ class LakeMetricsTest {
 
         metrics.batchSubmitted("init");
         metrics.batchSubmitted("init");
-        metrics.batchCompleted("SUCCEEDED", 1200);
+        metrics.batchCompleted(BatchRunStatus.SUCCEEDED, 1200);
         metrics.queueWait("init", 300);
         metrics.setQueueDepth(7);
         metrics.queryExecuted(true, 85, 12);
@@ -22,7 +23,7 @@ class LakeMetricsTest {
         metrics.authDenied("insufficient-role");
 
         assertEquals(2.0, registry.get("lake.batch.submitted").tag("job", "init").counter().count());
-        assertEquals(1.0, registry.get("lake.batch.completed").tag("status", "SUCCEEDED").counter().count());
+        assertEquals(1.0, registry.get("lake.batch.completed").tag("status", BatchRunStatus.SUCCEEDED.name()).counter().count());
         assertEquals(1200.0, registry.get("lake.batch.duration").timer().totalTime(java.util.concurrent.TimeUnit.MILLISECONDS));
         assertEquals(300.0, registry.get("lake.batch.queue.wait").timer().totalTime(java.util.concurrent.TimeUnit.MILLISECONDS));
         assertEquals(7.0, registry.get("lake.batch.queue.depth").gauge().value());

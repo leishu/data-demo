@@ -1,7 +1,6 @@
 package com.demo.lake.server.batch.model;
 
 import com.demo.lake.common.batch.BatchRunStatus;
-
 import java.time.Instant;
 
 /**
@@ -14,7 +13,7 @@ public record BatchRun(
         String id,
         String job,
         String command,
-        String status,
+        BatchRunStatus status,
         Integer exitCode,
         Instant startedAt,
         Instant finishedAt,
@@ -22,13 +21,7 @@ public record BatchRun(
         String logFile,
         String message) {
 
-    public static final String QUEUED = BatchRunStatus.QUEUED;
-    public static final String RUNNING = BatchRunStatus.RUNNING;
-    public static final String SUCCEEDED = BatchRunStatus.SUCCEEDED;
-    public static final String FAILED = BatchRunStatus.FAILED;
-    public static final String TIMEOUT = BatchRunStatus.TIMEOUT;
-
-    public BatchRun finished(String finalStatus, Integer code, String msg, long elapsedMs) {
+    public BatchRun finished(BatchRunStatus finalStatus, Integer code, String msg, long elapsedMs) {
         return new BatchRun(id, job, command, finalStatus, code, startedAt, Instant.now(), elapsedMs, logFile, msg);
     }
 }

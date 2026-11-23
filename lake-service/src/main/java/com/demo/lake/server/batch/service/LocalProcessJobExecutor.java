@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
 import jakarta.annotation.PreDestroy;
@@ -50,7 +51,7 @@ public class LocalProcessJobExecutor implements JobExecutor {
             process = pb.start();
         } catch (Exception e) {
             log.error("批作业 {} 启动失败", run.id(), e);
-            listener.completed(run, BatchRun.FAILED, null, System.currentTimeMillis() - start,
+            listener.completed(run, BatchRunStatus.FAILED, null, System.currentTimeMillis() - start,
                     "启动失败: " + e.getMessage());
             return "failed";
         }
@@ -69,20 +70,20 @@ public class LocalProcessJobExecutor implements JobExecutor {
                     long elapsed = System.currentTimeMillis() - start;
                     if (finished) {
                         int exit = process.exitValue();
-                        listener.completed(run, exit == 0 ? BatchRun.SUCCEEDED : BatchRun.FAILED, exit, elapsed,
+                        listener.completed(run, exit == 0 ? BatchRunStatus.SUCCEEDED : BatchRunStatus.FAILED, exit, elapsed,
                                 exit == 0 ? "完成" : "退出码 " + exit + "，看日志尾部");
                         break;
                     }
                     if (elapsed >= timeout * 1000L) {
                         process.destroyForcibly();
-                        listener.completed(run, BatchRun.TIMEOUT, null, elapsed,
+                        listener.completed(run, BatchRunStatus.TIMEOUT, null, elapsed,
                                 "超过 " + timeout + "s 未结束，已强制结束");
                         break;
                     }
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                listener.completed(run, BatchRun.FAILED, null, System.currentTimeMillis() - start, "被中断");
+                listener.completed(run, BatchRunStatus.FAILED, null, System.currentTimeMillis() - start, "被中断");
             } finally {
                 // 进程退出后可能还有几行没捞到，最后补一次
                 flush(logFile, cursor, run.id());

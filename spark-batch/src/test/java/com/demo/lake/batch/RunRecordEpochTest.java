@@ -1,5 +1,6 @@
 package com.demo.lake.batch;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.batch.job.InitJob;
 import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.catalog.TableRef;
@@ -73,7 +74,7 @@ class RunRecordEpochTest {
     void 新运行记录直接写权威epoch列() {
         Instant start = Instant.parse("2026-02-03T04:05:06.789Z");
         RunRecordWriter.record(spark, cfg, Args.parse(new String[]{"--job", "init"}),
-                "epoch-run", "--job init", "SUCCEEDED", 0, start, "ok");
+                "epoch-run", "--job init", BatchRunStatus.SUCCEEDED, 0, start, "ok");
 
         Row row = spark.sql("select started_ms from " + runs.fqn()
                 + " where run_id = 'epoch-run'").head();

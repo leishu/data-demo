@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.config.LakeProperties;
@@ -67,7 +68,7 @@ public class JobDispatcher {
             liveRuns.add(claimed.id());
             JobExecutor executor = executors.get(props.getBatch().getExecutor());
             if (executor == null) {
-                completion.completed(claimed, BatchRun.FAILED, 1, 0,
+                completion.completed(claimed, BatchRunStatus.FAILED, 1, 0,
                         "未知执行器: " + props.getBatch().getExecutor());
                 continue;
             }
@@ -78,7 +79,7 @@ public class JobDispatcher {
                 log.info("调度作业 {} -> {} handle={}", claimed.id(), claimed.job(), handle);
             } catch (RuntimeException e) {
                 log.error("提交作业 {} 失败", claimed.id(), e);
-                completion.completed(claimed, BatchRun.FAILED, 1, 0, "提交失败: " + e.getMessage());
+                completion.completed(claimed, BatchRunStatus.FAILED, 1, 0, "提交失败: " + e.getMessage());
             }
         }
     }

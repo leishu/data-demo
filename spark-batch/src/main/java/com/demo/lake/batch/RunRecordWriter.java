@@ -1,5 +1,6 @@
 package com.demo.lake.batch;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.cli.Args;
@@ -38,7 +39,7 @@ final class RunRecordWriter {
     }
 
     static void record(SparkSession spark, PlatformConfig cfg, Args args, String runId, String command,
-                       String status, int exitCode, Instant startedAt, String message) {
+                       BatchRunStatus status, int exitCode, Instant startedAt, String message) {
         if (args.flag("no-record")) {
             System.out.println("[run-record] 已跳过（--no-record）");
             return;
@@ -66,7 +67,7 @@ final class RunRecordWriter {
                     runId,
                     args.job(),
                     truncate(command, MAX_COMMAND),
-                    status,
+                    status.name(),
                     exitCode,
                     Timestamp.from(startedAt),
                     Timestamp.from(finishedAt),
@@ -79,7 +80,7 @@ final class RunRecordWriter {
             spark.createDataFrame(Collections.singletonList(row), schema)
                     .writeTo(table.fqn())
                     .append();
-            System.out.printf("[run-record] 已写入 %s run_id=%s status=%s%n", table.fqn(), runId, status);
+            System.out.printf("[run-record] 已写入 %s run_id=%s status=%s%n", table.fqn(), runId, status.name());
         } catch (Exception e) {
             // 明确告诉人「这不是作业失败」，否则看日志的人会以为要重跑
             System.out.println("[run-record] 写入 " + table.fqn() + " 失败（不影响作业结果）: " + e.getMessage());

@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.store;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +41,7 @@ class JdbcRunStateStoreTest {
     }
 
     private static BatchRun running(String id, Instant started) {
-        return new BatchRun(id, "init", "--job init", BatchRun.RUNNING, null,
+        return new BatchRun(id, "init", "--job init", BatchRunStatus.RUNNING, null,
                 started, null, null, "/tmp/" + id + ".log", "已提交");
     }
 
@@ -49,13 +50,13 @@ class JdbcRunStateStoreTest {
         Instant started = Instant.parse("2026-01-02T03:04:05Z");
         store.insert(running("r1", started), "svc-a");
         assertTrue(store.find("r1").isPresent());
-        assertEquals(BatchRun.RUNNING, store.find("r1").orElseThrow().status());
+        assertEquals(BatchRunStatus.RUNNING, store.find("r1").orElseThrow().status());
 
         Instant finished = started.plusSeconds(5);
-        store.finish(new BatchRun("r1", "init", "--job init", BatchRun.SUCCEEDED, 0,
+        store.finish(new BatchRun("r1", "init", "--job init", BatchRunStatus.SUCCEEDED, 0,
                 started, finished, 5000L, "/tmp/r1.log", "完成"));
         BatchRun done = store.find("r1").orElseThrow();
-        assertEquals(BatchRun.SUCCEEDED, done.status());
+        assertEquals(BatchRunStatus.SUCCEEDED, done.status());
         assertEquals(0, done.exitCode());
         assertEquals(finished, done.finishedAt());
         assertEquals(5000L, done.durationMs());
@@ -82,7 +83,7 @@ class JdbcRunStateStoreTest {
         }
 
         store.markLost("other", "实例失联", Instant.now());
-        assertEquals(BatchRun.FAILED, store.find("other").orElseThrow().status());
+        assertEquals(BatchRunStatus.FAILED, store.find("other").orElseThrow().status());
         assertTrue(store.find("other").orElseThrow().message().contains("失联"));
     }
 
@@ -98,7 +99,7 @@ class JdbcRunStateStoreTest {
 
     @Test
     void 幂等键与排队认领() {
-        BatchRun queued = new BatchRun("q1", "init", "--job init", BatchRun.QUEUED, null,
+        BatchRun queued = new BatchRun("q1", "init", "--job init", BatchRunStatus.QUEUED, null,
                 Instant.now(), null, null, null, "已排队");
         store.insert(queued, "svc-a");
         store.recordIdempotency("key-1", "q1");
@@ -108,7 +109,7 @@ class JdbcRunStateStoreTest {
         assertEquals(0, store.runningCount());
         BatchRun claimed = store.claimNext("svc-b");
         assertEquals("q1", claimed.id());
-        assertEquals(BatchRun.RUNNING, claimed.status());
+        assertEquals(BatchRunStatus.RUNNING, claimed.status());
         assertEquals(1, store.runningCount());
         assertNull(store.claimNext("svc-b"), "没有更多 QUEUED 时应返回 null");
 
@@ -149,12 +150,12 @@ class JdbcRunStateStoreTest {
         store.insert(running("lost", started), "svc-a");
         store.markLost("lost", "实例失联", started.plusSeconds(10));
         BatchRun lost = store.find("lost").orElseThrow();
-        assertEquals(BatchRun.FAILED, lost.status());
+        assertEquals(BatchRunStatus.FAILED, lost.status());
         assertEquals(10_000L, lost.durationMs());
     }
 
     private static BatchRun queued(String id, Instant started) {
-        return new BatchRun(id, "init", "--job init", BatchRun.QUEUED, null,
+        return new BatchRun(id, "init", "--job init", BatchRunStatus.QUEUED, null,
                 started, null, null, null, "已排队");
     }
 

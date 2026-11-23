@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
 import com.sun.net.httpserver.HttpExchange;
@@ -53,7 +54,7 @@ class KubernetesJobExecutorTest {
             props.getBatch().getKubernetes().setTimeoutSeconds(30);
             KubernetesJobExecutor executor = new KubernetesJobExecutor(props, new RecordingLogSink());
 
-            BatchRun run = new BatchRun("run-k8s1", "init", "--job init", BatchRun.QUEUED, null,
+            BatchRun run = new BatchRun("run-k8s1", "init", "--job init", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, "/tmp/run-k8s1.log", "已排队");
             CompletableFuture<String> result = new CompletableFuture<>();
             String handle = executor.start(run, (r, status, code, elapsed, message) ->
@@ -111,7 +112,7 @@ class KubernetesJobExecutorTest {
             RecordingLogSink sink = new RecordingLogSink();
             KubernetesJobExecutor executor = new KubernetesJobExecutor(props, sink);
 
-            BatchRun run = new BatchRun("run-k8s2", "show", "--job show", BatchRun.QUEUED, null,
+            BatchRun run = new BatchRun("run-k8s2", "show", "--job show", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, null, "已排队");
             CompletableFuture<String> result = new CompletableFuture<>();
             executor.start(run, (r, status, code, elapsed, message) ->
@@ -129,7 +130,7 @@ class KubernetesJobExecutorTest {
     @Test
     void jobJson会转义命令里的引号() {
         LakeProperties.Batch.Kubernetes conf = new LakeProperties().getBatch().getKubernetes();
-        BatchRun run = new BatchRun("run-x", "init", "/bin/sh -c \"echo \\\"hi\\\"\"", BatchRun.QUEUED, null,
+        BatchRun run = new BatchRun("run-x", "init", "/bin/sh -c \"echo \\\"hi\\\"\"", BatchRunStatus.QUEUED, null,
                 Instant.now(), null, null, null, "已排队");
         String json = KubernetesJobExecutor.jobJson(run, "lake-run-x", conf);
         // 命令里的引号被转义，不会破坏 JSON 结构

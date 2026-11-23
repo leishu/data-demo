@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
@@ -85,7 +86,7 @@ class BatchJobServiceTest {
         Instant deadline = Instant.now().plus(Duration.ofSeconds(20));
         while (Instant.now().isBefore(deadline)) {
             BatchRun run = service.get(id);
-            if (!BatchRun.QUEUED.equals(run.status()) && !BatchRun.RUNNING.equals(run.status())) {
+            if (!BatchRunStatus.QUEUED.equals(run.status()) && !BatchRunStatus.RUNNING.equals(run.status())) {
                 return run;
             }
             Thread.sleep(50);
@@ -97,11 +98,11 @@ class BatchJobServiceTest {
     void 成功作业记录退出码与耗时() throws Exception {
         BatchJobService service = newService(props("/bin/sh -c \"echo done; exit 0\""));
         BatchRun submitted = service.submit(LakeJobs.INIT, null);
-        assertEquals(BatchRun.QUEUED, submitted.status());
+        assertEquals(BatchRunStatus.QUEUED, submitted.status());
         dispatch();
 
         BatchRun done = await(service, submitted.id());
-        assertEquals(BatchRun.SUCCEEDED, done.status());
+        assertEquals(BatchRunStatus.SUCCEEDED, done.status());
         assertEquals(0, done.exitCode());
         assertTrue(done.durationMs() >= 0);
         assertTrue(service.tail(done.id(), 10).stream().anyMatch(l -> l.contains("done")));
@@ -113,7 +114,7 @@ class BatchJobServiceTest {
         BatchRun submitted = service.submit(LakeJobs.INGEST, null);
         dispatch();
         BatchRun done = await(service, submitted.id());
-        assertEquals(BatchRun.FAILED, done.status());
+        assertEquals(BatchRunStatus.FAILED, done.status());
         assertEquals(3, done.exitCode());
         assertTrue(done.message().contains("3"));
     }
@@ -127,12 +128,12 @@ class BatchJobServiceTest {
         BatchRun second = service.submit(LakeJobs.SHOW, null);
         dispatch();
 
-        assertEquals(BatchRun.RUNNING, service.get(first.id()).status());
-        assertEquals(BatchRun.QUEUED, service.get(second.id()).status());
+        assertEquals(BatchRunStatus.RUNNING, service.get(first.id()).status());
+        assertEquals(BatchRunStatus.QUEUED, service.get(second.id()).status());
 
         await(service, first.id());
         dispatch();
-        assertEquals(BatchRun.SUCCEEDED, await(service, second.id()).status());
+        assertEquals(BatchRunStatus.SUCCEEDED, await(service, second.id()).status());
     }
 
     @Test
@@ -165,7 +166,7 @@ class BatchJobServiceTest {
 
     @Test
     void 列表合并湖表历史且运行状态优先() throws Exception {
-        BatchRun persisted = new BatchRun("run-1", LakeJobs.INIT, "--job " + LakeJobs.INIT, BatchRun.SUCCEEDED, 0,
+        BatchRun persisted = new BatchRun("run-1", LakeJobs.INIT, "--job " + LakeJobs.INIT, BatchRunStatus.SUCCEEDED, 0,
                 Instant.parse("2026-11-01T00:00:00Z"), Instant.parse("2026-11-01T00:00:05Z"),
                 5000L, null, "历史");
         BatchHistoryService history = new BatchHistoryService(null, null) {
@@ -317,7 +318,7 @@ class BatchJobServiceTest {
         public void markLost(String id, String message, Instant now) {
             BatchRun run = runs.get(id);
             if (run != null) {
-                runs.put(id, run.finished(BatchRun.FAILED, 1, message, 0));
+                runs.put(id, run.finished(BatchRunStatus.FAILED, 1, message, 0));
             }
         }
 
@@ -334,23 +335,23 @@ class BatchJobServiceTest {
 
         @Override
         public int runningCount() {
-            return (int) runs.values().stream().filter(r -> BatchRun.RUNNING.equals(r.status())).count();
+            return (int) runs.values().stream().filter(r -> BatchRunStatus.RUNNING.equals(r.status())).count();
         }
 
         @Override
         public int queuedCount() {
-            return (int) runs.values().stream().filter(r -> BatchRun.QUEUED.equals(r.status())).count();
+            return (int) runs.values().stream().filter(r -> BatchRunStatus.QUEUED.equals(r.status())).count();
         }
 
         @Override
         public BatchRun claimNext(String owner) {
             BatchRun next = runs.values().stream()
-                    .filter(r -> BatchRun.QUEUED.equals(r.status()))
+                    .filter(r -> BatchRunStatus.QUEUED.equals(r.status()))
                     .min(Comparator.comparing(BatchRun::startedAt)).orElse(null);
             if (next == null) {
                 return null;
             }
-            BatchRun claimed = new BatchRun(next.id(), next.job(), next.command(), BatchRun.RUNNING, null,
+            BatchRun claimed = new BatchRun(next.id(), next.job(), next.command(), BatchRunStatus.RUNNING, null,
                     next.startedAt(), null, null, next.logFile(), "执行中");
             runs.put(next.id(), claimed);
             return claimed;

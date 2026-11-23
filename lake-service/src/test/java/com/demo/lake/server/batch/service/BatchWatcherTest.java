@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchEvent;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
@@ -38,7 +39,7 @@ class BatchWatcherTest {
         };
         lateSink.append("watch-1", List.of("late-line"));
 
-        BatchRun run = new BatchRun("watch-1", "init", "--job init", BatchRun.RUNNING, null,
+        BatchRun run = new BatchRun("watch-1", "init", "--job init", BatchRunStatus.RUNNING, null,
                 Instant.now(), null, null, null, "执行中"); // logFile=null：模拟请求落到非执行实例
         store.insert(run, "svc-a");
 
@@ -82,7 +83,7 @@ class BatchWatcherTest {
         BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
         BatchJobServiceTest.InMemoryLogSink sink = new BatchJobServiceTest.InMemoryLogSink();
         sink.append("watch-2", List.of("last-line"));
-        BatchRun run = new BatchRun("watch-2", "init", "--job init", BatchRun.SUCCEEDED, 0,
+        BatchRun run = new BatchRun("watch-2", "init", "--job init", BatchRunStatus.SUCCEEDED, 0,
                 Instant.now(), Instant.now(), 100L, null, "完成");
         store.insert(run, "svc-a");
 

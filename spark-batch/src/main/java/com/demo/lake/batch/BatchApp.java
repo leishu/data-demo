@@ -1,5 +1,6 @@
 package com.demo.lake.batch;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.batch.job.EvolveJob;
 import com.demo.lake.batch.job.IngestJob;
 import com.demo.lake.batch.job.InitJob;
@@ -87,7 +88,7 @@ public final class BatchApp {
         System.out.println("======================================================");
 
         SparkSession spark = SparkSessionFactory.create(cfg, "lakehouse-batch");
-        String status = BatchRunStatus.SUCCEEDED;
+        BatchRunStatus status = BatchRunStatus.SUCCEEDED;
         int exitCode = 0;
         String message = "完成";
         try {

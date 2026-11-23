@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.batch.model.BatchRun;
@@ -198,7 +199,7 @@ public class BatchHistoryService {
                 text(row, 0),
                 text(row, 1),
                 text(row, 2),
-                text(row, 3),
+                BatchRunStatus.from(text(row, 3)),
                 toInt(text(row, 4)),
                 toInstantMillis(text(row, 5)),
                 toInstantMillis(text(row, 6)),
