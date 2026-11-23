@@ -1,6 +1,7 @@
 package com.demo.lake.server.batch.service;
 
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.LakeMetrics;
 import jakarta.annotation.PostConstruct;

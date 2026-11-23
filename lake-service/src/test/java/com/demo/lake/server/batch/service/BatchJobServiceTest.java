@@ -3,6 +3,7 @@ package com.demo.lake.server.batch.service;
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
+import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.AuditBuffer;
 import com.demo.lake.server.observability.AuditService;

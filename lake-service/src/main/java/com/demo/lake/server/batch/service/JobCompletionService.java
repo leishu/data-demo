@@ -1,6 +1,7 @@
 package com.demo.lake.server.batch.service;
 
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.observability.AuditService;
 import com.demo.lake.server.observability.LakeMetrics;
 import lombok.RequiredArgsConstructor;

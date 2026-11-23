@@ -69,7 +69,7 @@ graph LR
     BATCH -->|"终态归档 ops.batch_runs"| ICE
 ```
 
-**关键外部边界**：① 上游落地文件是「模拟」的，由 IngestJob 自己生成；② Trino 是查询侧唯一入口，Spark 是写入侧主力；③ Postgres 只服务 lake-service 的运行态，不是湖仓数据的一部分；④ 外部调度器/网关/监控都只通过服务层接口接入，不直接碰湖表或运行态库。〔FACT｜README.md:7-21〕〔FACT｜batch/service/RunStateStore.java:10-13〕〔FACT｜scheduler/README.md:1-20〕
+**关键外部边界**：① 上游落地文件是「模拟」的，由 IngestJob 自己生成；② Trino 是查询侧唯一入口，Spark 是写入侧主力；③ Postgres 只服务 lake-service 的运行态，不是湖仓数据的一部分；④ 外部调度器/网关/监控都只通过服务层接口接入，不直接碰湖表或运行态库。〔FACT｜README.md:7-21〕〔FACT｜batch/store/RunStateStore.java:10-13〕〔FACT｜scheduler/README.md:1-20〕
 
 ### 1.3 技术栈摘要
 
@@ -575,7 +575,7 @@ sequenceDiagram
 | ② 共享日志尾部 | Postgres `lake_batch.batch_log_lines` | 执行器 → `JdbcLogSink` | 每 run 留尾 2000 行，7 天 |
 | ③ 湖表历史归档 | Iceberg `ops.batch_runs`（经 Trino 读） | **spark-batch** `RunRecordWriter` | 长期、跨进程的权威归档 |
 
-〔FACT｜batch/service/RunStateStore.java:10-13〕〔FACT｜batch/service/JdbcRunStateStore.java:32〕〔FACT｜batch/service/JdbcLogSink.java:26-27〕
+〔FACT｜batch/store/RunStateStore.java:10-13〕〔FACT｜batch/store/JdbcRunStateStore.java:32〕〔FACT｜batch/service/JdbcLogSink.java:26-27〕
 
 #### 主链路（提交到终态）
 
@@ -610,7 +610,7 @@ sequenceDiagram
 
 **关键数据节点**：
 1. **提交**：`BatchJobService.submit` 做白名单校验（`LakeJobs.CHOICES`）、快路径幂等命中查询、`RunIds.generate()` 生成 runId、命令模板 `bin/dev-batch.sh --job {job}` 拼命令、建日志目录；带幂等键时由 `insertWithIdempotency` 在事务内抢占键并写入 QUEUED，并发重复提交只有一个胜出。〔FACT｜batch/service/BatchJobService.java:119-170〕
-2. **认领**：Dispatcher 每 1s 扫描，`claimNextIfSlotAvailable` 在同一把数据库行锁里做「RUNNING 数 < max」检查与条件 UPDATE 认领，多实例既不重复执行也不越过 `max-concurrent-jobs`（默认 2）。〔FACT｜batch/service/JobDispatcher.java:55-75〕〔FACT｜batch/service/JdbcRunStateStore.java:219-260〕
+2. **认领**：Dispatcher 每 1s 扫描，`claimNextIfSlotAvailable` 在同一把数据库行锁里做「RUNNING 数 < max」检查与条件 UPDATE 认领，多实例既不重复执行也不越过 `max-concurrent-jobs`（默认 2）。〔FACT｜batch/service/JobDispatcher.java:55-75〕〔FACT｜batch/store/JdbcRunStateStore.java:219-260〕
 3. **执行**：本地执行器把 stdout/stderr 重定向到 `logs/batch/{id}.log`，注入 `BATCH_RUN_ID` 与 `BATCH_RUN_LOG` 环境变量；虚拟线程循环 `waitFor(500ms)` + 每轮 flush 日志到 Postgres，退出码 0→SUCCEEDED/非 0→FAILED/超时→TIMEOUT。〔FACT｜batch/service/LocalProcessJobExecutor.java:33-93〕
 4. **终态回流**：`JobCompletionService.completed()` 写终态到运行态库、令湖表历史缓存失效、打指标与审计。〔FACT｜batch/service/JobCompletionService.java:21-35〕
 5. **runId 对齐**：服务端生成 runId → 注入子进程 → `RunIds.resolve` 取出 → 既写 bronze 每行、又写 `ops.batch_runs`，二者指向同一批次。〔FACT｜common/batch/RunIds.java:14-19〕〔FACT｜spark-batch/BatchApp.java:80-88〕
@@ -824,7 +824,7 @@ erDiagram
     }
 ```
 
-〔FACT｜batch/service/JdbcRunStateStore.java:37-65〕〔FACT｜batch/service/JdbcLogSink.java:36-52〕〔FACT｜observability/AuditTextStore.java:90-118〕
+〔FACT｜batch/store/JdbcRunStateStore.java:37-65〕〔FACT｜batch/service/JdbcLogSink.java:36-52〕〔FACT｜observability/AuditTextStore.java:90-118〕
 
 ### 5.3 关键字段说明
 
