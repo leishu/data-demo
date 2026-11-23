@@ -4,9 +4,11 @@ import com.demo.lake.server.batch.model.BatchEvent;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.config.LakeProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.Disposable;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,6 +17,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** SSE 首帧共享日志为空时，后续出现的日志必须能被推给客户端（跨实例场景） */
@@ -57,5 +61,42 @@ class BatchWatcherTest {
         } finally {
             subscription.dispose();
         }
+    }
+
+    @Test
+    void 运行不存在时以404错误结束流() {
+        LakeProperties props = new LakeProperties();
+        BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
+        BatchJobServiceTest.InMemoryLogSink sink = new BatchJobServiceTest.InMemoryLogSink();
+        BatchJobService jobs = new BatchJobService(props, null, store, sink, new BatchIdentity(),
+                new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
+        BatchWatcher watcher = new BatchWatcher(jobs, sink, Schedulers.boundedElastic());
+
+        assertThrows(ResponseStatusException.class,
+                () -> watcher.watch("missing", 40).collectList().block(Duration.ofSeconds(5)));
+    }
+
+    @Test
+    void 终态运行时发出End并结束流() {
+        LakeProperties props = new LakeProperties();
+        BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
+        BatchJobServiceTest.InMemoryLogSink sink = new BatchJobServiceTest.InMemoryLogSink();
+        sink.append("watch-2", List.of("last-line"));
+        BatchRun run = new BatchRun("watch-2", "init", "--job init", BatchRun.SUCCEEDED, 0,
+                Instant.now(), Instant.now(), 100L, null, "完成");
+        store.insert(run, "svc-a");
+
+        BatchJobService jobs = new BatchJobService(props, null, store, sink, new BatchIdentity(),
+                new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
+        BatchWatcher watcher = new BatchWatcher(jobs, sink, Schedulers.boundedElastic());
+
+        List<BatchEvent> events = watcher.watch("watch-2", 40)
+                .collectList().block(Duration.ofSeconds(5));
+
+        assertNotNull(events, "终态流应在 5s 内结束");
+        assertTrue(events.stream().anyMatch(e -> e instanceof BatchEvent.Status), "应发出状态事件");
+        assertTrue(events.stream().anyMatch(e -> e instanceof BatchEvent.Log log
+                && log.lines().contains("last-line")), "应发出日志事件");
+        assertTrue(events.stream().anyMatch(e -> e instanceof BatchEvent.End), "应发出 End 并结束");
     }
 }
