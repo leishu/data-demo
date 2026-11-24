@@ -72,7 +72,8 @@ lakehouse-demo/
 │   ├── grafana/              数据源、面板与自动装载配置
 │   ├── trino/auth/           LDAP + 表级授权模板（profile=security）
 │   └── ranger/               HMS Ranger 插件配置模板与安装步骤
-├── .github/workflows/        ci.yml（构建/单测 + 主分支 E2E）+ codeql.yml（Java 安全扫描）
+├── .github/                  dependabot.yml（依赖更新）+ workflows/ + codeql/
+│   ├── workflows/            ci.yml / codeql.yml / dependency-review.yml
 │   └── codeql/               codeql-config.yml（排除 test 源码，降低假阳性）
 ├── scheduler/                外部调度示例：Airflow DAG / DolphinScheduler 任务入口 / 接入说明
 ├── bin/                      便捷脚本（build / stack / smoke / scheduled-batch / dev-batch / infra ...）
@@ -342,6 +343,10 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
   构建整个 Maven reactor 后做 Java/Kotlin 安全扫描，用 `security-extended` 查询集，
   排除 `src/test`（见 `.github/codeql/codeql-config.yml`）；告警进 Security → Code scanning，
   并在 PR 上显示。私有仓库需先开启 GitHub Code Security，否则 SARIF 上传会被拒绝。
+- **Dependabot（`.github/dependabot.yml`）**：每周检查 Maven / npm / GitHub Actions 依赖，
+  minor/patch 合并成一个 `deps` PR（major 单独 PR，不 `ignore`，避免挡掉大版本安全修复）；
+  `.github/workflows/dependency-review.yml` 在 PR 上展示依赖 diff 并拦下新增高危漏洞。
+  需在 GitHub 设置里先开 Dependency graph + Dependabot alerts 才生效。
 - **全栈模式（`infra/docker-compose.full.yml`）**：在原有 infra 之上加 `lake-service` 容器。
   容器里的服务关闭批作业（`LAKE_BATCH_ENABLED=false`），因为镜像只带 JRE，没有
   `bin/dev-batch.sh` 需要的 Maven/Spark classpath；批作业用 `bin/stack.sh batch` 在宿主机执行。

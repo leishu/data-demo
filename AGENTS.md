@@ -49,7 +49,8 @@ lakehouse-demo/
 ├── lake-ui/                  Vue 3 控制台（独立工程，构建产物进 lake-service/.../static/ui/）
 ├── scheduler/                外部调度示例（Airflow / DolphinScheduler / crontab，非 Maven 模块）
 ├── sql/adhoc/                可丢给 Trino 的即席脚本（01_daily_revenue … 07_channel_mix）
-├── .github/workflows/        ci.yml（构建/单测/E2E）+ codeql.yml（Java 安全扫描）
+├── .github/                  dependabot.yml + workflows/（ci / codeql / dependency-review）
+│   ├── workflows/            ci.yml（构建/单测/E2E）+ codeql.yml + dependency-review.yml
 │   └── codeql/               codeql-config.yml（扫描范围：排除 src/test）
 └── bin/                      便捷脚本（build / build-ui / dev-batch / stack / smoke / infra / lake-service …）
 ```
@@ -124,5 +125,6 @@ mvn -pl lake-service package            # 必须 JDK 21（模块内已挂 enforc
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) / [docs/SECURITY.md](docs/SECURITY.md) / [docs/STORAGE.md](docs/STORAGE.md) / [docs/CONCURRENCY.md](docs/CONCURRENCY.md)
 - [infra/README.md](infra/README.md)、[scheduler/README.md](scheduler/README.md)
 - [.github/workflows/codeql.yml](.github/workflows/codeql.yml) / [codeql-config.yml](.github/codeql/codeql-config.yml)：Java 安全扫描（JDK 21 manual build + security-extended，排除测试源码）
+- [.github/dependabot.yml](.github/dependabot.yml) / [dependency-review.yml](.github/workflows/dependency-review.yml)：依赖更新与 PR 依赖漏洞门禁（需先在 GitHub 设置开 Dependency graph + Dependabot alerts）
 
 > 其他 AI 助手：本文件已放在仓库根，各产品（Cursor/Copilot）可按各自惯例读取。

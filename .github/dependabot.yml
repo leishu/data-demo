@@ -1,0 +1,29 @@
+version: 2
+# 依赖更新：minor/patch 攒成单个 PR 降噪；major 仍单独出 PR（不 ignore，否则大版本安全修复也会被挡）
+# 安全更新由 Dependabot alerts 负责，不依赖这里的调度；private repo 需开启 GitHub Code Security。
+updates:
+  - package-ecosystem: maven
+    directory: "/"          # 根 pom 管着 4 个模块的版本
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: deps }
+    groups:
+      maven-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: "/lake-ui"   # Vue 控制台的 package.json
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: deps }
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: "/"          # 让 checkout/codeql 等 action 的大版本升级也持续进来
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: deps }
