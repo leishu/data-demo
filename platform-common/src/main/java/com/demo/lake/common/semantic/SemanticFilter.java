@@ -1,6 +1,9 @@
 package com.demo.lake.common.semantic;
 
+import lombok.Getter;
+
 /** 语义查询的过滤条件：字段必须是指标允许的维度，值由渲染器做类型化/转义 */
+@Getter
 public final class SemanticFilter {
 
     private final String field;
@@ -13,15 +16,4 @@ public final class SemanticFilter {
         this.value = value;
     }
 
-    public String getField() {
-        return field;
-    }
-
-    public String getOp() {
-        return op;
-    }
-
-    public String getValue() {
-        return value;
-    }
 }

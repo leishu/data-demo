@@ -1,6 +1,7 @@
 package com.demo.lake.common.cli;
 
 import com.demo.lake.common.sql.SqlScript;
+import lombok.experimental.UtilityClass;
 import com.demo.lake.common.sql.SqlTemplate;
 
 import java.nio.file.Paths;
@@ -21,6 +22,7 @@ import java.util.Map;
  *     [--params k=v,k2=v2] [--explain]
  * </pre>
  */
+@UtilityClass
 public final class SqlParams {
 
     public static void main(String[] argv) {
@@ -111,6 +113,4 @@ public final class SqlParams {
         System.exit(2);
     }
 
-    private SqlParams() {
-    }
 }

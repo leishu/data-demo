@@ -1,5 +1,7 @@
 package com.demo.lake.common.sql;
 
+import lombok.experimental.UtilityClass;
+
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -13,6 +15,7 @@ import java.util.regex.Pattern;
  *   <li>{@code INTERVAL '1' DAY} -&gt; {@code INTERVAL 1 DAYS}</li>
  * </ul>
  */
+@UtilityClass
 public final class TrinoDialect {
 
     private static final Pattern DATE_ADD = Pattern.compile(
@@ -22,9 +25,6 @@ public final class TrinoDialect {
     private static final Pattern QUOTED_INTERVAL = Pattern.compile(
             "INTERVAL\\s+'(-?\\d+)'\\s+(DAY|DAYS|HOUR|HOURS|MONTH|MONTHS|YEAR|YEARS|MINUTE|MINUTES)",
             Pattern.CASE_INSENSITIVE);
-
-    private TrinoDialect() {
-    }
 
     public static String toSpark(String sql) {
         String result = rewriteDateAdd(sql);

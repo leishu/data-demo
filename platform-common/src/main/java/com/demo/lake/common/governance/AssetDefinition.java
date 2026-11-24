@@ -1,11 +1,14 @@
 package com.demo.lake.common.governance;
 
+import lombok.Getter;
+
 /**
  * 一张湖表的治理档案：谁负责、属于哪个域/分层、敏感级别、保留多久、新鲜度 SLA 是多少。
  *
  * <p>这是配置数据，不是运行时状态：所有字段在构造时校验，目录写错在启动前的单测阶段就会挂掉，
  * 不会等到页面上出现“负责人为空”才被发现。</p>
  */
+@Getter
 public final class AssetDefinition {
 
     private final String table;
@@ -44,37 +47,5 @@ public final class AssetDefinition {
             throw new IllegalArgumentException("缺少必填配置: " + field);
         }
         return value.trim();
-    }
-
-    public String getTable() {
-        return table;
-    }
-
-    public String getOwner() {
-        return owner;
-    }
-
-    public String getDomain() {
-        return domain;
-    }
-
-    public String getLayer() {
-        return layer;
-    }
-
-    public Sensitivity getSensitivity() {
-        return sensitivity;
-    }
-
-    public int getRetentionDays() {
-        return retentionDays;
-    }
-
-    public int getFreshnessSlaHours() {
-        return freshnessSlaHours;
-    }
-
-    public String getDescription() {
-        return description;
     }
 }

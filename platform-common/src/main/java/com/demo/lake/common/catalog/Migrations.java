@@ -1,6 +1,7 @@
 package com.demo.lake.common.catalog;
 
 import com.demo.lake.common.config.PlatformConfig;
+import lombok.experimental.UtilityClass;
 import com.demo.lake.common.sql.SqlResources;
 import com.demo.lake.common.sql.SqlScript;
 import com.demo.lake.common.sql.SqlTemplate;
@@ -16,6 +17,7 @@ import java.util.Map;
  * 本类只负责绑定表名、组装缺失列，以及把「列是否已存在 / 是否有旧行要回填」的判断
  * 留给调用方（InitJob / EvolveJob）——SQL 文件里不放控制流。</p>
  */
+@UtilityClass
 public final class Migrations {
 
     /** 支持按列名取到对应的列定义片段，避免把 DDL 片段重新写回 Java。 */
@@ -24,9 +26,6 @@ public final class Migrations {
     static {
         COLUMN_FRAGMENTS.put("started_ms", SqlResources.MIGRATE_COL_STARTED_MS);
         COLUMN_FRAGMENTS.put("finished_ms", SqlResources.MIGRATE_COL_FINISHED_MS);
-    }
-
-    private Migrations() {
     }
 
     /** 取迁移用的列定义（不含前后逗号，由调用方 join）。列名未在注册表中时直接报错。 */

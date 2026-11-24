@@ -1,5 +1,7 @@
 package com.demo.lake.common.batch;
 
+import lombok.experimental.UtilityClass;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -14,6 +16,7 @@ import java.util.List;
  * <p>这里只有名字，没有实现：common 不依赖 Spark。新增作业时先在本类加常量并串进
  * {@link #NAMES}，再去 spark-batch 注册实现、按需调整服务端白名单。</p>
  */
+@UtilityClass
 public final class LakeJobs {
 
     public static final String INIT = "init";
@@ -89,8 +92,5 @@ public final class LakeJobs {
         List<String> names = new ArrayList<>(NAMES);
         names.add(ALL);
         return Collections.unmodifiableList(names);
-    }
-
-    private LakeJobs() {
     }
 }

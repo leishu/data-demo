@@ -1,5 +1,7 @@
 package com.demo.lake.common.semantic;
 
+import lombok.Getter;
+
 import java.util.List;
 
 /**
@@ -8,6 +10,7 @@ import java.util.List;
  * <p>语义层的核心不是「再包一层 SQL」，而是把口径（GMV / 净收入 / 退款率）定义在一处，
  * 前端和其它调用方只能按定义组合维度，不能自己写任意聚合表达式。</p>
  */
+@Getter
 public final class MetricDefinition {
 
     private final String name;
@@ -27,27 +30,4 @@ public final class MetricDefinition {
         this.dimensions = List.copyOf(dimensions);
     }
 
-    public String getName() {
-        return name;
-    }
-
-    public String getLabel() {
-        return label;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public String getSource() {
-        return source;
-    }
-
-    public String getMeasure() {
-        return measure;
-    }
-
-    public List<String> getDimensions() {
-        return dimensions;
-    }
 }

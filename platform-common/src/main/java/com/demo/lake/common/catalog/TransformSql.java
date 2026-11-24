@@ -1,6 +1,7 @@
 package com.demo.lake.common.catalog;
 
 import com.demo.lake.common.config.PlatformConfig;
+import lombok.experimental.UtilityClass;
 import com.demo.lake.common.sql.SqlResources;
 import com.demo.lake.common.sql.SqlScript;
 import com.demo.lake.common.sql.SqlTemplate;
@@ -14,10 +15,8 @@ import java.util.Map;
  * 抽到 common 里，Spark 作业和单测共用同一份 SQL，避免"测试用的 SQL 和线上跑的不一样"。
  * SQL 文本在 classpath 的 {@code sql/transform/} 下，这里只负责绑定表名和天数。
  */
+@UtilityClass
 public final class TransformSql {
-
-    private TransformSql() {
-    }
 
     /**
      * ODS -&gt; DWD：按 order_id 取最新事件做 upsert。

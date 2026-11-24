@@ -1,10 +1,12 @@
 package com.demo.lake.common.semantic;
 
 import com.demo.lake.common.catalog.LakeTables;
+import lombok.experimental.UtilityClass;
 
 import java.util.List;
 
 /** 指标目录：所有口径只在这里维护，服务与 UI 都从它读取 */
+@UtilityClass
 public final class SemanticCatalog {
 
     private static final List<String> GOLD_DIMENSIONS = List.of("dt", "merchant_id", "category");
@@ -22,9 +24,6 @@ public final class SemanticCatalog {
             // （退款金额/GMV、nullif 防除零、返回比例 0~1），改动此处时请同步该脚本。
             new MetricDefinition("refund_rate", "退款率", "退款金额 / GMV",
                     LakeTables.GOLD_DAILY_REVENUE, "SUM(refund_amount) / NULLIF(SUM(gmv), 0)", GOLD_DIMENSIONS));
-
-    private SemanticCatalog() {
-    }
 
     public static MetricDefinition get(String name) {
         return METRICS.stream().filter(m -> m.getName().equals(name)).findFirst().orElse(null);

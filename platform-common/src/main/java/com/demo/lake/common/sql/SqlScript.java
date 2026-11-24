@@ -1,5 +1,7 @@
 package com.demo.lake.common.sql;
 
+import lombok.experimental.UtilityClass;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -13,10 +15,8 @@ import java.util.List;
  * 极简 SQL 脚本工具：读文件 + 按分号切分语句。
  * 只处理单引号字符串与 -- / 块注释，足够应付 ad-hoc 脚本与 DDL 文件。
  */
+@UtilityClass
 public final class SqlScript {
-
-    private SqlScript() {
-    }
 
     public static String read(Path path) {
         try {

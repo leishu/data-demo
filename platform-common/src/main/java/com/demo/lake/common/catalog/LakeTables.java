@@ -1,6 +1,7 @@
 package com.demo.lake.common.catalog;
 
 import com.demo.lake.common.config.PlatformConfig;
+import lombok.experimental.UtilityClass;
 import com.demo.lake.common.sql.SqlResources;
 import com.demo.lake.common.sql.SqlScript;
 import com.demo.lake.common.sql.SqlTemplate;
@@ -30,6 +31,7 @@ import java.util.Map;
  * <p>DDL 文本放在 classpath 的 {@code sql/ddl/} 下，由本类绑定配置参数后交给 Spark；
  * 表名常量仍由 Java 侧持有，单测会校验模板里的表名与常量一致。</p>
  */
+@UtilityClass
 public final class LakeTables {
 
     public static final String BRONZE_ORDERS = "bronze_orders";
@@ -40,9 +42,6 @@ public final class LakeTables {
     public static final String OPS_SCHEMA = "ops";
     /** 批作业运行历史：一行一次运行的终态，由 BatchApp 写、lake-service 读 */
     public static final String BATCH_RUNS = "batch_runs";
-
-    private LakeTables() {
-    }
 
     /** 建库 2 条 + 建表 4 条，顺序即执行顺序。 */
     public static List<String> all(PlatformConfig cfg) {

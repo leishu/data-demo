@@ -1,11 +1,16 @@
 package com.demo.lake.common.governance;
 
+import lombok.Getter;
+import lombok.experimental.Accessors;
+
 /**
  * 数据敏感级别：L1 公开 → L4 受限。
  *
  * <p>级别只在这里定义，资产目录引用枚举、页面按 {@link #level()} 渲染徽标颜色，
  * 不在前端另抄一份“敏感/机密”的字符串表。</p>
  */
+@Getter
+@Accessors(fluent = true)
 public enum Sensitivity {
 
     /** L1：可对内公开 */
@@ -23,13 +28,5 @@ public enum Sensitivity {
     Sensitivity(String label, int level) {
         this.label = label;
         this.level = level;
-    }
-
-    public String label() {
-        return label;
-    }
-
-    public int level() {
-        return level;
     }
 }

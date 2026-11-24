@@ -1,6 +1,7 @@
 package com.demo.lake.common.governance;
 
 import com.demo.lake.common.catalog.LakeTables;
+import lombok.experimental.UtilityClass;
 
 import java.util.List;
 
@@ -12,6 +13,7 @@ import java.util.List;
  * {@link com.demo.lake.common.semantic.SemanticCatalog}、{@link com.demo.lake.common.batch.LakeJobs}
  * 一样是单一事实源，单测会把表名、重复项和字段约束全部卡住。</p>
  */
+@UtilityClass
 public final class GovernanceCatalog {
 
     public static final List<AssetDefinition> ASSETS = List.of(
@@ -21,9 +23,6 @@ public final class GovernanceCatalog {
                     Sensitivity.SENSITIVE, 365, 26, "按 order_id 去重后的事实表，一行一单"),
             new AssetDefinition(LakeTables.GOLD_DAILY_REVENUE, "经营分析组", "经营分析", "ADS",
                     Sensitivity.INTERNAL, 730, 26, "按天 × 商户 × 品类汇总的 GMV / 退款 / 净收入"));
-
-    private GovernanceCatalog() {
-    }
 
     public static AssetDefinition get(String table) {
         for (AssetDefinition asset : ASSETS) {

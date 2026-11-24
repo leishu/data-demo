@@ -1,5 +1,7 @@
 package com.demo.lake.common.sql;
 
+import lombok.experimental.UtilityClass;
+
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -11,6 +13,7 @@ import java.util.List;
  * 路径以 {@code _} 开头的文件是片段（如表属性、单个列定义），不能单独执行；
  * 其余文件每个都对应一条或多条可执行语句。</p>
  */
+@UtilityClass
 public final class SqlResources {
 
     public static final String DDL_DATABASES = "sql/ddl/00_databases.sql";
@@ -41,9 +44,6 @@ public final class SqlResources {
             MIGRATE_COL_STARTED_MS, MIGRATE_COL_FINISHED_MS,
             MIGRATE_SILVER_ADD_CHANNEL, MIGRATE_SILVER_BACKFILL_CHANNEL,
             MIGRATE_BRONZE_ADD_RUN_ID));
-
-    private SqlResources() {
-    }
 
     /** 全部模板，含下划线开头的片段；单测遍历它保证没有漏登记、没有残留占位符。 */
     public static List<String> all() {

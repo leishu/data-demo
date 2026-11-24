@@ -1,5 +1,7 @@
 package com.demo.lake.common.semantic;
 
+import lombok.experimental.UtilityClass;
+
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -16,6 +18,7 @@ import java.util.regex.Pattern;
  * <p>所有标识符都来自指标目录的白名单，过滤值按类型转成日期/数字/转义字符串，
  * 所以这个接口不会变成另一个 SQL 注入入口。</p>
  */
+@UtilityClass
 public final class SemanticSqlRenderer {
 
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
@@ -52,9 +55,6 @@ public final class SemanticSqlRenderer {
         abstract String ident(String name);
     }
 
-    private SemanticSqlRenderer() {
-    }
-
     public static String render(MetricDefinition metric, String tableFqn, List<String> dimensions,
                                 List<SemanticFilter> filters, int limit, Dialect dialect) {
         if (metric == null || tableFqn == null || dialect == null) {
@@ -80,8 +80,8 @@ public final class SemanticSqlRenderer {
         }
 
         StringBuilder sql = new StringBuilder(SELECT);
-        for (int i = 0; i < dims.size(); i++) {
-            sql.append(dialect.ident(dims.get(i))).append(SEPARATOR);
+        for (String dim : dims) {
+            sql.append(dialect.ident(dim)).append(SEPARATOR);
         }
         sql.append(metric.getMeasure()).append(AS).append(dialect.ident(metric.getName()));
         sql.append(FROM).append(tableFqn);

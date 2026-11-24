@@ -1,5 +1,8 @@
 package com.demo.lake.common.config;
 
+import lombok.AccessLevel;
+import lombok.RequiredArgsConstructor;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -25,6 +28,7 @@ import java.util.Properties;
  *   <li>JVM 参数 -Dplatform.xxx.yyy</li>
  * </ol>
  */
+@RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 public final class PlatformConfig {
 
     public static final String ENV_PREFIX = "LAKE_";
@@ -32,10 +36,6 @@ public final class PlatformConfig {
     private static final String DEFAULT_FILE = "conf/platform.properties";
 
     private final Properties props;
-
-    private PlatformConfig(Properties props) {
-        this.props = props;
-    }
 
     public static PlatformConfig load() {
         return load(null);

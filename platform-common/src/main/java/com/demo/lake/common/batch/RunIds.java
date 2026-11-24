@@ -1,6 +1,7 @@
 package com.demo.lake.common.batch;
 
 import com.demo.lake.common.cli.Args;
+import lombok.experimental.UtilityClass;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -20,6 +21,7 @@ import java.util.UUID;
  * 服务端与 spark-batch 共用 {@link #generate()}，保证两边生成的 ID 格式一致。
  * epoch 毫秒（{@code ops.batch_runs.started_ms}）本身没有时区，解析和显示各自以绝对时刻为准。</p>
  */
+@UtilityClass
 public final class RunIds {
 
     /** 服务端拉起作业时注入的环境变量名 */
@@ -52,8 +54,5 @@ public final class RunIds {
     private static String env(String key) {
         String v = System.getenv(key);
         return v == null || v.isBlank() ? null : v.trim();
-    }
-
-    private RunIds() {
     }
 }

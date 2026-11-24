@@ -1,6 +1,8 @@
 package com.demo.lake.common.cli;
 
 import com.demo.lake.common.batch.LakeJobs;
+import lombok.Getter;
+import lombok.experimental.Accessors;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -16,6 +18,9 @@ public final class Args {
 
     private final Map<String, String> values = new HashMap<>();
     private final List<String> flags = new ArrayList<>();
+    /** 只暴露位置参数；values / flags 是被解析用的内部状态，不给外部改 */
+    @Getter
+    @Accessors(fluent = true)
     private final List<String> positional = new ArrayList<>();
 
     public static Args parse(String[] argv) {
@@ -61,10 +66,6 @@ public final class Args {
 
     public boolean flag(String key) {
         return flags.contains(key) || "true".equalsIgnoreCase(values.get(key));
-    }
-
-    public List<String> positional() {
-        return positional;
     }
 
     public String job() {
