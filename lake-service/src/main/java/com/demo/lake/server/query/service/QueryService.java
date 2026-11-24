@@ -133,12 +133,8 @@ public class QueryService {
     }
 
     private QueryResult read(ResultSet rs, int limit, long start, String safeSql, boolean quiet) throws SQLException {
-        ResultSetMetaData md = rs.getMetaData();
-        int columnCount = md.getColumnCount();
-        List<Column> columns = new ArrayList<>(columnCount);
-        for (int i = 1; i <= columnCount; i++) {
-            columns.add(new Column(md.getColumnLabel(i), md.getColumnTypeName(i)));
-        }
+        List<Column> columns = readColumns(rs);
+        int columnCount = columns.size();
 
         List<List<String>> rows = new ArrayList<>();
         boolean truncated = false;
@@ -147,11 +143,7 @@ public class QueryService {
                 truncated = true;
                 break;
             }
-            List<String> row = new ArrayList<>(columnCount);
-            for (int i = 1; i <= columnCount; i++) {
-                row.add(format(rs.getObject(i)));
-            }
-            rows.add(row);
+            rows.add(readRow(rs, columnCount));
         }
 
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
@@ -161,6 +153,26 @@ public class QueryService {
             log.info("query ok rows={} truncated={} {}ms sql={}", rows.size(), truncated, elapsedMs, abbreviate(safeSql));
         }
         return new QueryResult(columns, rows, rows.size(), truncated, elapsedMs, stats(rs));
+    }
+
+    /** 列定义：同步查询与流式查询共用，避免两处各写一遍 JDBC 元数据遍历。 */
+    private static List<Column> readColumns(ResultSet rs) throws SQLException {
+        ResultSetMetaData md = rs.getMetaData();
+        int columnCount = md.getColumnCount();
+        List<Column> columns = new ArrayList<>(columnCount);
+        for (int i = 1; i <= columnCount; i++) {
+            columns.add(new Column(md.getColumnLabel(i), md.getColumnTypeName(i)));
+        }
+        return columns;
+    }
+
+    /** 单行渲染：同步查询与流式查询共用，列数由调用方按元数据结果传入。 */
+    private static List<String> readRow(ResultSet rs, int columnCount) throws SQLException {
+        List<String> row = new ArrayList<>(columnCount);
+        for (int i = 1; i <= columnCount; i++) {
+            row.add(format(rs.getObject(i)));
+        }
+        return row;
     }
 
     /**
@@ -186,12 +198,8 @@ public class QueryService {
                  Statement stmt = conn.createStatement()) {
                 stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
                 try (ResultSet rs = stmt.executeQuery(safeSql)) {
-                    ResultSetMetaData md = rs.getMetaData();
-                    int columnCount = md.getColumnCount();
-                    List<Column> columns = new ArrayList<>(columnCount);
-                    for (int i = 1; i <= columnCount; i++) {
-                        columns.add(new Column(md.getColumnLabel(i), md.getColumnTypeName(i)));
-                    }
+                    List<Column> columns = readColumns(rs);
+                    int columnCount = columns.size();
                     sink.next(new QueryEvent.Meta(columns));
 
                     List<List<String>> batch = new ArrayList<>(STREAM_BATCH_ROWS);
@@ -207,11 +215,7 @@ public class QueryService {
                             truncated = true;
                             break;
                         }
-                        List<String> row = new ArrayList<>(columnCount);
-                        for (int i = 1; i <= columnCount; i++) {
-                            row.add(format(rs.getObject(i)));
-                        }
-                        batch.add(row);
+                        batch.add(readRow(rs, columnCount));
                         count++;
                         if (batch.size() >= STREAM_BATCH_ROWS) {
                             // copy 一份再清空，否则 sink 里拿到的就是同一个正在被清空的 list
