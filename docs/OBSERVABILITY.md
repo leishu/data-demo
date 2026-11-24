@@ -5,7 +5,7 @@ lake-service 用 Micrometer 埋点，同时暴露 `GET /actuator/metrics`（人�
 仓库自带可选的 Prometheus + Grafana 栈（`bin/infra.sh up monitoring`），凭据、告警规则和面板都已预置；
 不想起容器时直接用 curl 抓端点也一样。
 
-审计事件写 `logs/audit.log`（按 90 天滚动），最近 200 条可通过 `GET /api/audit` 查看（QUERY 或 AUDITOR 角色都可以，三个演示账号都能看）。
+审计事件写 `logs/audit.log`（按 90 天滚动），最近 200 条可通过 `GET /api/audit` 查看（QUERY 或 AUDITOR 角色都可以，三个演示账号都能看），按时间倒序返回。
 
 ## 指标清单
 

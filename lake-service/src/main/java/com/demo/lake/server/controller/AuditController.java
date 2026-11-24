@@ -36,7 +36,7 @@ public class AuditController {
     private final AuditTextStore texts;
     private final AuditService audit;
 
-    @Operation(summary = "最近审计事件", description = "环形缓冲里的近期事件（只含指纹等元数据，不含 SQL 原文）")
+    @Operation(summary = "最近审计事件", description = "环形缓冲里的近期事件，按时间倒序（最新在前）；只含指纹等元数据，不含 SQL 原文")
     @GetMapping
     public List<AuditEvent> recent(
             @Parameter(description = "最多返回多少条，默认 100") @RequestParam(defaultValue = "100") int limit) {

@@ -41,7 +41,8 @@ class AuditServiceTest {
         }
         List<AuditEvent> events = buffer.recent(500);
         assertEquals(200, events.size());
-        assertEquals("event.5", events.get(0).event());
-        assertEquals("event.204", events.get(199).event());
+        // 时间倒序：最新的在前
+        assertEquals("event.204", events.get(0).event());
+        assertEquals("event.5", events.get(199).event());
     }
 }

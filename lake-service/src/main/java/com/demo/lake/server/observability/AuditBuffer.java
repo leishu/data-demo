@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
 
 /** 最近若干条审计事件的操作视图；真正的审计留存以 logs/audit.log 为准 */
@@ -21,9 +22,13 @@ public class AuditBuffer {
         }
     }
 
+    /** 取最近 n 条，按时间倒序（最新在前）返回 */
     public synchronized List<AuditEvent> recent(int limit) {
-        int n = Math.max(1, Math.min(limit, MAX));
-        List<AuditEvent> all = new ArrayList<>(events);
-        return List.copyOf(all.subList(Math.max(0, all.size() - n), all.size()));
+        int n = Math.clamp(limit, 1, MAX);
+        List<AuditEvent> result = new ArrayList<>(n);
+        for (Iterator<AuditEvent> it = events.descendingIterator(); it.hasNext() && result.size() < n; ) {
+            result.add(it.next());
+        }
+        return List.copyOf(result);
     }
 }
