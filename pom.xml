@@ -28,18 +28,18 @@
     <java.version>11</java.version>
 
     <!-- 版本矩阵：Spark 3.5.x(Java11/Scala2.12) + Iceberg 1.5.x + Trino 476(JDBC) -->
-    <spark.version>3.5.1</spark.version>
+    <spark.version>3.5.10</spark.version>
     <scala.binary.version>2.12</scala.binary.version>
-    <iceberg.version>1.5.2</iceberg.version>
-    <scala.collection.compat.version>2.11.0</scala.collection.compat.version>
-    <hadoop.version>3.3.4</hadoop.version>
+    <iceberg.version>1.12.0</iceberg.version>
+    <scala.collection.compat.version>2.14.0</scala.collection.compat.version>
+    <hadoop.version>3.5.0</hadoop.version>
     <!-- 对齐 Spark 3.5 发行版自带的 Hive，HMS 客户端 API 用这个版本 -->
     <hive.version>2.3.9</hive.version>
     <trino.version>476</trino.version>
     <!-- 注解处理：编译期生成访问器 / 构造器 / logger，scope=provided 不进产物 -->
-    <lombok.version>1.18.34</lombok.version>
-    <log4j.version>2.20.0</log4j.version>
-    <slf4j.version>2.0.7</slf4j.version>
+    <lombok.version>1.18.48</lombok.version>
+    <log4j.version>2.26.1</log4j.version>
+    <slf4j.version>2.0.20</slf4j.version>
     <junit.version>5.10.2</junit.version>
 
     <!--
@@ -50,12 +50,12 @@
     <!-- 与 Boot 4.2.0 自带的 micrometer-core 对齐（见 mvn dependency:tree），Prometheus registry 不要另起版本 -->
     <micrometer.version>1.18.0</micrometer.version>
     <!-- springdoc 3.x 对应 Boot 4（2.x 只支持 Boot 3）；3.1.1 基于 Boot 4.1.0，实测与 4.2.0 兼容 -->
-    <springdoc.version>3.1.1</springdoc.version>
-    <hikaricp.version>7.0.2</hikaricp.version>
+    <springdoc.version>3.2.1</springdoc.version>
+    <hikaricp.version>7.1.0</hikaricp.version>
 
-    <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
-    <maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
-    <exec.plugin.version>3.1.1</exec.plugin.version>
+    <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
+    <maven.surefire.plugin.version>3.6.1</maven.surefire.plugin.version>
+    <exec.plugin.version>3.7.0</exec.plugin.version>
   </properties>
 
   <dependencyManagement>
