@@ -314,7 +314,7 @@ sequenceDiagram
 - **职责**：产出「配置对象、表 DDL、转换 SQL、指标定义、作业元数据、runId」，自身不搬运数据。〔FACT｜platform-common/pom.xml:17-30〕
 - **对外接口（数据视角）**：
   - 输入：配置文件 / 环境变量 / JVM 参数；输出：`PlatformConfig` 对象。〔FACT｜common/config/PlatformConfig.java:19-26,44-61〕
-  - 输入：`PlatformConfig`；输出：6 条建表 DDL 字符串、MERGE/汇总 SQL、指标目录、作业清单。〔FACT｜common/catalog/LakeTables.java:39-47〕〔FACT｜common/catalog/TransformSql.java:18-62〕
+  - 输入：`PlatformConfig`；输出：6 条建表 DDL 字符串、MERGE/汇总 SQL、迁移 SQL、指标目录、作业清单（SQL 文本来自外置模板）。〔FACT｜common/catalog/LakeTables.java:48-65〕〔FACT｜common/catalog/TransformSql.java:26-58〕
 - **依赖**：仅 lombok / slf4j / junit，零框架依赖。
 - **关键约束**：指标目录是**编译期硬编码**（`SemanticCatalog.METRICS`），新增指标需改代码重新构建，不是运行时可配置目录。〔FACT｜common/semantic/SemanticCatalog.java:12〕
 
@@ -401,13 +401,13 @@ flowchart TD
 
 ### 4.2 建表流（init）：定义 → 库表
 
-**从哪儿来**：DDL **不来自本地 SQL 文件**，而来自 `platform-common` 的 `LakeTables.all(cfg)`，固定 6 条：建业务库 `lake` → 建运维库 `ops` → bronze → silver → gold → batch_runs。〔FACT｜common/catalog/LakeTables.java:39-47〕
+**从哪儿来**：DDL 文本外置在 `platform-common/src/main/resources/sql/ddl/`，由 `LakeTables.all(cfg)` 读模板并绑定配置，固定 6 条：建业务库 `lake` → 建运维库 `ops` → bronze → silver → gold → batch_runs。表名常量仍由 Java 持有，单测校验模板与常量不漂移。〔FACT｜common/catalog/LakeTables.java:48-65〕
 
-**怎么流转**：`InitJob` 逐条 `spark.sql(ddl)`（全部 `IF NOT EXISTS`，幂等可重跑），随后 `prepareBatchRuns()` 给老表补 `started_ms/finished_ms` 列并按 UTC 墙钟回填，最后 `SHOW TABLES`。〔FACT｜spark-batch/job/InitJob.java:29-38,47-67〕
+**怎么流转**：`InitJob` 逐条 `spark.sql(ddl)`（全部 `IF NOT EXISTS`，幂等可重跑），随后 `prepareBatchRuns()` 用 `Migrations` 的 V1a/V1b 模板给老表补 `started_ms/finished_ms` 列并按 UTC 墙钟回填（列是否存在、是否有旧行的判断留在 Java），最后 `SHOW TABLES`。〔FACT｜spark-batch/job/InitJob.java:30-38,46-70〕
 
-**到哪儿去**：Iceberg catalog——本地默认 `warehouse/lake/{bronze,silver,gold}`，接集群为 `s3a://lake/warehouse`；运维表写在 `<catalog>.ops.batch_runs`。〔FACT｜common/catalog/LakeTables.java:27-34,74〕
+**到哪儿去**：Iceberg catalog——本地默认 `warehouse/lake/{bronze,silver,gold}`，接集群为 `s3a://lake/warehouse`；运维表写在 `<catalog>.ops.batch_runs`。〔FACT｜common/catalog/LakeTables.java:36-42〕
 
-> 设计约束：建库 DDL 故意**不带 COMMENT**，因为 Hadoop catalog 拒绝 namespace 元数据。〔FACT｜common/catalog/LakeTables.java:49-57〕
+> 设计约束：建库 DDL 故意**不带 COMMENT**，因为 Hadoop catalog 拒绝 namespace 元数据。〔FACT｜platform-common/src/main/resources/sql/ddl/00_databases.sql〕
 
 ### 4.3 入湖流（ingest）：落地文件 → ODS
 
@@ -824,7 +824,7 @@ erDiagram
     }
 ```
 
-〔FACT｜batch/store/JdbcRunStateStore.java:37-65〕〔FACT｜batch/store/JdbcLogStore.java:36-52〕〔FACT｜observability/AuditTextStore.java:90-118〕
+〔FACT｜lake-service/src/main/resources/sql/state/30_batch_runs.sql〕〔FACT｜lake-service/src/main/resources/sql/state/40_batch_log_lines.sql〕〔FACT｜lake-service/src/main/resources/sql/state/50_query_text.sql〕
 
 ### 5.3 关键字段说明
 

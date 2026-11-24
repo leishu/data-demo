@@ -4,6 +4,8 @@ import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.LakeMetrics;
 import com.demo.lake.server.query.QueryQuotaExceededException;
 import com.demo.lake.server.support.DbLocks;
+import com.demo.lake.server.support.StateDbDdl;
+import com.demo.lake.server.support.StateDbTables;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -39,8 +41,8 @@ public class QueryQuotaService {
     private static final long WINDOW_MS = 60_000;
     /** 租约在查询超时之外再留的余量，覆盖结果集读取与调度延迟 */
     private static final long LEASE_SLACK_MS = 5_000;
-    private static final String LEASES = "lake_batch.query_leases";
-    private static final String EVENTS = "lake_batch.query_events";
+    private static final String LEASES = StateDbTables.QUERY_LEASES;
+    private static final String EVENTS = StateDbTables.QUERY_EVENTS;
 
     private final LakeProperties props;
     private final Scheduler blocking;
@@ -61,17 +63,13 @@ public class QueryQuotaService {
     @PostConstruct
     public void init() {
         try {
-            jdbc.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
-            jdbc.execute("CREATE TABLE IF NOT EXISTS " + LEASES + " (\n"
-                    + "  permit_id VARCHAR(64) PRIMARY KEY,\n"
-                    + "  client VARCHAR(80) NOT NULL,\n"
-                    + "  acquired_ms BIGINT NOT NULL,\n"
-                    + "  expires_ms BIGINT NOT NULL\n"
-                    + ")");
-            jdbc.execute("CREATE TABLE IF NOT EXISTS " + EVENTS + " (client VARCHAR(80) NOT NULL, at_ms BIGINT NOT NULL)");
+            jdbc.execute(StateDbDdl.schemaBatch());
+            jdbc.execute(StateDbDdl.queryLeases());
+            jdbc.execute(StateDbDdl.queryEvents());
             try {
-                jdbc.execute("CREATE INDEX IF NOT EXISTS idx_query_events_at ON " + EVENTS + "(at_ms)");
-                jdbc.execute("CREATE INDEX IF NOT EXISTS idx_query_leases_expires ON " + LEASES + "(expires_ms)");
+                for (String index : StateDbDdl.queryIndexes()) {
+                    jdbc.execute(index);
+                }
             } catch (DataAccessException ignored) {
                 // 老版本 H2 可能不支持 IF NOT EXISTS；索引只是优化，缺了不影响正确性
             }

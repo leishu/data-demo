@@ -18,7 +18,7 @@ import java.util.Arrays;
  */
 public final class DbLocks {
 
-    public static final String TABLE = "lake_batch.server_locks";
+    public static final String TABLE = StateDbTables.SERVER_LOCKS;
 
     /** 各主题在锁表里对应的固定行名。用到的地方必须在这里登记，便于 init 一次建好。 */
     public static final String SUBMIT = "batch-submit";
@@ -32,8 +32,8 @@ public final class DbLocks {
     /** 建表并补齐固定锁行；重复调用安全。 */
     public static void ensure(DataSource dataSource, String... names) {
         try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
-            stmt.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
-            stmt.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (name VARCHAR(64) PRIMARY KEY)");
+            stmt.execute(StateDbDdl.schemaBatch());
+            stmt.execute(StateDbDdl.serverLocks());
             for (String name : names) {
                 insert(conn, name);
             }

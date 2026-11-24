@@ -129,6 +129,13 @@ class IcebergLocalRoundTripTest {
         assertEquals(0L, spark.table(silver.fqn()).filter("channel IS NULL").count());
         assertTrue(spark.sql("SELECT count(*) FROM " + silver.metadata("snapshots")).head().getLong(0) >= 2,
                 "加列 + 回填应各自产生快照");
+
+        // 回归：加列后再跑一次 MERGE。原来用 UPDATE SET * / INSERT * 时，
+        // source 的 11 列对不上 target 的 12 列，会报 channel 无法解析而失败。
+        spark.sql(TransformSql.mergeBronzeIntoSilver(cfg, 7));
+        assertEquals(3L, spark.table(silver.fqn()).count(), "加列后重跑 MERGE 仍是去重后的 3 行");
+        assertEquals(3L, spark.table(silver.fqn()).filter("channel IS NOT NULL").count(),
+                "MERGE 不应把已有行的 channel 清空");
     }
 
     @Test

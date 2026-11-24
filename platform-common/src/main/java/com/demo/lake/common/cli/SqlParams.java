@@ -1,14 +1,13 @@
 package com.demo.lake.common.cli;
 
 import com.demo.lake.common.sql.SqlScript;
+import com.demo.lake.common.sql.SqlTemplate;
 
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 即席查询 SQL 预处理器：把 {@code ${var}} 占位符替换成实际参数，缺参的语句整条跳过。
@@ -23,8 +22,6 @@ import java.util.regex.Pattern;
  * </pre>
  */
 public final class SqlParams {
-
-    private static final Pattern VAR = Pattern.compile("\\$\\{([a-zA-Z0-9_.-]+)}");
 
     public static void main(String[] argv) {
         String file = null;
@@ -74,8 +71,8 @@ public final class SqlParams {
         List<String> statements = new ArrayList<>();
         int skipped = 0;
         for (String stmt : SqlScript.split(script)) {
-            String resolved = substitute(stmt, params);
-            if (VAR.matcher(resolved).find()) {
+            String resolved = SqlTemplate.render(stmt, params);
+            if (SqlTemplate.hasUnresolved(resolved)) {
                 // 仍有未替换的占位符 = 缺参，整条跳过
                 System.err.println("-- 跳过（缺少参数）: " + SqlScript.oneLine(stmt, 90));
                 skipped++;
@@ -107,21 +104,6 @@ public final class SqlParams {
             }
         }
         return map;
-    }
-
-    /** 替换 {@code ${key}}；未提供的值保留原样，交给调用方的「缺参跳过」判定。 */
-    private static String substitute(String sql, Map<String, String> params) {
-        if (params.isEmpty()) {
-            return sql;
-        }
-        Matcher m = VAR.matcher(sql);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String value = params.get(m.group(1));
-            m.appendReplacement(sb, Matcher.quoteReplacement(value == null ? m.group(0) : value));
-        }
-        m.appendTail(sb);
-        return sb.toString();
     }
 
     private static void fail(String message) {

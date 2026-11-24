@@ -1,0 +1,1 @@
+finished_ms BIGINT COMMENT '权威结束时间：epoch 毫秒（UTC 绝对时刻）'

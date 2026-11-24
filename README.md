@@ -42,17 +42,27 @@ Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的
 ```
 lakehouse-demo/
 ├── platform-common/          公共层：配置、Iceberg DDL、转换 SQL、SQL 脚本解析
-│   └── src/main/java/com/demo/lake/common/
-│       ├── config/PlatformConfig.java    本地/集群配置归一化
-│       ├── catalog/LakeTables.java       三层表 DDL（含表属性）
-│       ├── catalog/TransformSql.java     MERGE / 汇总 SQL
-│       ├── catalog/TableRef.java         catalog.db.table
-│       ├── sql/SqlScript.java            读脚本、按分号切分
-│       ├── cli/Args.java                 极简参数解析
-│       └── cli/SqlParams.java            即席查询 ${var} 替换 + 缺参跳过（供 lake-adhoc 调用）
+│   └── src/main/
+│       ├── java/com/demo/lake/common/
+│       │   ├── config/PlatformConfig.java  本地/集群配置归一化
+│       │   ├── catalog/LakeTables.java     三层表 DDL 装载 + 配置绑定
+│       │   ├── catalog/TransformSql.java   MERGE / 汇总 SQL 装载
+│       │   ├── catalog/Migrations.java     存量表结构迁移 SQL 装载
+│       │   ├── catalog/TableRef.java       catalog.db.table
+│       │   ├── sql/SqlScript.java          读脚本、按分号切分
+│       │   ├── sql/SqlTemplate.java        ${var} 占位符渲染（DDL/转换/迁移共用）
+│       │   ├── sql/SqlResources.java       外置 SQL 模板注册表
+│       │   ├── cli/Args.java               极简参数解析
+│       │   └── cli/SqlParams.java          即席查询 ${var} 替换 + 缺参跳过（供 lake-adhoc 调用）
+│       └── resources/sql/
+│           ├── ddl/                        建库/建表 + 表属性片段
+│           ├── transform/                  bronze→silver / silver→gold
+│           └── migrate/                    V1/V2 结构迁移 + 列定义片段
 ├── spark-batch/              批处理：init / ingest / transform / evolve / maintain / show / verify-sql
 ├── lake-adhoc/               即席查询：官方 trino-jdbc 薄封装 + SqlParams 预处理 + 表格输出
 ├── lake-service/             Spring Boot 4 服务层：查询/作业 REST + SSE 流 + 控制台页面
+│   ├── src/main/java/.../support/  StateDbDdl（DDL 装载）+ StateDbTables（表名常量）
+│   └── src/main/resources/sql/state/  状态库 DDL：schema / 表 / 索引 / 迁移列定义（H2/Postgres）
 ├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 指标语义 / 配置
 ├── sql/adhoc/                可以直接丢给 Trino 的查询脚本
 ├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Trino

@@ -1,0 +1,1 @@
+started_ms BIGINT COMMENT '权威开始时间：epoch 毫秒（UTC 绝对时刻）'

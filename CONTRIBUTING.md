@@ -7,6 +7,7 @@
 | 改了什么 | 跑哪条 |
 |---|---|
 | platform-common 代码/DDL/SQL | `mvn -pl platform-common test`，并重跑 `bin/dev-batch.sh --job all` 确认三层表仍可建 |
+| lake-service 状态库 DDL | `bin/build.sh -pl lake-service -am`（JDK 21，含 `StateDbDdlTest`）+ `bin/smoke.sh` |
 | spark-batch 作业/SQL 逻辑 | `mvn -pl spark-batch -am test`；`bin/dev-batch.sh --job <job>` 验实际行为 |
 | lake-service 接口/配额/审计 | `mvn -pl lake-service package`（JDK 21）+ `bin/smoke.sh`（22 项宿主机 / 19 项容器模式） |
 | 语义层（口径/维度/渲染） | `mvn -pl platform-common test` + 重跑 `bin/dev-batch.sh --job all --evolve` |

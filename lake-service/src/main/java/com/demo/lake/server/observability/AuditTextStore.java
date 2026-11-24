@@ -1,6 +1,8 @@
 package com.demo.lake.server.observability;
 
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.support.StateDbDdl;
+import com.demo.lake.server.support.StateDbTables;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
@@ -33,7 +35,7 @@ import java.util.regex.Pattern;
 @Slf4j
 public class AuditTextStore {
 
-    private static final String TABLE = "lake_audit.query_text";
+    private static final String TABLE = StateDbTables.QUERY_TEXT;
     private static final Pattern EVENT_ID = Pattern.compile("[A-Za-z0-9-]{1,64}");
     private static final int NONCE_BYTES = 12;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -79,19 +81,8 @@ public class AuditTextStore {
                     + "，请先补齐 LAKE_AUDIT_KEY 或 lake.audit.keys." + props.getAudit().getKeyId());
         }
         decryptErrors = registry.counter("lake.audit.vault.decrypt.error");
-        jdbc.execute("CREATE SCHEMA IF NOT EXISTS lake_audit");
-        jdbc.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
-                + "  event_id VARCHAR(64) PRIMARY KEY,\n"
-                + "  actor VARCHAR(80) NOT NULL,\n"
-                + "  client_ip VARCHAR(64),\n"
-                + "  at_ms BIGINT NOT NULL,\n"
-                + "  expires_at BIGINT NOT NULL,\n"
-                + "  legal_hold BOOLEAN NOT NULL DEFAULT FALSE,\n"
-                + "  key_id VARCHAR(32) NOT NULL,\n"
-                + "  redacted BOOLEAN NOT NULL,\n"
-                + "  nonce BYTEA,\n"
-                + "  payload BYTEA\n"
-                + ")");
+        jdbc.execute(StateDbDdl.schemaAudit());
+        jdbc.execute(StateDbDdl.queryText());
         log.info("查询原文保险箱就绪: {} (retention={}d)", TABLE, props.getAudit().getRetentionDays());
     }
 

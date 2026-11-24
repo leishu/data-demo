@@ -3,6 +3,8 @@ package com.demo.lake.server.batch.store;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.support.DbLocks;
+import com.demo.lake.server.support.StateDbDdl;
+import com.demo.lake.server.support.StateDbTables;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +34,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class JdbcRunStateStore implements RunStateStore {
 
-    private static final String TABLE = "lake_batch.batch_runs";
+    private static final String TABLE = StateDbTables.BATCH_RUNS;
     /** SQL 里的状态字面量统一取自枚举，避免与 Java 侧定义漂移 */
     private static final String S_RUNNING = BatchRunStatus.RUNNING.name();
     private static final String S_QUEUED = BatchRunStatus.QUEUED.name();
@@ -59,30 +61,12 @@ public class JdbcRunStateStore implements RunStateStore {
     @PostConstruct
     public void init() {
         try {
-            jdbc.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
-            jdbc.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
-                    + "  run_id VARCHAR(80) PRIMARY KEY,\n"
-                    + "  job VARCHAR(64) NOT NULL,\n"
-                    + "  command VARCHAR(1000),\n"
-                    + "  status VARCHAR(16) NOT NULL,\n"
-                    + "  exit_code INTEGER,\n"
-                    + "  started_ms BIGINT NOT NULL,\n"
-                    + "  finished_ms BIGINT,\n"
-                    + "  duration_ms BIGINT,\n"
-                    + "  log_file VARCHAR(1000),\n"
-                    + "  message VARCHAR(1000),\n"
-                    + "  owner VARCHAR(80) NOT NULL,\n"
-                    + "  heartbeat_ms BIGINT NOT NULL,\n"
-                    + "  updated_ms BIGINT NOT NULL,\n"
-                    + "  handle VARCHAR(255)\n"
-                    + ")");
-            jdbc.execute("CREATE INDEX IF NOT EXISTS idx_lake_batch_runs_started ON " + TABLE + "(started_ms DESC)");
+            jdbc.execute(StateDbDdl.schemaBatch());
+            jdbc.execute(StateDbDdl.batchRuns());
+            jdbc.execute(StateDbDdl.batchRunsIndex());
             // 老库升级：幂等/调度引入的新列按需补上（Postgres 与 H2 都支持 information_schema）
-            ensureColumn("handle", "handle VARCHAR(255)");
-            jdbc.execute("CREATE TABLE IF NOT EXISTS lake_batch.idempotency (\n"
-                    + "  idem_key VARCHAR(128) PRIMARY KEY,\n"
-                    + "  run_id VARCHAR(80) NOT NULL\n"
-                    + ")");
+            ensureColumn("handle", StateDbDdl.batchRunsAddHandle());
+            jdbc.execute(StateDbDdl.idempotency());
             DbLocks.ensure(jdbc.getDataSource(), DbLocks.SUBMIT, DbLocks.DISPATCH);
             log.info("运行状态表就绪: {}", TABLE);
         } catch (DataAccessException e) {

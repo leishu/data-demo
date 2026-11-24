@@ -16,13 +16,20 @@ lakehouse-demo/
 ├── platform-common/          公共层（其他模块都依赖它）
 │   └── src/main/java/com/demo/lake/common/
 │       ├── config/PlatformConfig.java     配置归一化（-Dplatform.* > LAKE_* 环境变量 > conf/platform.properties > 默认值）
-│       ├── catalog/LakeTables.java        三层表 DDL（ODS/DWD/ADS，含表属性）
-│       ├── catalog/TransformSql.java      MERGE / 汇总 SQL
+│       ├── catalog/LakeTables.java        三层表 DDL 装载 + 配置绑定
+│       ├── catalog/TransformSql.java      MERGE / 汇总 SQL 装载
+│       ├── catalog/Migrations.java        存量表结构迁移 SQL 装载
 │       ├── catalog/TableRef.java          catalog.db.table
 │       ├── sql/SqlScript.java             读脚本、按分号切分
+│       ├── sql/SqlTemplate.java           ${var} 渲染（DDL/转换/迁移共用）
+│       ├── sql/SqlResources.java          外置 SQL 模板注册表
 │       ├── cli/Args.java / SqlParams.java CLI 参数 + ${var} 替换（供 lake-adhoc 调用）
 │       ├── semantic/SemanticCatalog.java  GMV / 净收入等指标口径（Trino / Spark 双方言渲染）
 │       └── batch/LakeJobs.java            作业名/页面文案注册表（单一事实源）
+│   └── src/main/resources/sql/
+│       ├── ddl/                           建库/建表 + 表属性片段（_ 前缀为片段）
+│       ├── transform/                     bronze→silver / silver→gold
+│       └── migrate/                       V1/V2 迁移 + 列定义片段
 ├── spark-batch/              批处理：init / ingest / transform / evolve / maintain / show / verify-sql
 │   └── src/main/java/com/demo/lake/batch/
 │       ├── BatchApp.java                  作业入口
@@ -36,7 +43,9 @@ lakehouse-demo/
 │       ├── batch/service/                 作业调度（JobDispatcher / JobExecutor / 完成回调）
 │       ├── batch/store/                   运行态/日志的 JDBC 存储（JdbcRunStateStore / JdbcLogStore）
 │       ├── observability/{AuditService, IcebergTableMetrics, ...} 审计 / 指标
-│       └── config/LakeConfiguration.java  运行时配置（conf/platform.properties 回显）
+│       ├── support/{StateDbDdl, StateDbTables}  状态库 DDL 装载 + 表名常量
+│       ├── config/LakeConfiguration.java  运行时配置（conf/platform.properties 回显）
+│   └── src/main/resources/sql/state/     H2/Postgres 状态库 DDL（schema/表/索引/迁移）
 ├── lake-ui/                  Vue 3 控制台（独立工程，构建产物进 lake-service/.../static/ui/）
 ├── scheduler/                外部调度示例（Airflow / DolphinScheduler / crontab，非 Maven 模块）
 ├── sql/adhoc/                可丢给 Trino 的即席脚本（01_daily_revenue … 07_channel_mix）
@@ -78,7 +87,7 @@ mvn -pl lake-service package            # 必须 JDK 21（模块内已挂 enforc
 - **Lombok**：注解处理器在父 pom 的 `pluginManagement` 里显式声明（不依赖类路径隐式扫描）；`lombok.config` 里 `config.stopBubbling=true`（只作用于本项目）。
 - **异常风格**：`PlatformConfig` 的约定——参数非法抛 `IllegalArgumentException`（"缺少必填配置: ..."），运行期状态错误抛 `IllegalStateException`；中文消息。
 - **日志**：CLI 批作业用 `System.out.println` / `System.out.printf("%n")` 打印步骤日志（如 `[transform] silver: 14000 -> 13987 行（新增 0）`）；服务层用 slf4j（logback）。批作业里不要引入服务层依赖（Spring 只在服务侧）。
-- **SQL**：Iceberg DDL 走 `platform-common` 的 `LakeTables` / `TransformSql`（不要手写重复 DDL）；spark-batch 不直接手写 MERGE，走 `TransformSql.mergeBronzeIntoSilver`；`@trino-only` 标记的语句只能跑在 Spark 上校验。
+- **SQL**：SQL 文本全部外置——湖表侧在 `platform-common/src/main/resources/sql/{ddl,transform,migrate}/`（由 `LakeTables` / `TransformSql` / `Migrations` 装载），服务状态库侧在 `lake-service/src/main/resources/sql/state/`（由 `StateDbDdl` 装载、表名以 `StateDbTables` 为准）；不要在任何 Java 类里手写建表/迁移 DDL。新增模板要登记并补守卫单测（`SqlResourcesTest` / `StateDbDdlTest`）。spark-batch 不直接手写 MERGE，走 `TransformSql.mergeBronzeIntoSilver`；`@trino-only` 标记的语句只能跑在 Spark 上校验。
 - **测试**：JUnit 5；`platform-common` 是纯单测；`spark-batch` 集成测试真实建表/MERGE/加列（`IcebergLocalRoundTripTest`、`IcebergConcurrentWriteTest`）；修改共享逻辑时优先补平台级单测。
 
 ## 5. 常见踩坑（已记录在 README 但 AI 每人都会重掉）
@@ -90,6 +99,7 @@ mvn -pl lake-service package            # 必须 JDK 21（模块内已挂 enforc
 - **Trino 元数据表名带 `$`**：要双引号（`FROM iceberg.lake."silver_orders$snapshots"`）。
 - **`platform.stack.properties` 是 stack.sh 生成的**（集群模式），不入库；`conf/platform.properties` 是纯人工配置，也不入库。
 - **跑批前先构建**：`bin/dev-batch.sh` 是 `java -cp` 薄封装，依赖 `bin/build.sh` 生成的 jar 和 `spark-batch/target/classpath.txt`。
+- **写入 SQL 不要用 `*` 或位置匹配**：MERGE 的 `UPDATE SET *` / `INSERT *` 在 silver 被 `--evolve` 加列（如 `channel`）后会报 `channel` 无法解析；`INSERT OVERWRITE table SELECT ...` 不写列列表时，gold 加列或列序调整同样会挂。`bronze_to_silver.sql` / `silver_to_gold.sql` 都必须显式列出列（`SqlResourcesTest` 有守卫）。
 
 ## 6. 修改前的校验思路（最小可粘性）
 

@@ -1,10 +1,18 @@
 package com.demo.lake.common.catalog;
 
 import com.demo.lake.common.config.PlatformConfig;
+import com.demo.lake.common.sql.SqlResources;
+import com.demo.lake.common.sql.SqlScript;
+import com.demo.lake.common.sql.SqlTemplate;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 分层转换 SQL（Spark SQL / Iceberg 语法）。
  * 抽到 common 里，Spark 作业和单测共用同一份 SQL，避免"测试用的 SQL 和线上跑的不一样"。
+ * SQL 文本在 classpath 的 {@code sql/transform/} 下，这里只负责绑定表名和天数。
  */
 public final class TransformSql {
 
@@ -16,23 +24,9 @@ public final class TransformSql {
      * 只扫最近 days 天的分区，靠 Iceberg 的分区裁剪控制扫描量。
      */
     public static String mergeBronzeIntoSilver(PlatformConfig cfg, int days) {
-        TableRef bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
-        TableRef silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);
-        return "MERGE INTO " + silver.fqn() + " AS t\n"
-                + "USING (\n"
-                + "  SELECT order_id, user_id, merchant_id, category, amount, currency, status,\n"
-                + "         status = 'REFUNDED' AS is_refund,\n"
-                + "         CAST(event_time AS DATE) AS dt,\n"
-                + "         event_time, CURRENT_TIMESTAMP() AS updated_at\n"
-                + "  FROM (\n"
-                + "    SELECT b.*, ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY event_time DESC, ingest_time DESC) AS rn\n"
-                + "    FROM " + bronze.fqn() + " b\n"
-                + "    WHERE event_time >= CURRENT_DATE() - INTERVAL " + days + " DAYS\n"
-                + "  ) WHERE rn = 1\n"
-                + ") AS s\n"
-                + "ON t.order_id = s.order_id\n"
-                + "WHEN MATCHED AND s.event_time > t.event_time THEN UPDATE SET *\n"
-                + "WHEN NOT MATCHED THEN INSERT *";
+        Map<String, String> vars = vars(cfg);
+        vars.put("days", String.valueOf(days));
+        return one(SqlResources.TRANSFORM_MERGE, vars);
     }
 
     /**
@@ -44,20 +38,23 @@ public final class TransformSql {
      * 不是全站去重买家数。</p>
      */
     public static String rebuildGold(PlatformConfig cfg) {
-        TableRef silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);
-        TableRef gold = TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE);
-        return "INSERT OVERWRITE " + gold.fqn() + "\n"
-                + "SELECT dt, merchant_id, category,\n"
-                + "       COUNT(*) AS order_cnt,\n"
-                + "       COUNT(DISTINCT user_id) AS buyer_cnt,\n"
-                + "       CAST(SUM(amount) AS DECIMAL(18,2)) AS gmv,\n"
-                + "       CAST(SUM(CAST(CASE WHEN is_refund THEN amount ELSE CAST(0 AS DECIMAL(12,2)) END"
-                + " AS DECIMAL(18,2))) AS DECIMAL(18,2)) AS refund_amount,\n"
-                + "       CAST(SUM(CASE WHEN is_refund THEN CAST(0 AS DECIMAL(12,2)) ELSE amount END)"
-                + " AS DECIMAL(18,2)) AS net_revenue,\n"
-                + "       CURRENT_TIMESTAMP() AS updated_at\n"
-                + "FROM " + silver.fqn() + "\n"
-                + "WHERE status <> 'CANCELLED'\n"
-                + "GROUP BY dt, merchant_id, category";
+        return one(SqlResources.TRANSFORM_GOLD, vars(cfg));
+    }
+
+    private static Map<String, String> vars(PlatformConfig cfg) {
+        Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(cfg));
+        vars.put("bronze_table", TableRef.of(cfg, LakeTables.BRONZE_ORDERS).fqn());
+        vars.put("silver_table", TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn());
+        vars.put("gold_table", TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn());
+        return vars;
+    }
+
+    private static String one(String resource, Map<String, String> vars) {
+        List<String> statements = SqlScript.split(SqlTemplate.renderResource(resource, vars));
+        if (statements.size() != 1) {
+            throw new IllegalStateException("转换 SQL 模板应只有一条语句: " + resource);
+        }
+        // 去掉模板头注释，返回纯 SQL：注释留在 .sql 文件里给人读，不进 spark.sql()
+        return SqlScript.stripComments(statements.get(0)).trim();
     }
 }

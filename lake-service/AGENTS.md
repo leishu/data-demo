@@ -19,8 +19,12 @@ lake-service/src/main/java/com/demo/lake/server/
 │   ├── service/                        # JobDispatcher / JobExecutor / JobCompletionService / BatchHistoryService
 │   └── store/                          # RunStateStore / JdbcRunStateStore / LogStore / JdbcLogStore（状态库访问）
 ├── observability/                      # AuditService / AuditEvent / IcebergTableMetrics / LakeMetrics
+├── support/StateDbDdl.java              # 状态库 DDL 模板装载（classpath:sql/state/）
+├── support/StateDbTables.java           # lake_batch / lake_audit 表名单一事实源
 ├── health/TrinoHealthIndicator.java    # /actuator/health（trino 组件）
 └── observability/SqlRedactor.java      # 审计原文保险箱写入前的 SQL 脱敏（保留结构，掩码敏感字面量）
+
+lake-service/src/main/resources/sql/state/   # H2/Postgres 双兼容 DDL：schema / 各表 / 索引 / 迁移列定义
 ```
 
 ## 2. 工作流
@@ -38,6 +42,7 @@ lake-service/src/main/java/com/demo/lake/server/
 - **状态库语义**：`lake_batch.batch_runs`（共享）+ `ops.batch_runs`（归档）合并读；`history.status` 是兜底，不要编造状态。
 - **OpenAPI/Swagger**：`/v3/api-docs` 公开；网关接管文档时设 `springdoc.api-docs.enabled=false`。
 - **审计与原文保险箱**：`AuditService` 只记身份/动作/结果 + SQL 指纹（`logs/audit.log` + 内存环形缓冲）；原文保险箱 `AuditTextStore` 可选开启，写 Postgres `lake_audit.query_text`（AES-256），`SqlRedactor` 在写入前对 SQL 字面量脱敏。
+- **状态库 DDL**：SQL 文本在 `resources/sql/state/`，由 `StateDbDdl` 装载，表名以 `StateDbTables` 为准（不要在各 Store 里硬编码）；索引单独成文件，便于老 H2 不支持 `IF NOT EXISTS` 时单独降级。新增模板要补 `StateDbDdlTest` 守卫。各 `@PostConstruct` 原有的 fail-closed / 降级策略保持不变。
 
 ## 4. 配置
 

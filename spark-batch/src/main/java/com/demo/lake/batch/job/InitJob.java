@@ -4,6 +4,7 @@ import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.cli.Args;
 import com.demo.lake.batch.LakeJob;
 import com.demo.lake.common.catalog.LakeTables;
+import com.demo.lake.common.catalog.Migrations;
 import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.common.sql.SqlScript;
@@ -50,21 +51,19 @@ public class InitJob implements LakeJob {
         List<String> columns = Arrays.asList(spark.table(table.fqn()).columns());
         List<String> missing = new ArrayList<>();
         if (!columns.contains("started_ms")) {
-            missing.add("started_ms BIGINT COMMENT '权威开始时间：epoch 毫秒（UTC 绝对时刻）'");
+            missing.add(Migrations.columnDefinition("started_ms"));
         }
         if (!columns.contains("finished_ms")) {
-            missing.add("finished_ms BIGINT COMMENT '权威结束时间：epoch 毫秒（UTC 绝对时刻）'");
+            missing.add(Migrations.columnDefinition("finished_ms"));
         }
         if (!missing.isEmpty()) {
             System.out.println("[init] ops.batch_runs 缺少 epoch 时间列，ADD COLUMNS: " + missing);
-            spark.sql("ALTER TABLE " + table.fqn() + " ADD COLUMNS (" + String.join(", ", missing) + ")");
+            spark.sql(Migrations.addBatchRunsEpochColumns(cfg, missing));
         }
         long legacy = spark.table(table.fqn()).filter("started_ms IS NULL OR finished_ms IS NULL").count();
         if (legacy > 0) {
             System.out.println("[init] 回填旧运行记录的时间列 " + legacy + " 行（按 UTC 墙钟解释旧 timestamp）");
-            spark.sql("UPDATE " + table.fqn()
-                    + " SET started_ms = unix_millis(started_at), finished_ms = unix_millis(finished_at)"
-                    + " WHERE started_ms IS NULL OR finished_ms IS NULL");
+            spark.sql(Migrations.backfillBatchRunsEpoch(cfg));
         }
     }
 }

@@ -32,7 +32,7 @@ spark-batch/
 ## 3. 本模块约定
 
 - **作业入口形式**：实现 `LakeJob`；`name()` 必须取自 `platform-common` 的 `LakeJobs` 常量——作业名/文案/白名单是单一事实源在 LakeJobs，不要在 Job 里自定义字符串。
-- **写入**：所有 DDL/MERGE 只走 `LakeTables` / `TransformSql`（不要手写重复 SQL）；写模式默认 CoW。
+- **写入**：所有 DDL/MERGE/迁移只走 `LakeTables` / `TransformSql` / `Migrations`（不要手写重复 SQL）；SQL 文本在 `platform-common/src/main/resources/sql/`，写模式默认 CoW。
 - **输出**：CLI 风格按 `[job]` 前缀打步骤日志（`[init]`、`[transform]` 等）；结果用 `.show(false)`；不要在批作业里引入服务层依赖（Spring 只在服务侧）。
 - **记账**：每个 job 结束调用 `RunRecordWriter`（流程已统一处理，不要手动绕过）。
 - **集成测试**：`IcebergLocalRoundTripTest` / `IcebergConcurrentWriteTest` 用真实 Spark + 本地 Iceberg warehouse；新增行为优先补同类“真实建表测试”，而不是 mock。

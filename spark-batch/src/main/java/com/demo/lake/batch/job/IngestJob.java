@@ -6,6 +6,7 @@ import com.demo.lake.common.cli.Args;
 import com.demo.lake.batch.LakeJob;
 import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.catalog.LakeTables;
+import com.demo.lake.common.catalog.Migrations;
 import com.demo.lake.common.config.PlatformConfig;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -77,7 +78,7 @@ public class IngestJob implements LakeJob {
 
         System.out.println("[ingest] 读取本次落地文件并写入 Iceberg（按 event_time 重新分区）");
         TableRef bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
-        prepareBronze(spark, bronze);
+        prepareBronze(spark, cfg, bronze);
         Dataset<Row> raw = spark.read().option("mergeSchema", "true")
                 .parquet(generated.toArray(new String[0]));
         raw.withColumn("run_id", functions.lit(runId)).createOrReplaceTempView("raw_orders");
@@ -99,14 +100,13 @@ public class IngestJob implements LakeJob {
      * 老仓库升级：run_id 是后加的列，旧表先 ADD COLUMNS 补上（纯元数据变更），
      * 再加列前写入的历史行没有 run_id，按「旧数据删除」清掉，保证表里每行都能追到批次。
      */
-    private void prepareBronze(SparkSession spark, TableRef bronze) {
+    private void prepareBronze(SparkSession spark, PlatformConfig cfg, TableRef bronze) {
         if (!spark.catalog().tableExists(bronze.fqn())) {
             return; // 表还没建：init 会按最新 DDL 建好，这里不越权
         }
         if (!Arrays.asList(spark.table(bronze.fqn()).columns()).contains("run_id")) {
             System.out.println("[ingest] 旧表结构缺少 run_id，ADD COLUMNS 补列（仅元数据变更）");
-            spark.sql("ALTER TABLE " + bronze.fqn()
-                    + " ADD COLUMNS (run_id STRING COMMENT '入湖批次运行ID（对应 ops.batch_runs.run_id）')");
+            spark.sql(Migrations.addBronzeRunId(cfg));
         }
         long legacy = spark.table(bronze.fqn()).filter("run_id IS NULL").count();
         if (legacy > 0) {

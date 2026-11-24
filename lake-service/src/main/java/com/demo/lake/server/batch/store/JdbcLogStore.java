@@ -1,6 +1,8 @@
 package com.demo.lake.server.batch.store;
 
 import com.demo.lake.server.support.DbLocks;
+import com.demo.lake.server.support.StateDbDdl;
+import com.demo.lake.server.support.StateDbTables;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +27,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class JdbcLogStore implements LogStore {
 
-    private static final String TABLE = "lake_batch.batch_log_lines";
+    private static final String TABLE = StateDbTables.BATCH_LOG_LINES;
     private static final int MAX_LINES = 2000;
 
     @Qualifier("stateJdbc")
@@ -36,14 +38,8 @@ public class JdbcLogStore implements LogStore {
     @PostConstruct
     public void init() {
         try {
-            jdbc.execute("CREATE SCHEMA IF NOT EXISTS lake_batch");
-            jdbc.execute("CREATE TABLE IF NOT EXISTS " + TABLE + " (\n"
-                    + "  run_id VARCHAR(80) NOT NULL,\n"
-                    + "  seq BIGINT NOT NULL,\n"
-                    + "  line VARCHAR(2000),\n"
-                    + "  at_ms BIGINT NOT NULL,\n"
-                    + "  PRIMARY KEY (run_id, seq)\n"
-                    + ")");
+            jdbc.execute(StateDbDdl.schemaBatch());
+            jdbc.execute(StateDbDdl.batchLogLines());
             DbLocks.ensure(jdbc.getDataSource(), DbLocks.LOG_APPEND);
             log.info("作业日志表就绪: {}", TABLE);
         } catch (DataAccessException e) {
