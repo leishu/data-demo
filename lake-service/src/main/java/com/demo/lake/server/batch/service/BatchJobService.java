@@ -111,15 +111,26 @@ public class BatchJobService {
         Instant cutoff = Instant.now().minusSeconds(Math.max(30, props.getBatch().getState().getStaleAfterSeconds()));
         for (BatchRun stale : state.staleRunning(cutoff)) {
             BatchRun archived = history.find(stale.id());
-            if (archived != null && archived.status() != BatchRunStatus.RUNNING
-                    && archived.status() != BatchRunStatus.QUEUED) {
+            if (isArchivedTerminal(archived)) {
                 state.finish(archived);
                 log.info("对账：{} 采纳湖表终态 {}", stale.id(), archived.status());
             } else {
                 state.markLost(stale.id(), "运行实例失联（心跳超时），请查看作业日志", Instant.now());
-                log.warn("对账：{} 没有终态，标记实例失联", stale.id());
+                log.warn("对账：{} 没有可用终态，标记实例失联", stale.id());
             }
         }
+    }
+
+    /**
+     * 只有已知的终态才能采纳：{@code BatchRunStatus.from} 对历史脏值返回 null，
+     * 直接拿去 {@code finish} 会把 null 写进状态库的 NOT NULL 列，让对账每轮都失败。
+     */
+    static boolean isArchivedTerminal(BatchRun archived) {
+        if (archived == null) {
+            return false;
+        }
+        BatchRunStatus status = archived.status();
+        return status != null && status.isTerminal();
     }
 
     /**

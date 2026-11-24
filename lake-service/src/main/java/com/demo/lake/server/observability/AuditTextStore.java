@@ -128,7 +128,6 @@ public class AuditTextStore {
         try {
             return jdbc.query("SELECT actor, client_ip, at_ms, expires_at, legal_hold, key_id, redacted, nonce, payload"
                             + " FROM " + TABLE + " WHERE event_id=?",
-                    new Object[]{eventId},
                     rs -> {
                         if (!rs.next()) {
                             return Optional.empty();
@@ -152,7 +151,7 @@ public class AuditTextStore {
                         return Optional.of(new TextRecord(eventId, rs.getString("actor"), rs.getString("client_ip"),
                                 rs.getLong("at_ms"), rs.getLong("expires_at"), rs.getBoolean("legal_hold"),
                                 rowKeyId, rs.getBoolean("redacted"), sql));
-                    });
+                    }, eventId);
         } catch (DataAccessException e) {
             log.warn("读取查询原文失败 event={}: {}", eventId, e.getMessage());
             return Optional.empty();

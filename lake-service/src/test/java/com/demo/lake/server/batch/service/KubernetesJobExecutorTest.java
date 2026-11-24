@@ -127,6 +127,60 @@ class KubernetesJobExecutorTest {
         }
     }
 
+    /** Pod 在 watch 建连前就已 Running：watch 不回放已有对象，必须靠先 list 才捞得到 */
+    @Test
+    void 已存在的Pod靠list捞出即使watch没有事件() throws Exception {
+        String pod = "lake-run-k8s3-abcde";
+        CountDownLatch logsServed = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        String prefix = "/apis/batch/v1/namespaces/default/jobs";
+        server.createContext(prefix, exchange -> {
+            byte[] body = "{\"kind\":\"Job\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(201, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.createContext(prefix + "/lake-run-k8s3", exchange -> {
+            try {
+                logsServed.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            sendNdjson(exchange,
+                    "{\"type\":\"MODIFIED\",\"object\":{\"metadata\":{\"name\":\"lake-run-k8s3\",\"resourceVersion\":\"2\"},\"status\":{\"succeeded\":1}}}");
+        });
+        // 只返回 PodList（没有 watch 事件）：老实现只 watch 会一直等不到 Pod
+        server.createContext("/api/v1/namespaces/default/pods", exchange -> sendNdjson(exchange,
+                "{\"metadata\":{\"resourceVersion\":\"7\"},\"items\":["
+                        + "{\"metadata\":{\"name\":\"" + pod + "\",\"resourceVersion\":\"6\"},"
+                        + "\"status\":{\"phase\":\"Running\"}}]}"));
+        server.createContext("/api/v1/namespaces/default/pods/" + pod + "/log", exchange -> {
+            byte[] body = "from list\n".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+            logsServed.countDown();
+        });
+        server.start();
+        try {
+            LakeProperties props = new LakeProperties();
+            props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            props.getBatch().getKubernetes().setTimeoutSeconds(10);
+            RecordingLogSink sink = new RecordingLogSink();
+            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, sink);
+            BatchRun run = new BatchRun("run-k8s3", "show", "--job show", BatchRunStatus.QUEUED, null,
+                    Instant.now(), null, null, null, "已排队");
+            CompletableFuture<String> result = new CompletableFuture<>();
+            executor.start(run, (r, status, code, elapsed, message) -> result.complete(status.name()));
+
+            assertEquals("SUCCEEDED", result.get(10, TimeUnit.SECONDS));
+            awaitLine(sink, "from list");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     void jobJson会转义命令里的引号() {
         LakeProperties.Batch.Kubernetes conf = new LakeProperties().getBatch().getKubernetes();

@@ -84,17 +84,28 @@ public class JdbcLogSink implements LogSink {
 
     @Override
     public List<LogLine> tail(String runId, int lines) {
-        return jdbc.query("SELECT seq, line FROM (SELECT seq, line FROM " + TABLE
-                        + " WHERE run_id=? ORDER BY seq DESC LIMIT ?) t ORDER BY seq ASC",
-                new Object[]{runId, Math.max(1, lines)},
-                (rs, n) -> new LogLine(rs.getLong("seq"), rs.getString("line")));
+        try {
+            return jdbc.query("SELECT seq, line FROM (SELECT seq, line FROM " + TABLE
+                            + " WHERE run_id=? ORDER BY seq DESC LIMIT ?) t ORDER BY seq ASC",
+                    (rs, n) -> new LogLine(rs.getLong("seq"), rs.getString("line")),
+                    runId, Math.max(1, lines));
+        } catch (DataAccessException e) {
+            // 读也是旁路：状态库不可用时返回空，让调用方退回本地日志文件（见 BatchWatcher / BatchJobService）
+            log.debug("读作业日志失败 run={}: {}", runId, e.getMessage());
+            return List.of();
+        }
     }
 
     @Override
     public List<LogLine> since(String runId, long afterSeq, int limit) {
-        return jdbc.query("SELECT seq, line FROM " + TABLE + " WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?",
-                new Object[]{runId, afterSeq, Math.max(1, limit)},
-                (rs, n) -> new LogLine(rs.getLong("seq"), rs.getString("line")));
+        try {
+            return jdbc.query("SELECT seq, line FROM " + TABLE + " WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?",
+                    (rs, n) -> new LogLine(rs.getLong("seq"), rs.getString("line")),
+                    runId, afterSeq, Math.max(1, limit));
+        } catch (DataAccessException e) {
+            log.debug("读作业日志增量失败 run={}: {}", runId, e.getMessage());
+            return List.of();
+        }
     }
 
     @Override

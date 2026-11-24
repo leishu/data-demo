@@ -130,11 +130,13 @@ public class KubernetesJobExecutor implements JobExecutor {
                     HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
                     int code = response.statusCode();
                     if (code == 404) {
+                        response.body().close();
                         terminal = true;
                         listener.completed(run, BatchRunStatus.FAILED, 1, elapsed(start), "K8s Job 不存在");
                         return;
                     }
                     if (code == 410) {
+                        response.body().close(); // 不关会让 HTTP 连接/FD 悬着，410 在续接时并不罕见
                         resourceVersion = ""; // 版本过期，丢掉续接点重新 watch
                         continue;
                     }
@@ -201,19 +203,37 @@ public class KubernetesJobExecutor implements JobExecutor {
     }
 
     /**
-     * watch PodList 直到本 Job 的 Pod 出现且容器已离开 Pending，取代「隔 1 秒列一次 Pod」。
-     * 用 labelSelector 精确匹配 Job 打的 lake-job 标签，不自己拼 Pod 名。
+     * 找到本 Job 的 Pod 且容器已离开 Pending。
+     *
+     * <p>K8s 的 watch 不回放已存在的对象，所以先 list 一次捞出现有 Pod，再用 list 的
+     * resourceVersion 建 watch 接增量。否则 Pod 若在 watch 建连前就跑到 Running，
+     * 要等它结束才有下一个事件，而那时 stopAndJoin 很可能已经把日志流关掉，整段日志都会丢。</p>
      */
     private String awaitPod(String jobName, LakeProperties.Batch.Kubernetes conf,
                             LogStream stream, long deadline) throws InterruptedException {
-        String url = trimSlash(conf.getApiUrl()) + "/api/v1/namespaces/" + conf.getNamespace()
-                + "/pods?watch=true&allowWatchBookmarks=true&timeoutSeconds=" + WATCH_TIMEOUT_SECONDS
-                + "&labelSelector=" + enc("lake-job=" + jobName);
+        String base = trimSlash(conf.getApiUrl()) + "/api/v1/namespaces/" + conf.getNamespace() + "/pods";
+        String label = enc("lake-job=" + jobName);
         String resourceVersion = "";
         String pod = null;
+
+        // 1) 先 list：捞已存在的 Pod，并拿到续接版本；失败就退化为原来的纯 watch
+        PodList listed = listPods(base + "?labelSelector=" + label);
+        if (listed != null) {
+            resourceVersion = listed.resourceVersion();
+            for (WatchEvent event : listed.pods()) {
+                pod = trackPod(pod, event);
+                if (isReadyPod(event)) {
+                    return event.name();
+                }
+            }
+        }
+
+        // 2) 再 watch 增量
+        String watchUrl = base + "?watch=true&allowWatchBookmarks=true&timeoutSeconds=" + WATCH_TIMEOUT_SECONDS
+                + "&labelSelector=" + label;
         while (!stream.stop.get() && System.currentTimeMillis() < deadline) {
-            String watchUrl = url + (resourceVersion.isEmpty() ? "" : "&resourceVersion=" + enc(resourceVersion));
-            HttpRequest request = HttpRequest.newBuilder(URI.create(watchUrl))
+            String url = watchUrl + (resourceVersion.isEmpty() ? "" : "&resourceVersion=" + enc(resourceVersion));
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                     .header("Authorization", "Bearer " + token())
                     .header("Accept", "application/json")
                     .GET().timeout(Duration.ofSeconds(10)).build();
@@ -221,6 +241,7 @@ public class KubernetesJobExecutor implements JobExecutor {
                 HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
                 int code = response.statusCode();
                 if (code == 410) {
+                    response.body().close();
                     resourceVersion = "";
                     continue;
                 }
@@ -248,15 +269,9 @@ public class KubernetesJobExecutor implements JobExecutor {
                             resourceVersion = "";
                             break;
                         }
-                        if ("DELETED".equals(event.type())) {
-                            if (event.name().equals(pod)) {
-                                pod = null;
-                            }
-                            continue;
-                        }
-                        pod = event.name();
+                        pod = trackPod(pod, event);
                         // Pending 阶段容器还没起，日志接口会 4xx；等 phase 推进再返回
-                        if (!"Pending".equalsIgnoreCase(event.phase())) {
+                        if (isReadyPod(event)) {
                             return pod;
                         }
                     }
@@ -272,6 +287,61 @@ public class KubernetesJobExecutor implements JobExecutor {
             }
         }
         return pod; // 超时/取消时若已看到 Pod 名也返回，让日志线程再试一次
+    }
+
+    /** list 失败返回 null，调用方退化为纯 watch；假集群/老版本 API 都可能不支持 list */
+    private PodList listPods(String url) {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .header("Authorization", "Bearer " + token())
+                .header("Accept", "application/json")
+                .GET().timeout(Duration.ofSeconds(10)).build();
+        try {
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() / 100 != 2) {
+                return null;
+            }
+            JsonNode root = JSON.readTree(response.body());
+            if (root == null || !root.isObject()) {
+                return null;
+            }
+            String rv = root.path("metadata").path("resourceVersion").asString("");
+            List<WatchEvent> pods = new ArrayList<>();
+            JsonNode items = root.path("items");
+            if (items.isArray()) {
+                for (JsonNode item : items) {
+                    String itemRv = item.path("metadata").path("resourceVersion").asString("");
+                    pods.add(new WatchEvent("ADDED", itemRv.isEmpty() ? rv : itemRv,
+                            item.path("metadata").path("name").asString(""),
+                            item.path("status").path("phase").asString(""), false, false));
+                }
+            }
+            return new PodList(rv, pods);
+        } catch (Exception e) {
+            log.debug("列 K8s Pod 失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** DELETED 只清掉同名 Pod，其余事件更新当前 Pod 名（Pending 也记下来等 phase 推进） */
+    private static String trackPod(String current, WatchEvent event) {
+        if (event == null || event.name().isEmpty()) {
+            return current;
+        }
+        if ("DELETED".equals(event.type())) {
+            return event.name().equals(current) ? null : current;
+        }
+        return event.name();
+    }
+
+    /** 容器已启动：日志接口不会再 4xx；phase 缺失也先当作没就绪 */
+    private static boolean isReadyPod(WatchEvent event) {
+        return event != null && !event.name().isEmpty()
+                && !"DELETED".equals(event.type())
+                && !event.phase().isEmpty()
+                && !"Pending".equalsIgnoreCase(event.phase());
+    }
+
+    private record PodList(String resourceVersion, List<WatchEvent> pods) {
     }
 
     /**
@@ -381,21 +451,21 @@ public class KubernetesJobExecutor implements JobExecutor {
         }
         try {
             JsonNode node = JSON.readTree(line);
-            String type = node.path("type").asText("");
+            String type = node.path("type").asString("");
             JsonNode obj = node.get("object");
             if (obj == null || obj.isNull()) {
                 return new WatchEvent(type, "", "", "", false, false);
             }
-            String resourceVersion = obj.path("metadata").path("resourceVersion").asText("");
-            String name = obj.path("metadata").path("name").asText("");
-            String phase = obj.path("status").path("phase").asText("");
+            String resourceVersion = obj.path("metadata").path("resourceVersion").asString("");
+            String name = obj.path("metadata").path("name").asString("");
+            String phase = obj.path("status").path("phase").asString("");
             long succeeded = obj.path("status").path("succeeded").asLong(0);
             long failed = obj.path("status").path("failed").asLong(0);
             JsonNode conditions = obj.path("status").path("conditions");
             if (conditions.isArray()) {
                 for (JsonNode c : conditions) {
-                    if ("Failed".equals(c.path("type").asText())
-                            && "True".equalsIgnoreCase(c.path("status").asText())) {
+                    if ("Failed".equals(c.path("type").asString())
+                            && "True".equalsIgnoreCase(c.path("status").asString())) {
                         failed = Math.max(failed, 1);
                         break;
                     }

@@ -8,7 +8,6 @@ import com.demo.lake.batch.job.MaintainJob;
 import com.demo.lake.batch.job.ShowJob;
 import com.demo.lake.batch.job.TransformJob;
 import com.demo.lake.batch.job.VerifySqlJob;
-import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.batch.RunIds;
 import com.demo.lake.common.cli.Args;

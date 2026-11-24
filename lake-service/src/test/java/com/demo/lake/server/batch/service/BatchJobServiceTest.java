@@ -27,6 +27,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -200,6 +201,23 @@ class BatchJobServiceTest {
         assertNotEquals(done.id(), persisted.id());
         assertTrue(service.tail("run-1", 10).isEmpty());
         assertThrows(ResponseStatusException.class, () -> service.get("run-unknown"));
+    }
+
+    /** 历史脏值会映射成 null 状态，不能拿去 finish（status 列 NOT NULL），必须走 markLost 兜底 */
+    @Test
+    void 对账只采纳已知的湖表终态() {
+        assertFalse(BatchJobService.isArchivedTerminal(null));
+        assertFalse(BatchJobService.isArchivedTerminal(archivedWith(null)));
+        assertFalse(BatchJobService.isArchivedTerminal(archivedWith(BatchRunStatus.RUNNING)));
+        assertFalse(BatchJobService.isArchivedTerminal(archivedWith(BatchRunStatus.QUEUED)));
+        assertTrue(BatchJobService.isArchivedTerminal(archivedWith(BatchRunStatus.SUCCEEDED)));
+        assertTrue(BatchJobService.isArchivedTerminal(archivedWith(BatchRunStatus.FAILED)));
+        assertTrue(BatchJobService.isArchivedTerminal(archivedWith(BatchRunStatus.TIMEOUT)));
+    }
+
+    private static BatchRun archivedWith(BatchRunStatus status) {
+        return new BatchRun("run-archived", LakeJobs.INIT, "--job init", status, 0,
+                Instant.now(), Instant.now(), 0L, null, "历史");
     }
 
     @Test

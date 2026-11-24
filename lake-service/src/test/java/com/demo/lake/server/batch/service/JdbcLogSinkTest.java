@@ -59,6 +59,18 @@ class JdbcLogSinkTest {
         assertEquals(List.of(), sink.tail("r3", 10));
     }
 
+    /** 状态库不可用时读要返回空，否则 BatchWatcher / BatchJobService 的本地文件兜底永远走不到 */
+    @Test
+    void 状态库不可用读日志返回空列表() {
+        JdbcDataSource bad = new JdbcDataSource();
+        bad.setURL("jdbc:h2:mem:no-table-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
+        // 故意不 init：表不存在，查询会抛 DataAccessException
+        JdbcLogSink broken = new JdbcLogSink(new JdbcTemplate(bad),
+                new TransactionTemplate(new DataSourceTransactionManager(bad)));
+        assertEquals(List.of(), broken.tail("r1", 10));
+        assertEquals(List.of(), broken.since("r1", 0, 10));
+    }
+
     private static List<String> texts(List<LogSink.LogLine> lines) {
         return lines.stream().map(LogSink.LogLine::text).toList();
     }

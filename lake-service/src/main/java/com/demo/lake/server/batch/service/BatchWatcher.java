@@ -133,7 +133,10 @@ public class BatchWatcher {
                 }
             }
 
-            if (run.status() != BatchRunStatus.RUNNING && run.status() != BatchRunStatus.QUEUED) {
+            // 未知/脏状态（BatchRunStatus.from 返回 null）也按终态收口：继续等只会让 SSE 永远挂起；
+            // 状态库里那条 RUNNING 会由对账按心跳超时收掉，不需要这里替它编造状态。
+            BatchRunStatus status = run.status();
+            if (status == null || status.isTerminal()) {
                 // 终态前再抽干一次，避免最后几行日志被 end 事件抢跑
                 switchToSharedIfReady(events);
                 addLogs(events, pollLogs());

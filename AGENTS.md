@@ -33,7 +33,8 @@ lakehouse-demo/
 ├── lake-service/             Spring Boot 4 服务（查询/作业 REST + SSE + 控制台）
 │   └── src/main/java/com/demo/lake/server/
 │       ├── query/{QueryController, QueryService, SqlGuard, ...}   查询 + 只读守卫
-│       ├── batch/service/                 作业调度（JobDispatcher / JobExecutor / 状态库）
+│       ├── batch/service/                 作业调度（JobDispatcher / JobExecutor / 完成回调）
+│       ├── batch/store/                   运行态/日志的 JDBC 存储（JdbcRunStateStore / JdbcLogSink）
 │       ├── observability/{AuditService, IcebergTableMetrics, ...} 审计 / 指标
 │       └── config/LakeConfiguration.java  运行时配置（conf/platform.properties 回显）
 ├── lake-ui/                  Vue 3 控制台（独立工程，构建产物进 lake-service/.../static/ui/）

@@ -16,7 +16,8 @@ lake-service/src/main/java/com/demo/lake/server/
 │   └── ...                             # QueryFailedException / InvalidQueryException / TrinoUnavailableException
 ├── batch/
 │   ├── BatchController.java            # /api/batch/{job}（202 + runId）、/api/batch/runs
-│   └── service/                        # JobDispatcher / JobExecutor / JobCompletionService / BatchHistoryService
+│   ├── service/                        # JobDispatcher / JobExecutor / JobCompletionService / BatchHistoryService
+│   └── store/                          # RunStateStore / JdbcRunStateStore / JdbcLogSink（状态库访问）
 ├── observability/                      # AuditService / AuditEvent / IcebergTableMetrics / LakeMetrics
 ├── health/TrinoHealthIndicator.java    # /actuator/health（trino 组件）
 └── observability/SqlRedactor.java      # 审计原文保险箱写入前的 SQL 脱敏（保留结构，掩码敏感字面量）

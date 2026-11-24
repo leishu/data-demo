@@ -135,13 +135,7 @@ public class LakeProperties {
         private Map<String, String> keys = new HashMap<>();
     }
 
-    /**
-     * demo 级鉴权：静态账号 + HTTP Basic，无会话、无外部依赖。
-     *
-     * <p>生产环境请关掉这里的 enabled，改由前面的网关/IdP 做认证和授权；
-     * 明文口令只适合本机演示（{noop} 前缀表示没有哈希）。</p>
-     *
-    ** 从 Iceberg 元数据表采集的表级指标（文件数 / 平均文件大小 / 快照数） */
+    /** 从 Iceberg 元数据表采集的表级指标（文件数 / 平均文件大小 / 快照数） */
     @Getter
     @Setter
     public static class Metrics {
@@ -160,6 +154,12 @@ public class LakeProperties {
         }
     }
 
+    /**
+     * demo 级鉴权：静态账号 + HTTP Basic，无会话、无外部依赖。
+     *
+     * <p>生产环境请关掉这里的 enabled，改由前面的网关/IdP 做认证和授权；
+     * 明文口令只适合本机演示（noop 前缀表示没有哈希）。</p>
+     */
     @Getter
     @Setter
     public static class Security {
