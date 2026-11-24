@@ -159,6 +159,7 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 | `POST /api/semantics/render` | 按指标/维度/过滤生成 SQL，`engine=trino\|spark` 可看两种方言 |
 | `POST /api/semantics/query` | 执行语义查询（固定 Trino 方言），同样受配额与审计约束 |
 | `GET /api/tables` | 当前库的表清单 + 字段清单（读 Trino 的 `information_schema`，字段 `comment` 即 DDL 里的中文名） |
+| `GET /api/governance/assets` | 治理资产清单：`GovernanceCatalog` ∪ `information_schema` ∪ Iceberg 指标，含 owner / 域 / 分层 / 敏感级别 / 保留天数 / 新鲜度 SLA / 多久没更新 |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单；带 `Idempotency-Key` 头可去重 |
@@ -184,6 +185,9 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
   退款率等指标；调用方只能选指标、白名单维度和过滤条件，服务端生成 SQL 并执行（也走配额与审计）。
   `SemanticSqlRenderer` 支持 Trino / Spark 两种方言（引号风格不同、口径一致），
   方便把同一份定义下推到别的引擎的调用方。
+- **有资产目录，责任人/级别只维护一份**。`platform-common` 的 `GovernanceCatalog` 用 Java 常量登记
+  每张湖表的 owner / 业务域 / 分层 / 敏感级别 / 保留天数 / 新鲜度 SLA，`GovernanceCatalogTest` 守卫；
+  服务把目录与 `information_schema`、Iceberg 快照指标合并成 `/api/governance/assets`，表浏览页直接渲染徽标。
 - **API 需要鉴权**（demo 级）。`/api/**` 走 HTTP Basic：`viewer/viewer` 只读查询，
   `operator/operator` 额外能触发作业和看 actuator 指标；页面、`/actuator/health`、`/actuator/info` 公开。
   生产环境请设 `lake.security.enabled=false`，由网关 / IdP 做认证授权（静态口令只适合本机演示）。
@@ -233,7 +237,7 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 | 页面 | 能做什么 |
 |---|---|
 | 查询台 `#/query` | SQL 编辑器（Ctrl/⌘+Enter 执行）、结果边到边渲染（SSE）、表格（类型标注、数值右对齐、NULL 置灰）、耗时/截断提示、QueryStats、复制 TSV |
-| 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行，表头带字段中文名），一键「在查询台打开」 |
+| 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行，表头带字段中文名）；表项带分层/敏感级别/新鲜度徽标，选中后显示负责人、业务域、保留期、SLA 和最近更新时间；一键「在查询台打开」 |
 | 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时用 SSE 实时跟） |
 | 指标语义 `#/semantics` | 选指标/维度/过滤，预览 Trino / Spark 两种方言 SQL，或直接执行语义查询 |
 | 审计 `#/audit` | 最近审计事件（动作/身份/字段/SQL 指纹）；按事件 ID 调阅脱敏 SQL 原文、置位/解除法律保全。列表 QUERY 或 AUDITOR 角色都能看（三个账号都可以），原文与保全需 AUDITOR 角色 |
@@ -373,7 +377,7 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
   另附 bucket lifecycle 模板（`bin/storage-lifecycle.sh`）与 `maintain` 的 `remove_orphan_files`，
   前者清分片/非当前版本，后者做引用感知的孤儿文件清理。
 - **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
-  语义层 render/query、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
+  语义层 render/query、资产目录、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
   提交一次 `show` 并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
   失败非零退出，可直接放进 CI（宿主机 22 项 / 容器 19 项）。
 

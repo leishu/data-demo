@@ -142,7 +142,8 @@ public class ApiAuthWebFilter implements WebFilter {
      */
     static List<String> requiredRoles(String path, HttpMethod method) {
         if (path.startsWith("/api/query") || path.startsWith("/api/tables")
-                || path.startsWith("/api/semantics") || path.equals("/api/config")) {
+                || path.startsWith("/api/semantics") || path.startsWith("/api/governance")
+                || path.equals("/api/config")) {
             return List.of("QUERY");
         }
         if (path.startsWith("/api/batch")) {

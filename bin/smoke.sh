@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lake-service 端到端冒烟：健康检查 / 鉴权 / 查询 / SSE / 语义层 / 批作业 / 审计 / 只读守卫 / 指标抓取
+# lake-service 端到端冒烟：健康检查 / 鉴权 / 查询 / SSE / 语义层 / 资产目录 / 批作业 / 审计 / 只读守卫 / 指标抓取
 #
 #   bin/smoke.sh                         # 默认 http://localhost:8088，operator/operator
 #   BASE_URL=http://host:8088 bin/smoke.sh
@@ -95,6 +95,15 @@ if grep -q 'silver_orders' "${TMP}/body" && grep -q 'gold_daily_revenue' "${TMP}
   ok "表清单包含 silver_orders / gold_daily_revenue"
 else
   bad "表清单缺少业务表"
+fi
+
+code="$(req GET /api/governance/assets "")"
+check_code "GET /api/governance/assets" 200 "${code}"
+if grep -q '"owner"' "${TMP}/body" && grep -q '"sensitivityLabel"' "${TMP}/body" \
+    && grep -q '"freshness"' "${TMP}/body" && grep -q 'silver_orders' "${TMP}/body"; then
+  ok "治理资产含 owner / 敏感级别 / 新鲜度"
+else
+  bad "治理资产字段不完整：$(head -c 300 "${TMP}/body" 2>/dev/null || true)"
 fi
 
 step "3. 同步查询"

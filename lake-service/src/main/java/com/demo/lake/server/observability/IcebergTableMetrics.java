@@ -23,10 +23,12 @@ import java.util.regex.Pattern;
 /**
  * 定时从 Iceberg 元数据表（$files / $snapshots）采集表级指标，补上 SLI 之外的「湖表健康度」。
  *
- * <p>走 Trino 只读连接池，不引 Iceberg 客户端：SQL 在 Trino 侧执行，服务只拿 4 个数字。
+ * <p>走 Trino 只读连接池，不引 Iceberg 客户端：SQL 在 Trino 侧执行，服务只拿几个数字。
  * 表还不存在或 Trino 没起时保持上一次的 gauge 值，不影响服务启动或查询。</p>
  *
- * <p>指标名：lake.iceberg.files / avg_file_size_bytes / total_size_bytes / snapshots，都带 table 标签。</p>
+ * <p>指标名：lake.iceberg.files / avg_file_size_bytes / total_size_bytes / snapshots /
+ * last_committed_epoch_ms，都带 table 标签。最近提交时间同时通过 {@link #snapshot()} 暴露给资产目录，
+ * 用来算「这张表多久没更新」。</p>
  */
 @Component
 @Slf4j
@@ -40,6 +42,8 @@ public class IcebergTableMetrics {
             coalesce(sum(file_size_in_bytes), 0) AS total_size FROM %s
             """;
     private static final String SNAPSHOTS_SQL = "SELECT count(*) FROM %s";
+    /** committed_at 在 Trino 里是 timestamp with time zone；to_unixtime 后读 double，避开 JDBC 时间类型差异 */
+    private static final String LAST_COMMIT_SQL = "SELECT max(to_unixtime(committed_at)) FROM %s";
 
     private final MeterRegistry registry;
     private final PlatformConfig cfg;
@@ -47,6 +51,8 @@ public class IcebergTableMetrics {
     private final JdbcTemplate jdbc;
     private final AtomicBoolean running = new AtomicBoolean();
     private final Map<String, TableGauges> gauges = new ConcurrentHashMap<>();
+    /** 最近一次采集结果：资产目录读它算新鲜度；关闭指标采集时为空 */
+    private final Map<String, TableSnapshot> latest = new ConcurrentHashMap<>();
     private Thread worker;
 
     public IcebergTableMetrics(MeterRegistry registry, PlatformConfig cfg, LakeProperties props,
@@ -102,35 +108,59 @@ public class IcebergTableMetrics {
     }
 
     private void collect(String table) {
-        String filesSql = filesSql(cfg.catalogName(), cfg.database(), table);
-        String snapshotsSql = snapshotsSql(cfg.catalogName(), cfg.database(), table);
+        String catalog = cfg.catalogName();
+        String schema = cfg.database();
         try {
-            long files = 0, total = 0, snapshots = 0;
+            long files = 0, total = 0, snapshots = 0, lastCommittedMs = 0;
             double avg = 0;
-            List<Object[]> filesRows = jdbc.query(filesSql, (rs, n) -> new Object[]{rs.getLong(1), rs.getDouble(2), rs.getLong(3)});
+            List<Object[]> filesRows = jdbc.query(filesSql(catalog, schema, table),
+                    (rs, n) -> new Object[]{rs.getLong(1), rs.getDouble(2), rs.getLong(3)});
             if (!filesRows.isEmpty()) {
                 Object[] row = filesRows.get(0);
                 files = ((Number) row[0]).longValue();
                 avg = ((Number) row[1]).doubleValue();
                 total = ((Number) row[2]).longValue();
             }
-            List<Long> snapshotRows = jdbc.query(snapshotsSql, (rs, n) -> rs.getLong(1));
+            List<Long> snapshotRows = jdbc.query(snapshotsSql(catalog, schema, table), (rs, n) -> rs.getLong(1));
             if (!snapshotRows.isEmpty()) {
                 snapshots = snapshotRows.get(0);
             }
-            update(table, files, avg, total, snapshots);
+            List<Double> commitRows = jdbc.query(lastCommitSql(catalog, schema, table), (rs, n) -> {
+                double seconds = rs.getDouble(1);
+                return rs.wasNull() ? null : seconds;
+            });
+            if (!commitRows.isEmpty() && commitRows.get(0) != null) {
+                lastCommittedMs = Math.round(commitRows.get(0) * 1000.0);
+            }
+            update(table, files, avg, total, snapshots, lastCommittedMs);
         } catch (DataAccessException e) {
             // 元数据表不存在 / Trino 未就绪都很正常，保留上次的值
             log.debug("采集 Iceberg 表指标失败 table={}: {}", table, e.getMessage());
         }
     }
 
-    /** 包内可见，单测用：把一次采集结果写进 gauge */
+    /** 包内可见，单测用：把一次采集结果写进 gauge 与快照表 */
     void update(String table, long files, double avgSizeBytes, long totalSizeBytes, long snapshots) {
+        update(table, files, avgSizeBytes, totalSizeBytes, snapshots, 0);
+    }
+
+    void update(String table, long files, double avgSizeBytes, long totalSizeBytes,
+                long snapshots, long lastCommittedMs) {
         TableGauges g = gauges.get(table);
         if (g != null) {
-            g.set(files, avgSizeBytes, totalSizeBytes, snapshots);
+            g.set(files, avgSizeBytes, totalSizeBytes, snapshots, lastCommittedMs);
         }
+        latest.put(table, new TableSnapshot(files, avgSizeBytes, totalSizeBytes, snapshots, lastCommittedMs));
+    }
+
+    /** 最近一次采集结果（不可变副本），供资产目录合并；未采集到的表不在 map 里 */
+    public Map<String, TableSnapshot> snapshot() {
+        return Map.copyOf(latest);
+    }
+
+    /** 一次采集的湖表健康数据；lastCommittedMs 是 epoch 毫秒，0 表示还没有快照 */
+    public record TableSnapshot(long files, double avgFileSizeBytes, long totalSizeBytes,
+                                long snapshots, long lastCommittedMs) {
     }
 
     /** 元数据表要带 $ 且整个表名要加双引号，见 README 的 Trino 注意事项 */
@@ -146,12 +176,17 @@ public class IcebergTableMetrics {
         return String.format(SNAPSHOTS_SQL, metadataTable(catalog, schema, table, "snapshots"));
     }
 
-    /** 每个表四个 Atomic 容器，注册一次 gauge，后续只改值 */
+    static String lastCommitSql(String catalog, String schema, String table) {
+        return String.format(LAST_COMMIT_SQL, metadataTable(catalog, schema, table, "snapshots"));
+    }
+
+    /** 每个表五个 Atomic 容器，注册一次 gauge，后续只改值 */
     private static final class TableGauges {
         private final AtomicLong files = new AtomicLong();
         private final AtomicReference<Double> avg = new AtomicReference<>(0.0);
         private final AtomicLong total = new AtomicLong();
         private final AtomicLong snapshots = new AtomicLong();
+        private final AtomicLong lastCommitted = new AtomicLong();
 
         TableGauges(MeterRegistry registry, String table) {
             Tags tags = Tags.of("table", table);
@@ -159,13 +194,15 @@ public class IcebergTableMetrics {
             registry.gauge("lake.iceberg.avg_file_size_bytes", tags, avg, AtomicReference::get);
             registry.gauge("lake.iceberg.total_size_bytes", tags, total, AtomicLong::get);
             registry.gauge("lake.iceberg.snapshots", tags, snapshots, AtomicLong::get);
+            registry.gauge("lake.iceberg.last_committed_epoch_ms", tags, lastCommitted, AtomicLong::get);
         }
 
-        void set(long fileCount, double avgSize, long totalSize, long snapshotCount) {
+        void set(long fileCount, double avgSize, long totalSize, long snapshotCount, long lastCommittedMs) {
             files.set(fileCount);
             avg.set(avgSize);
             total.set(totalSize);
             snapshots.set(snapshotCount);
+            lastCommitted.set(lastCommittedMs);
         }
     }
 }

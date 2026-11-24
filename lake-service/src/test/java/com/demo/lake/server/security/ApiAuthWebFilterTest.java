@@ -44,6 +44,7 @@ class ApiAuthWebFilterTest {
     void 接口按最小权限分角色() {
         assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/query/stream", HttpMethod.POST));
         assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/config", HttpMethod.GET));
+        assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/governance/assets", HttpMethod.GET));
         assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/batch/runs", HttpMethod.GET));
         assertEquals(List.of("BATCH"), ApiAuthWebFilter.requiredRoles("/api/batch/init", HttpMethod.POST));
         assertEquals(List.of("BATCH"), ApiAuthWebFilter.requiredRoles("/actuator/metrics", HttpMethod.GET));

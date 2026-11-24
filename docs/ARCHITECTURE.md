@@ -56,6 +56,13 @@ Iceberg 是存储/表格式层（format-version=2）；catalog：本地为 hadoo
 8. **阻塞 IO 一律 offload**（WebFlux 请求线程就是 Netty 事件循环）。
    Hikari 取连接、`rs.next()`、等子进程都要 `subscribeOn(blocking)` 到虚拟线程。
 
+9. **治理档案是常量，不另起配置体系**。
+    `platform-common` 的 `GovernanceCatalog` 和 `SemanticCatalog` / `LakeJobs` 一样是 Java 单一事实源：
+    platform-common 被三个模块共用，为几行元数据引 YAML 解析只会多一份依赖和一份运行时失败可能。
+    责任人 / 业务域 / 分层 / 敏感级别 / 保留天数 / 新鲜度 SLA 写错由 `GovernanceCatalogTest` 拦住。
+    `/api/governance/assets` 只做装配：`information_schema` 说表在不在，目录说谁负责、什么级别，
+    Iceberg 的 `$snapshots` 说多久没更新；三者不互相覆盖。
+
 9. **长任务用 SSE，不用轮询**。查询结果和作业跟踪都是一条长连接推到底；客户端断开时服务端 `stmt.cancel()` / 停日志游标。
 
 ## 4. 模块依赖关系
@@ -105,3 +112,13 @@ lake-ui：独立 Vue 前端，构建产物进 lake-service 静态资源，不参
 - **TableRef / catalog.db.table**：所有作业与 DDL 的统一引用形式。
 - **SSE / streaming**：查询与作业结果的长连接推送（`meta` → `rows` → `done`）。
 - **quota**：查询并发/频率限制（429），放 Postgres。
+
+## 8. 资产目录的数据来源
+
+| 信息 | 来源 | 说明 |
+|---|---|---|
+| 表在不在、什么类型、字段注释 | Trino `information_schema` | 复用 `QueryService.listTables()`，不另存一份表结构 |
+| owner / 业务域 / 分层 / 敏感级别 / 保留天数 / 新鲜度 SLA | `GovernanceCatalog`（Java 常量） | 单测守卫；未登记的表照样显示，标成「未登记」 |
+| 文件数 / 快照数 / 最近更新时间 | `IcebergTableMetrics.snapshot()` | 从 `$files` / `$snapshots` 定时采集，关闭采集时显示 UNKNOWN |
+
+表浏览页的徽标与档案条都读 `/api/governance/assets`，不在前端硬编码负责人或级别。

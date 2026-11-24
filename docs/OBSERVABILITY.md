@@ -26,10 +26,13 @@ lake-service 用 Micrometer 埋点，同时暴露 `GET /actuator/metrics`（人�
 | `lake.iceberg.avg_file_size_bytes` | gauge | `table` | 平均文件大小（小文件多会降低查询效率） |
 | `lake.iceberg.total_size_bytes` | gauge | `table` | 数据文件总字节数 |
 | `lake.iceberg.snapshots` | gauge | `table` | 快照数（查 `$snapshots`，暴涨说明该跑 `maintain` 了） |
+| `lake.iceberg.last_committed_epoch_ms` | gauge | `table` | 最近快照提交时间（epoch 毫秒）；资产目录据此判定新鲜度 SLA |
 
 表级指标由 `IcebergTableMetrics` 每 60s 从 Trino 查元数据表写入，可用
 `lake.metrics.iceberg.enabled/interval-seconds/tables` 调整；表还不存在或 Trino 没起时保留上次的值，
 不影响服务启动。元数据表在 Trino 里要写成 `iceberg.lake."silver_orders$files"`（`$` 必须加双引号）。
+同一份采集结果也通过 `IcebergTableMetrics.snapshot()` 暴露给 `/api/governance/assets`，用来算「多久没更新」；
+没快照或采集未开启时返回 UNKNOWN，不会拿当前时间冒充更新时间。
 
 Spring Boot 自带 `http.server.requests`、`jvm.*`、`hikari.*` 等基础指标，不再重复定义。
 

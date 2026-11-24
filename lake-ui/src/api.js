@@ -100,6 +100,7 @@ export const api = {
   submitJob,
   query: (sql, maxRows) => request('/api/query', { method: 'POST', body: { sql, maxRows } }),
   tables: () => request('/api/tables'),
+  governanceAssets: () => request('/api/governance/assets'),
   sample: (table, limit = 50) =>
     request(`/api/tables/${encodeURIComponent(table)}/sample?limit=${limit}`),
   config: () => request('/api/config'),

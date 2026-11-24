@@ -23,5 +23,9 @@
 | **状态库** | Postgres（默认）承担运行状态、配额、审计原文保险箱；`BatchHistoryService` 兜底湖表归档 |
 | **SqlGuard** | 只读守卫：默认放行 select/with/show/describe/explain，看穿 EXPLAIN ANALYZE 内层，单语句白名单 |
 | **小文件治理** | `rewrite_data_files` / `rewrite_manifests` / `expire_snapshots`（`maintain` job 用） |
+| **资产目录** | `platform-common` 的 `GovernanceCatalog`：每张湖表的 owner / 业务域 / 分层 / 敏感级别 / 保留天数 / 新鲜度 SLA，Java 常量单一事实源，单测守卫 |
+| **敏感级别** | L1 公开 → L4 受限（`Sensitivity` 枚举）；页面按级别给徽标着色 |
+| **新鲜度 SLA** | 一张表允许的最大更新间隔（小时）；用 Iceberg 最近快照提交时间判定 OK / WARN(2×SLA 内) / BREACH / UNKNOWN |
+| **治理资产** | `/api/governance/assets` 的一行：`GovernanceCatalog` ∪ `information_schema` ∪ Iceberg 指标；未登记的表也会显示出来 |
 
 > 词条会迭代：新增设计决策的同时补充术语。
