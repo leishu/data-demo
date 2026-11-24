@@ -37,7 +37,7 @@ REPO_ARGS=()
 # 没显式给生命周期/插件目标就补一个 package（参数以 - 开头的都视为选项）。
 MVN_ARGS=("$@")
 if [[ ${#MVN_ARGS[@]} -eq 0 ]]; then
-  MVN_ARGS=(package)
+  MVN_ARGS=(install)
 else
   # 注意 -pl spark-batch 里的 spark-batch 是选项值，不是生命周期目标
   HAS_GOAL=0
@@ -55,7 +55,7 @@ else
       *) HAS_GOAL=1 ;;
     esac
   done
-  [[ "${HAS_GOAL}" -eq 1 ]] || MVN_ARGS+=(package)
+  [[ "${HAS_GOAL}" -eq 1 ]] || MVN_ARGS+=(install)
 fi
 
 # 前端产物要先于 mvn package 生成，否则 jar 里没有控制台页面。
