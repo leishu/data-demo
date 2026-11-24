@@ -4,6 +4,7 @@ import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
+import com.demo.lake.server.batch.store.LogStore;
 import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.AuditBuffer;
@@ -60,7 +61,7 @@ class BatchJobServiceTest {
     }
 
     private InMemoryRunStateStore store;
-    private InMemoryLogSink logs;
+    private InMemoryLogStore logs;
     private JobDispatcher dispatcher;
     private BatchIdentity identity;
 
@@ -68,7 +69,7 @@ class BatchJobServiceTest {
 
     private BatchJobService newService(LakeProperties p) {
         store = new InMemoryRunStateStore();
-        logs = new InMemoryLogSink();
+        logs = new InMemoryLogStore();
         identity = new BatchIdentity();
         liveRuns = new RunningRunRegistry();
         BatchHistoryService history = noHistory();
@@ -184,7 +185,7 @@ class BatchJobServiceTest {
         };
         LakeProperties p = props("/bin/sh -c \"echo done; exit 0\"");
         store = new InMemoryRunStateStore();
-        logs = new InMemoryLogSink();
+        logs = new InMemoryLogStore();
         identity = new BatchIdentity();
         liveRuns = new RunningRunRegistry();
         dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
@@ -254,7 +255,7 @@ class BatchJobServiceTest {
     }
 
     /** 内存版共享日志，用于验证 tail / watcher 的读取顺序 */
-    static class InMemoryLogSink implements LogSink {
+    static class InMemoryLogStore implements LogStore {
         private final Map<String, List<LogLine>> lines = new ConcurrentHashMap<>();
 
         @Override

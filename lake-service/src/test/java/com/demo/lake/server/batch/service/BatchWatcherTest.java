@@ -3,6 +3,7 @@ package com.demo.lake.server.batch.service;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchEvent;
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.batch.store.LogStore;
 import com.demo.lake.server.config.LakeProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.server.ResponseStatusException;
@@ -31,21 +32,21 @@ class BatchWatcherTest {
         BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
         // 前两次 tail 都当空：一次是建立流时的首帧，一次是第一次轮询；之后才「出现」日志
         AtomicInteger tails = new AtomicInteger();
-        BatchJobServiceTest.InMemoryLogSink lateSink = new BatchJobServiceTest.InMemoryLogSink() {
+        BatchJobServiceTest.InMemoryLogStore lateStore = new BatchJobServiceTest.InMemoryLogStore() {
             @Override
             public List<LogLine> tail(String runId, int limit) {
                 return tails.incrementAndGet() <= 2 ? List.of() : super.tail(runId, limit);
             }
         };
-        lateSink.append("watch-1", List.of("late-line"));
+        lateStore.append("watch-1", List.of("late-line"));
 
         BatchRun run = new BatchRun("watch-1", "init", "--job init", BatchRunStatus.RUNNING, null,
                 Instant.now(), null, null, null, "执行中"); // logFile=null：模拟请求落到非执行实例
         store.insert(run, "svc-a");
 
-        BatchJobService jobs = new BatchJobService(props, null, store, lateSink, new BatchIdentity(),
+        BatchJobService jobs = new BatchJobService(props, null, store, lateStore, new BatchIdentity(),
                 new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
-        BatchWatcher watcher = new BatchWatcher(jobs, lateSink, Schedulers.boundedElastic());
+        BatchWatcher watcher = new BatchWatcher(jobs, lateStore, Schedulers.boundedElastic());
 
         List<BatchEvent> events = Collections.synchronizedList(new ArrayList<>());
         CountDownLatch gotLog = new CountDownLatch(1);
@@ -68,10 +69,10 @@ class BatchWatcherTest {
     void 运行不存在时以404错误结束流() {
         LakeProperties props = new LakeProperties();
         BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
-        BatchJobServiceTest.InMemoryLogSink sink = new BatchJobServiceTest.InMemoryLogSink();
-        BatchJobService jobs = new BatchJobService(props, null, store, sink, new BatchIdentity(),
+        BatchJobServiceTest.InMemoryLogStore logStore = new BatchJobServiceTest.InMemoryLogStore();
+        BatchJobService jobs = new BatchJobService(props, null, store, logStore, new BatchIdentity(),
                 new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
-        BatchWatcher watcher = new BatchWatcher(jobs, sink, Schedulers.boundedElastic());
+        BatchWatcher watcher = new BatchWatcher(jobs, logStore, Schedulers.boundedElastic());
 
         assertThrows(ResponseStatusException.class,
                 () -> watcher.watch("missing", 40).collectList().block(Duration.ofSeconds(5)));
@@ -81,15 +82,15 @@ class BatchWatcherTest {
     void 终态运行时发出End并结束流() {
         LakeProperties props = new LakeProperties();
         BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
-        BatchJobServiceTest.InMemoryLogSink sink = new BatchJobServiceTest.InMemoryLogSink();
-        sink.append("watch-2", List.of("last-line"));
+        BatchJobServiceTest.InMemoryLogStore logStore = new BatchJobServiceTest.InMemoryLogStore();
+        logStore.append("watch-2", List.of("last-line"));
         BatchRun run = new BatchRun("watch-2", "init", "--job init", BatchRunStatus.SUCCEEDED, 0,
                 Instant.now(), Instant.now(), 100L, null, "完成");
         store.insert(run, "svc-a");
 
-        BatchJobService jobs = new BatchJobService(props, null, store, sink, new BatchIdentity(),
+        BatchJobService jobs = new BatchJobService(props, null, store, logStore, new BatchIdentity(),
                 new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
-        BatchWatcher watcher = new BatchWatcher(jobs, sink, Schedulers.boundedElastic());
+        BatchWatcher watcher = new BatchWatcher(jobs, logStore, Schedulers.boundedElastic());
 
         List<BatchEvent> events = watcher.watch("watch-2", 40)
                 .collectList().block(Duration.ofSeconds(5));

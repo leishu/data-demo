@@ -1,4 +1,4 @@
-package com.demo.lake.server.batch.service;
+package com.demo.lake.server.batch.store;
 
 import java.time.Instant;
 import java.util.List;
@@ -6,10 +6,10 @@ import java.util.List;
 /**
  * 作业日志的共享存储：执行器写入，tail / SSE 从任意服务实例读取。
  *
- * <p>本地执行器把日志逐行搬到状态库；K8s 执行器将来可以用同样的接口包 kubectl logs，
- * 这样 BatchJobService / BatchWatcher 不需要知道日志到底来自哪台机器。</p>
+ * <p>本地执行器和 K8s 执行器都把日志逐行搬进状态库，BatchJobService / BatchWatcher 只认这个接口，
+ * 不需要知道日志到底来自哪台机器、哪个 Pod。</p>
  */
-public interface LogSink {
+public interface LogStore {
 
     /** 一行带序号的日志，seq 在同一 run 内单调递增 */
     record LogLine(long seq, String text) {

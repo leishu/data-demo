@@ -2,6 +2,7 @@ package com.demo.lake.server.batch.service;
 
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.batch.store.LogStore;
 import com.demo.lake.server.config.LakeProperties;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +29,7 @@ import java.util.concurrent.TimeUnit;
 public class LocalProcessJobExecutor implements JobExecutor {
 
     private final LakeProperties props;
-    private final LogSink logSink;
+    private final LogStore logStore;
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
 
     @Override
@@ -100,7 +101,7 @@ public class LocalProcessJobExecutor implements JobExecutor {
         try {
             List<String> lines = cursor.poll(logFile, 500);
             if (!lines.isEmpty()) {
-                logSink.append(runId, lines);
+                logStore.append(runId, lines);
             }
         } catch (IOException e) {
             log.debug("读取作业日志失败 run={}: {}", runId, e.getMessage());

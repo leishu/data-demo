@@ -2,6 +2,7 @@ package com.demo.lake.server.batch.service;
 
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.batch.store.LogStore;
 import com.demo.lake.server.config.LakeProperties;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -31,7 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Kubernetes 执行器：把一次批作业提交成 batch/v1 Job，用 K8s Watch API 推送终态，并把 Pod 日志搬进 {@link LogSink}。
+ * Kubernetes 执行器：把一次批作业提交成 batch/v1 Job，用 K8s Watch API 推送终态，并把 Pod 日志搬进 {@link LogStore}。
  *
  * <p>直接用 JDK HttpClient 调 API，不引入 fabric8：只需要 create/get-watch/delete、列 Pod watch、读 Pod 日志，
  * 少一个重型依赖也更容易在离线环境构建。ServiceAccount token 从 in-cluster 固定路径读取；
@@ -41,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * status/phase 变化推成 NDJSON 事件，毫秒级就能发现终态，也省掉了「隔几秒打一次 API」的空轮询。
  * 服务端按 timeoutSeconds 关流后带 resourceVersion 续接，410 Gone 则丢掉版本重新建连。</p>
  *
- * <p>日志搬运和本地执行器走同一个 {@link LogSink}：tail / SSE 从状态库读，不依赖 Pod 是否还在，
+ * <p>日志搬运和本地执行器走同一个 {@link LogStore}：tail / SSE 从状态库读，不依赖 Pod 是否还在，
  * 也不要求请求落到提交 Job 的那台实例。先 watch Pod 到容器启动再读日志；
  * 作业结束/超时/取消时先把流读到 EOF，再强制关连接，避免虚拟线程挂在 watch / follow 长连接上。</p>
  */
@@ -62,7 +63,7 @@ public class KubernetesJobExecutor implements JobExecutor {
     private static final long RETRY_MILLIS = 300;
 
     private final LakeProperties props;
-    private final LogSink logSink;
+    private final LogStore logStore;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private final Map<String, LogStream> logStreams = new ConcurrentHashMap<>();
 
@@ -345,7 +346,7 @@ public class KubernetesJobExecutor implements JobExecutor {
     }
 
     /**
-     * 找到 Job 创建的 Pod 并持续读它的 stdout/stderr，按批写进 LogSink。
+     * 找到 Job 创建的 Pod 并持续读它的 stdout/stderr，按批写进 LogStore。
      *
      * <p>Pod 名不自己拼：Job 控制器会加后缀，且创建有延迟。先 watch Pod 的 labelSelector，
      * 拿到名字且容器启动后再用 follow=true 读日志。日志接口偶发 4xx（容器刚起的竞态）才短退避重试。</p>
@@ -415,7 +416,7 @@ public class KubernetesJobExecutor implements JobExecutor {
         if (batch.isEmpty()) {
             return;
         }
-        logSink.append(runId, List.copyOf(batch));
+        logStore.append(runId, List.copyOf(batch));
         batch.clear();
     }
 

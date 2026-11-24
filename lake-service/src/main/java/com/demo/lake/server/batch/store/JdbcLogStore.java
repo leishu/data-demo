@@ -1,4 +1,4 @@
-package com.demo.lake.server.batch.service;
+package com.demo.lake.server.batch.store;
 
 import com.demo.lake.server.support.DbLocks;
 import jakarta.annotation.PostConstruct;
@@ -23,7 +23,7 @@ import java.util.List;
 @Component
 @Slf4j
 @RequiredArgsConstructor
-public class JdbcLogSink implements LogSink {
+public class JdbcLogStore implements LogStore {
 
     private static final String TABLE = "lake_batch.batch_log_lines";
     private static final int MAX_LINES = 2000;

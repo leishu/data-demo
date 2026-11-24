@@ -2,6 +2,7 @@ package com.demo.lake.server.batch.service;
 
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.batch.store.LogStore;
 import com.demo.lake.server.config.LakeProperties;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -52,7 +53,7 @@ class KubernetesJobExecutorTest {
             LakeProperties props = new LakeProperties();
             props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
             props.getBatch().getKubernetes().setTimeoutSeconds(30);
-            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, new RecordingLogSink());
+            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, new RecordingLogStore());
 
             BatchRun run = new BatchRun("run-k8s1", "init", "--job init", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, "/tmp/run-k8s1.log", "已排队");
@@ -70,7 +71,7 @@ class KubernetesJobExecutorTest {
     }
 
     @Test
-    void Pod日志会搬运到LogSink() throws Exception {
+    void Pod日志会搬运到LogStore() throws Exception {
         AtomicReference<String> created = new AtomicReference<>();
         CountDownLatch logsServed = new CountDownLatch(1);
         String pod = "lake-run-k8s2-abcde";
@@ -109,8 +110,8 @@ class KubernetesJobExecutorTest {
             LakeProperties props = new LakeProperties();
             props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
             props.getBatch().getKubernetes().setTimeoutSeconds(30);
-            RecordingLogSink sink = new RecordingLogSink();
-            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, sink);
+            RecordingLogStore store = new RecordingLogStore();
+            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, store);
 
             BatchRun run = new BatchRun("run-k8s2", "show", "--job show", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, null, "已排队");
@@ -119,8 +120,8 @@ class KubernetesJobExecutorTest {
                     result.complete(status + ":" + message));
 
             assertEquals("SUCCEEDED:K8s Job 成功", result.get(10, TimeUnit.SECONDS));
-            awaitLine(sink, "hello from pod");
-            awaitLine(sink, "second line");
+            awaitLine(store, "hello from pod");
+            awaitLine(store, "second line");
             assertTrue(created.get().contains("run-k8s2"));
         } finally {
             server.stop(0);
@@ -167,15 +168,15 @@ class KubernetesJobExecutorTest {
             LakeProperties props = new LakeProperties();
             props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
             props.getBatch().getKubernetes().setTimeoutSeconds(10);
-            RecordingLogSink sink = new RecordingLogSink();
-            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, sink);
+            RecordingLogStore store = new RecordingLogStore();
+            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, store);
             BatchRun run = new BatchRun("run-k8s3", "show", "--job show", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, null, "已排队");
             CompletableFuture<String> result = new CompletableFuture<>();
             executor.start(run, (r, status, code, elapsed, message) -> result.complete(status.name()));
 
             assertEquals("SUCCEEDED", result.get(10, TimeUnit.SECONDS));
-            awaitLine(sink, "from list");
+            awaitLine(store, "from list");
         } finally {
             server.stop(0);
         }
@@ -203,19 +204,19 @@ class KubernetesJobExecutorTest {
         exchange.close();
     }
 
-    private static void awaitLine(RecordingLogSink sink, String expected) throws InterruptedException {
+    private static void awaitLine(RecordingLogStore store, String expected) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 5000;
         while (System.currentTimeMillis() < deadline) {
-            if (sink.lines.contains(expected)) {
+            if (store.lines.contains(expected)) {
                 return;
             }
             Thread.sleep(50);
         }
-        throw new AssertionError("没有收到日志行: " + expected + "，实际: " + sink.lines);
+        throw new AssertionError("没有收到日志行: " + expected + "，实际: " + store.lines);
     }
 
     /** 只记录日志行，够验证搬运是否发生 */
-    private static final class RecordingLogSink implements LogSink {
+    private static final class RecordingLogStore implements LogStore {
         private final List<String> lines = new CopyOnWriteArrayList<>();
 
         @Override

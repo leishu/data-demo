@@ -4,6 +4,7 @@ import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.batch.RunIds;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
+import com.demo.lake.server.batch.store.LogStore;
 import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.AuditService;
@@ -60,7 +61,7 @@ public class BatchJobService {
     private final LakeProperties props;
     private final BatchHistoryService history;
     private final RunStateStore state;
-    private final LogSink logSink;
+    private final LogStore logStore;
     private final BatchIdentity identity;
     private final RunningRunRegistry liveRuns;
     private final AuditService audit;
@@ -103,7 +104,7 @@ public class BatchJobService {
     /** 失联的 RUNNING：能从湖表拿到终态就采纳，否则落「实例失联」终态；顺带清理过期日志行 */
     private void reconcile() {
         auditText.purge(Instant.now());
-        int removed = logSink.purge(Instant.now().minus(
+        int removed = logStore.purge(Instant.now().minus(
                 Math.max(1, props.getBatch().getState().getLogRetentionDays()), java.time.temporal.ChronoUnit.DAYS));
         if (removed > 0) {
             log.debug("清理过期作业日志 {} 行", removed);
@@ -253,9 +254,9 @@ public class BatchJobService {
         BatchRun run = get(id);
         int n = Math.clamp(lines, 1, MAX_TAIL_LINES);
         // 优先读共享日志（跨实例可用）；老记录/命令行直跑的作业没写库，再退回本地文件
-        List<LogSink.LogLine> shared = logSink.tail(id, n);
+        List<LogStore.LogLine> shared = logStore.tail(id, n);
         if (!shared.isEmpty()) {
-            return shared.stream().map(LogSink.LogLine::text).toList();
+            return shared.stream().map(LogStore.LogLine::text).toList();
         }
         Path file = logFile(run);
         if (file == null || !Files.isReadable(file)) {

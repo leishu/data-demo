@@ -3,6 +3,7 @@ package com.demo.lake.server.batch.service;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchEvent;
 import com.demo.lake.server.batch.model.BatchRun;
+import com.demo.lake.server.batch.store.LogStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,7 +21,7 @@ import java.util.Objects;
 /**
  * 把一次作业运行「盯」成一条 SSE 流：状态变了发 status，日志有新行发 log，跑完发 end 并关连接。
  *
- * <p>日志优先从共享 LogSink 读（执行器边跑边搬进状态库），所以请求落到哪台实例都能看到；
+ * <p>日志优先从共享 LogStore 读（执行器边跑边搬进状态库），所以请求落到哪台实例都能看到；
  * 老记录没写库时才退回本地文件游标。</p>
  *
  * <p>实现是「非阻塞节拍 + 阻塞 IO 卸载」：轮询间隔由 Reactor 的 timer 驱动，等待期间不占线程；
@@ -39,7 +40,7 @@ public class BatchWatcher {
     private static final int MAX_TAIL_LINES = 1000;
 
     private final BatchJobService jobs;
-    private final LogSink logSink;
+    private final LogStore logStore;
     private final Scheduler blocking;
 
     public Flux<BatchEvent> watch(String id, int tailLines) {
@@ -48,7 +49,7 @@ public class BatchWatcher {
         // 阻塞的状态查询也不占 Netty 事件循环；每条订阅独立持有一份 TailState。
         return Mono.fromCallable(() -> {
                     BatchRun run = jobs.get(id);
-                    return new TailState(jobs, logSink, id, tail, BatchJobService.logFile(run));
+                    return new TailState(jobs, logStore, id, tail, BatchJobService.logFile(run));
                 })
                 .subscribeOn(blocking)
                 .flatMapMany(state -> {
@@ -71,7 +72,7 @@ public class BatchWatcher {
     /** 一条流的轮询状态与事件决策；数组 holder 换成字段，语义不变 */
     static final class TailState {
         private final BatchJobService jobs;
-        private final LogSink logSink;
+        private final LogStore logStore;
         private final String id;
         private final int tailLines;
         private final Path logFile;
@@ -85,9 +86,9 @@ public class BatchWatcher {
         private volatile long lastEmit;
         private volatile boolean finished;
 
-        TailState(BatchJobService jobs, LogSink logSink, String id, int tailLines, Path logFile) {
+        TailState(BatchJobService jobs, LogStore logStore, String id, int tailLines, Path logFile) {
             this.jobs = jobs;
-            this.logSink = logSink;
+            this.logStore = logStore;
             this.id = id;
             this.tailLines = tailLines;
             this.logFile = logFile;
@@ -96,11 +97,11 @@ public class BatchWatcher {
         /** 首帧：共享库里有日志就从那里回放，否则用本地文件尾部 */
         List<BatchEvent> init() {
             List<BatchEvent> events = new ArrayList<>();
-            List<LogSink.LogLine> initial = logSink.tail(id, tailLines);
+            List<LogStore.LogLine> initial = logStore.tail(id, tailLines);
             if (!initial.isEmpty()) {
                 useShared = true;
                 seq = initial.getLast().seq();
-                addLogs(events, initial.stream().map(LogSink.LogLine::text).toList());
+                addLogs(events, initial.stream().map(LogStore.LogLine::text).toList());
             } else if (logFile != null) {
                 try {
                     cursor.primeTail(logFile, tailLines);
@@ -166,7 +167,7 @@ public class BatchWatcher {
             if (useShared) {
                 return false;
             }
-            List<LogSink.LogLine> appeared = logSink.tail(id, tailLines);
+            List<LogStore.LogLine> appeared = logStore.tail(id, tailLines);
             if (appeared.isEmpty()) {
                 return false;
             }
@@ -175,17 +176,17 @@ public class BatchWatcher {
             if (localEmitted) {
                 return false;
             }
-            addLogs(events, appeared.stream().map(LogSink.LogLine::text).toList());
+            addLogs(events, appeared.stream().map(LogStore.LogLine::text).toList());
             return true;
         }
 
         /** seq 是本条流已读到的最大序号，随实例更新，互不影响 */
         private List<String> pollLogs() {
             if (useShared) {
-                List<LogSink.LogLine> fresh = logSink.since(id, seq, MAX_LINES_PER_POLL);
+                List<LogStore.LogLine> fresh = logStore.since(id, seq, MAX_LINES_PER_POLL);
                 if (!fresh.isEmpty()) {
                     seq = fresh.getLast().seq();
-                    return fresh.stream().map(LogSink.LogLine::text).toList();
+                    return fresh.stream().map(LogStore.LogLine::text).toList();
                 }
                 return List.of();
             }

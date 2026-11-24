@@ -572,10 +572,10 @@ sequenceDiagram
 | 通道 | 存储 | 写入方 | 生命周期 |
 |---|---|---|---|
 | ① 服务侧运行态 | Postgres `lake_batch.batch_runs`（非湖表） | lake-service `JdbcRunStateStore` | 多实例共享，重启不丢 |
-| ② 共享日志尾部 | Postgres `lake_batch.batch_log_lines` | 执行器 → `JdbcLogSink` | 每 run 留尾 2000 行，7 天 |
+| ② 共享日志尾部 | Postgres `lake_batch.batch_log_lines` | 执行器 → `JdbcLogStore` | 每 run 留尾 2000 行，7 天 |
 | ③ 湖表历史归档 | Iceberg `ops.batch_runs`（经 Trino 读） | **spark-batch** `RunRecordWriter` | 长期、跨进程的权威归档 |
 
-〔FACT｜batch/store/RunStateStore.java:10-13〕〔FACT｜batch/store/JdbcRunStateStore.java:32〕〔FACT｜batch/service/JdbcLogSink.java:26-27〕
+〔FACT｜batch/store/RunStateStore.java:10-13〕〔FACT｜batch/store/JdbcRunStateStore.java:32〕〔FACT｜batch/store/JdbcLogStore.java:26-27〕
 
 #### 主链路（提交到终态）
 
@@ -619,10 +619,10 @@ sequenceDiagram
 
 **K8s 日志搬运**：Job 的 Pod 模板带 `lake-job=<jobName>` 标签，日志线程 watch 该标签的 PodList，
 拿到 Pod 名且 `status.phase` 离开 `Pending` 后用 `GET .../pods/{pod}/log?follow=true` 持续读 stdout/stderr，
-按 100 行/1 秒批量写进同一个 `LogSink`（`lake_batch.batch_log_lines`）；日志接口偶发 4xx（容器刚起的竞态）
+按 100 行/1 秒批量写进同一个 `LogStore`（`lake_batch.batch_log_lines`）；日志接口偶发 4xx（容器刚起的竞态）
 才短退避重试。终态到达后先等日志读到 EOF（最长 2 秒），再置停止位并关掉 watch / follow 长连接，
 避免虚拟线程挂在长连接上。这样 tail / SSE 在 K8s 模式下也从状态库读，和本地模式一致，不依赖 Pod 是否还在、
-也不要求请求落到提交 Job 的那台实例。〔FACT｜batch/service/KubernetesJobExecutor.java:202-344,406-428〕〔FACT｜batch/service/LogSink.java:7-10〕
+也不要求请求落到提交 Job 的那台实例。〔FACT｜batch/service/KubernetesJobExecutor.java:202-344,406-428〕〔FACT｜batch/store/LogStore.java:7-10〕
 
 **外部调度触发**：调度器不直接跑 Spark，而是调 `bin/scheduled-batch.sh` → `POST /api/batch/{job}`。
 幂等键取 `lake-<job>-<逻辑日期>`（Airflow 用 `{{ ds }}`、DS 用 `${bizdate}`），同一逻辑日重跑返回同一条
@@ -824,7 +824,7 @@ erDiagram
     }
 ```
 
-〔FACT｜batch/store/JdbcRunStateStore.java:37-65〕〔FACT｜batch/service/JdbcLogSink.java:36-52〕〔FACT｜observability/AuditTextStore.java:90-118〕
+〔FACT｜batch/store/JdbcRunStateStore.java:37-65〕〔FACT｜batch/store/JdbcLogStore.java:36-52〕〔FACT｜observability/AuditTextStore.java:90-118〕
 
 ### 5.3 关键字段说明
 
@@ -981,7 +981,7 @@ lake-service 编排链路、lake-ui）以及 §3.7 的支撑层（CI/全栈/冒�
 - **工程化收口（2026-11-22）**：新增 `.github/workflows/ci.yml`、`bin/smoke.sh`、`bin/stack.sh`、
   `infra/docker-compose.full.yml`、`infra/lake-service/Dockerfile`。容器模式关闭批作业，
   `bin/stack.sh` 生成 `conf/platform.stack.properties` 不覆盖本地配置。
-- **P1 K8s 日志搬运（2026-11-22）**：`KubernetesJobExecutor` 依赖 `LogSink`，Pod 打 `lake-job` 标签，
+- **P1 K8s 日志搬运（2026-11-22）**：`KubernetesJobExecutor` 依赖 `LogStore`，Pod 打 `lake-job` 标签，
   follow 流读日志批量入库；终态后排空尾部再关流，§4.10 旧「已知局限」已移除。
 - **K8s Watch 改造（2026-11-23）**：Job 终态与 Pod 发现从定时轮询改为 K8s Watch API 事件流（带
   `resourceVersion` 续接），日志就绪由 Pod phase 驱动，`LogStream` 用 `CountDownLatch` + 关流取代定时 join，
