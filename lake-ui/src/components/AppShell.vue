@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
+import { auth, logout } from '@/auth'
 import { refreshHealth, store } from '@/store'
 import { fmtTime } from '@/utils'
 
@@ -13,7 +14,8 @@ const NAV = [
   { key: '/tables', label: '表浏览', index: '2' },
   { key: '/semantics', label: '指标', index: '3' },
   { key: '/jobs', label: '批作业', index: '4' },
-  { key: '/config', label: '配置', index: '5' }
+  { key: '/audit', label: '审计', index: '5' },
+  { key: '/config', label: '配置', index: '6' }
 ]
 
 const activeKey = computed(() => '/' + (route.path.split('/')[1] || 'query'))
@@ -39,6 +41,11 @@ const trinoTone = computed(() => {
 })
 
 const checking = computed(() => store.health.status === 'CHECKING')
+
+function onLogout() {
+  logout()
+  ElMessage.success('已退出登录')
+}
 
 async function check() {
   await refreshHealth()
@@ -120,6 +127,19 @@ onUnmounted(() => {
               Trino {{ trinoStatus }}
             </el-tag>
           </el-tooltip>
+          <el-tooltip
+            v-if="auth.roles.length"
+            :content="`当前角色：${auth.roles.join(' / ')}`"
+            placement="bottom"
+            :show-after="120"
+          >
+            <el-tag size="small" effect="plain" type="info" class="user-role">
+              {{ auth.roles.join(' / ') }}
+            </el-tag>
+          </el-tooltip>
+          <el-tag size="small" effect="light" type="primary" class="user-tag">{{ auth.user }}</el-tag>
+          <el-button size="small" text @click="onLogout">退出</el-button>
+          <span class="divider-v"></span>
           <el-button size="small" text :loading="checking" @click="check">刷新</el-button>
           <span class="faint ts">{{ store.healthCheckedAt ? fmtTime(store.healthCheckedAt) : '' }}</span>
         </div>
@@ -162,5 +182,20 @@ onUnmounted(() => {
   font-size: 11px;
   min-width: 52px;
   text-align: right;
+}
+
+.user-tag {
+  font-family: var(--mono);
+}
+
+.user-role {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.divider-v {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
 }
 </style>

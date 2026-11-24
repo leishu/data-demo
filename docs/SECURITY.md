@@ -23,8 +23,14 @@ lake:
       - { username: auditor,  password: "{noop}auditor",  roles: [AUDITOR] }
 ```
 
-角色是接口级的：`QUERY` 可查表/跑 SQL，`BATCH` 才能触发作业和看 actuator，`AUDITOR`
+角色是接口级的：`QUERY` 可查表/跑 SQL，`BATCH` 才能触发作业和看 actuator，审计事件列表 `QUERY` / `AUDITOR` 都能看，`AUDITOR`
 才能读查询原文保险箱。健康检查、静态页面和接口文档公开，便于探针和浏览器使用。
+
+**控制台登录**：`POST /api/auth/login`（body `{username,password}`，成功返回 `{user,roles,mode}`）
+和 `GET /api/auth/session`（带 Basic 头回显当前身份，没带只回 `authenticated=false`）是公开的，
+不触发 `WWW-Authenticate` 挑战——否则控制台自己的登录页会被浏览器原生 Basic 弹框盖掉。
+服务仍然**无会话**：登录后前端把凭据放进每个请求（含 SSE）的 Basic 头；「退出」只清前端凭据，
+不会让服务端失效。鉴权过滤器只在「根本没带凭据」时发挑战头，口令错或过期时返回 401 但不弹框。
 
 ### external（生产）
 

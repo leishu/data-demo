@@ -42,13 +42,15 @@ class ApiAuthWebFilterTest {
 
     @Test
     void 接口按最小权限分角色() {
-        assertEquals("QUERY", ApiAuthWebFilter.requiredRole("/api/query/stream", HttpMethod.POST));
-        assertEquals("QUERY", ApiAuthWebFilter.requiredRole("/api/config", HttpMethod.GET));
-        assertEquals("QUERY", ApiAuthWebFilter.requiredRole("/api/batch/runs", HttpMethod.GET));
-        assertEquals("BATCH", ApiAuthWebFilter.requiredRole("/api/batch/init", HttpMethod.POST));
-        assertEquals("BATCH", ApiAuthWebFilter.requiredRole("/actuator/metrics", HttpMethod.GET));
-        assertEquals("AUDITOR", ApiAuthWebFilter.requiredRole("/api/audit/sql/abc", HttpMethod.GET));
-        assertNull(ApiAuthWebFilter.requiredRole("/api/unknown", HttpMethod.GET));
+        assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/query/stream", HttpMethod.POST));
+        assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/config", HttpMethod.GET));
+        assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/batch/runs", HttpMethod.GET));
+        assertEquals(List.of("BATCH"), ApiAuthWebFilter.requiredRoles("/api/batch/init", HttpMethod.POST));
+        assertEquals(List.of("BATCH"), ApiAuthWebFilter.requiredRoles("/actuator/metrics", HttpMethod.GET));
+        assertEquals(List.of("AUDITOR"), ApiAuthWebFilter.requiredRoles("/api/audit/sql/abc", HttpMethod.GET));
+        // 事件列表同时放 QUERY / AUDITOR：auditor 只有 AUDITOR 角色，也要能看列表
+        assertEquals(List.of("QUERY", "AUDITOR"), ApiAuthWebFilter.requiredRoles("/api/audit", HttpMethod.GET));
+        assertTrue(ApiAuthWebFilter.requiredRoles("/api/unknown", HttpMethod.GET).isEmpty());
     }
 
     @Test

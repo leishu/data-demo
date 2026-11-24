@@ -932,7 +932,7 @@ erDiagram
 
 - **local（demo 默认）**：HTTP Basic + 静态账号，viewer(QUERY)、operator(QUERY+BATCH)、auditor(AUDITOR)。
 - **external（生产）**：网关完成认证后注入 `X-Forwarded-User` / `X-Forwarded-Roles` + `X-Auth-Shared-Secret`；缺密钥/错密钥/缺身份头一律 401（fail closed），静态账号完全不生效。网关必须剥离客户端自带的这些头。
-- 路径角色映射不变：`/api/query*|tables*|semantics*|config`→QUERY，`/api/batch/**` GET→QUERY/非 GET→BATCH，`/api/audit/sql*`→AUDITOR，`/api/audit*|actuator/**`→BATCH。公开路径含 `/`、`/ui/**`、`/actuator/health|info`。
+- 路径角色映射：`/api/query*|tables*|semantics*|config`→QUERY，`/api/batch/**` GET→QUERY/非 GET→BATCH，`/api/audit/sql*`→AUDITOR，`/api/audit*`→QUERY|AUDITOR（列表只有指纹元数据，三个账号都能看），`actuator/**`→BATCH。公开路径含 `/`、`/ui/**`、`/actuator/health|info`、`/api/auth/session|login`。
 - 引擎侧另行授权：Trino LDAP + `rules.json` 做 catalog/schema/table 三级控制，HMS 用 Ranger 插件模板；三处角色要对齐。详见 `docs/SECURITY.md`。
 
 〔FACT｜security/ApiAuthWebFilter.java:47-120〕〔FACT｜infra/trino/auth/rules.json:1-47〕〔FACT｜docs/SECURITY.md:1-60〕

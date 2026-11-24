@@ -260,6 +260,100 @@ function pick(sql) {
   )
 }
 
+/**
+ * /api/audit 的假数据：字段形状对齐后端 AuditEvent / AuditController 的响应，
+ * 让审计页在没有 lake-service 时也能把列表、调阅、保全三条链路点通。
+ */
+const AUDIT_EVENTS = [
+  {
+    at: new Date(Date.now() - 95_000).toISOString(),
+    event: 'query.execute',
+    actor: 'operator',
+    fields: {
+      sql_fp: 'a1b2c3d4e5f60718',
+      sql_len: '86',
+      outcome: 'success',
+      rows: '12',
+      event_id: '11111111-2222-3333-4444-555555555555'
+    }
+  },
+  {
+    at: new Date(Date.now() - 8 * 60_000).toISOString(),
+    event: 'semantic.query',
+    actor: 'viewer',
+    fields: {
+      metric: 'gmv',
+      outcome: 'success',
+      rows: '7',
+      event_id: '22222222-2222-3333-4444-555555555555'
+    }
+  },
+  {
+    at: new Date(Date.now() - 23 * 60_000).toISOString(),
+    event: 'batch.submit',
+    actor: 'operator',
+    fields: {
+      job: 'transform',
+      run_id: 'run-20261124-01',
+      event_id: '33333333-2222-3333-4444-555555555555'
+    }
+  },
+  {
+    at: new Date(Date.now() - 51 * 60_000).toISOString(),
+    event: 'auth.denied',
+    actor: 'anonymous',
+    fields: { path: '/api/audit/sql', reason: 'insufficient-role' }
+  }
+]
+
+const AUDIT_TEXT = {
+  '11111111-2222-3333-4444-555555555555': {
+    event_id: '11111111-2222-3333-4444-555555555555',
+    actor: 'operator',
+    client_ip: '127.0.0.1',
+    at_ms: Date.now() - 95_000,
+    expires_at: Date.now() + 7 * 24 * 3600_000,
+    legal_hold: false,
+    key_id: 'v1',
+    redacted: true,
+    sql: "SELECT dt, merchant_id, gmv\nFROM iceberg.lake.gold_daily_revenue\nWHERE dt = '2026-11-24'\nORDER BY gmv DESC\nLIMIT 12"
+  },
+  '22222222-2222-3333-4444-555555555555': {
+    event_id: '22222222-2222-3333-4444-555555555555',
+    actor: 'viewer',
+    client_ip: '127.0.0.1',
+    at_ms: Date.now() - 8 * 60_000,
+    expires_at: Date.now() + 7 * 24 * 3600_000,
+    legal_hold: false,
+    key_id: 'v1',
+    redacted: true,
+    sql: "SELECT dt, SUM(gmv) AS gmv\nFROM iceberg.lake.gold_daily_revenue\nWHERE dt BETWEEN '2026-11-18' AND '2026-11-24'\nGROUP BY dt ORDER BY dt"
+  }
+}
+
+/** 与 application.yml 的静态账号一致；mock 没有鉴权过滤器，这里自己验 Basic 头 */
+const DEMO_ACCOUNTS = [
+  { username: 'viewer', password: 'viewer', roles: ['QUERY'] },
+  { username: 'operator', password: 'operator', roles: ['QUERY', 'BATCH'] },
+  { username: 'auditor', password: 'auditor', roles: ['AUDITOR'] }
+]
+
+function mockIdentity(auth) {
+  if (typeof auth !== 'string' || !auth.toLowerCase().startsWith('basic ')) return null
+  let decoded
+  try {
+    decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8')
+  } catch {
+    return null
+  }
+  const colon = decoded.indexOf(':')
+  if (colon < 0) return null
+  const user = decoded.slice(0, colon)
+  const password = decoded.slice(colon + 1)
+  const account = DEMO_ACCOUNTS.find((a) => a.username === user && a.password === password)
+  return account ? { user: account.username, roles: account.roles } : null
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`)
   const p = url.pathname
@@ -485,6 +579,68 @@ const server = http.createServer(async (req, res) => {
     const run = startRun(job)
     if (idemKey) idempotency.set(idemKey, run.id)
     return send(res, 202, run)
+  }
+
+  if (p === '/api/auth/session') {
+    const identity = mockIdentity(req.headers.authorization)
+    return send(res, 200, {
+      mode: 'local',
+      enabled: true,
+      authenticated: !!identity,
+      user: identity ? identity.user : null,
+      roles: identity ? identity.roles : []
+    })
+  }
+
+  if (p === '/api/auth/login' && method === 'POST') {
+    let body = {}
+    try {
+      body = JSON.parse((await readBody(req)) || '{}')
+    } catch {
+      // 非法 JSON 按账号密码错误处理即可
+    }
+    const account = DEMO_ACCOUNTS.find(
+      (a) => a.username === body.username && a.password === body.password
+    )
+    if (!account) {
+      return send(res, 401, {
+        status: 401,
+        error: 'Unauthorized',
+        message: '用户名或密码错误',
+        hint: null
+      })
+    }
+    return send(res, 200, { user: account.username, roles: account.roles, mode: 'local' })
+  }
+
+  if (p === '/api/audit') {
+    const n = Number(url.searchParams.get('limit') || 100)
+    const limit = Math.max(1, Math.min(Number.isFinite(n) ? n : 100, 200))
+    return send(res, 200, AUDIT_EVENTS.slice(0, limit))
+  }
+
+  const auditMatch = p.match(/^\/api\/audit\/sql\/([^/]+)(\/hold)?$/)
+  if (auditMatch) {
+    const eventId = decodeURIComponent(auditMatch[1])
+    const record = AUDIT_TEXT[eventId]
+    if (!record) {
+      return send(res, 404, {
+        status: 404,
+        error: 'Not Found',
+        message: '没有这条查询原文，或保险箱未开启',
+        hint: '只有 query.execute / semantic.query 事件在保险箱开启时写原文'
+      })
+    }
+    if (auditMatch[2]) {
+      if (method !== 'POST') {
+        return send(res, 405, { status: 405, error: 'Method Not Allowed', message: '保全开关用 POST' })
+      }
+      record.legal_hold = url.searchParams.get('hold') !== 'false'
+      return send(res, 200, { event_id: eventId, legal_hold: record.legal_hold })
+    }
+    // 真实后端每次读取都会再记一条审计，mock 里只把理由打印出来便于联调
+    console.log('[mock] audit text access:', eventId, url.searchParams.get('reason'))
+    return send(res, 200, { ...record })
   }
 
   // 静态文件

@@ -46,7 +46,7 @@ lakehouse-demo/
 │       ├── support/{StateDbDdl, StateDbTables}  状态库 DDL 装载 + 表名常量
 │       ├── config/LakeConfiguration.java  运行时配置（conf/platform.properties 回显）
 │   └── src/main/resources/sql/state/     H2/Postgres 状态库 DDL（schema/表/索引/迁移）
-├── lake-ui/                  Vue 3 控制台（独立工程，构建产物进 lake-service/.../static/ui/）
+├── lake-ui/                  Vue 3 控制台（独立工程，登录页 + 六个页面，构建产物进 lake-service/.../static/ui/）
 ├── scheduler/                外部调度示例（Airflow / DolphinScheduler / crontab，非 Maven 模块）
 ├── sql/adhoc/                可丢给 Trino 的即席脚本（01_daily_revenue … 07_channel_mix）
 ├── .github/                  dependabot.yml + workflows/（ci / codeql / dependency-review）

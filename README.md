@@ -64,7 +64,7 @@ lakehouse-demo/
 ├── lake-service/             Spring Boot 4 服务层：查询/作业 REST + SSE 流 + 控制台页面
 │   ├── src/main/java/.../support/  StateDbDdl（DDL 装载）+ StateDbTables（表名常量）
 │   └── src/main/resources/sql/state/  状态库 DDL：schema / 表 / 索引 / 迁移列定义（H2/Postgres）
-├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 指标语义 / 配置
+├── lake-ui/                  Vue 3 控制台（Vite）：查询台 / 表浏览 / 批作业 / 指标语义 / 审计 / 配置
 ├── sql/adhoc/                可以直接丢给 Trino 的查询脚本
 ├── infra/                    docker-compose: Postgres + MinIO + Hive Metastore + Trino
 │   ├── lake-service/         全栈模式的 lake-service 镜像（jar + JRE 21）
@@ -236,7 +236,12 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 | 表浏览 `#/tables` | 三层表清单 + 采样预览（20/50/200 行，表头带字段中文名），一键「在查询台打开」 |
 | 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时用 SSE 实时跟） |
 | 指标语义 `#/semantics` | 选指标/维度/过滤，预览 Trino / Spark 两种方言 SQL，或直接执行语义查询 |
+| 审计 `#/audit` | 最近审计事件（动作/身份/字段/SQL 指纹）；按事件 ID 调阅脱敏 SQL 原文、置位/解除法律保全。列表 QUERY 或 AUDITOR 角色都能看（三个账号都可以），原文与保全需 AUDITOR 角色 |
 | 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Trino 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
+
+首次打开先走登录页（演示账号 `viewer` / `operator` / `auditor`，密码与用户名相同）；
+登录态存 `sessionStorage`，顶栏显示当前账号与角色，「退出」清本地凭据。服务本身仍是无状态 Basic，
+没有服务端会话；`external` 模式下登录页会提示由网关接管认证。
 
 ```bash
 bin/build-ui.sh                    # 首次会 npm install，然后 vite build

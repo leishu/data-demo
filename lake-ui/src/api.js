@@ -1,4 +1,14 @@
+import { authHeader, onUnauthorized } from './auth'
+
 const BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+
+/** 受保护接口统一带 Basic 头；登录/健康/文档这类公开端点用不到 */
+function authHeaders(extra = {}) {
+  const headers = { ...extra }
+  const auth = authHeader()
+  if (auth) headers.Authorization = auth
+  return headers
+}
 
 /** 后端统一错误体 {status, error, message, hint}，这里原样带出来给页面用 */
 export class ApiError extends Error {
@@ -14,7 +24,7 @@ export class ApiError extends Error {
 async function request(path, { method = 'GET', body, headers } = {}) {
   let res
   try {
-    const finalHeaders = { ...(headers || {}) }
+    const finalHeaders = authHeaders(headers || {})
     if (body !== undefined) finalHeaders['Content-Type'] = 'application/json'
     res = await fetch(BASE + path, {
       method,
@@ -39,6 +49,7 @@ async function request(path, { method = 'GET', body, headers } = {}) {
   }
 
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized()
     const msg = (data && (data.message || data.error)) || text || res.statusText
     throw new ApiError(msg, {
       status: res.status,
@@ -98,22 +109,32 @@ export const api = {
 
   runs: (limit = 20) => request(`/api/batch/runs?limit=${limit}`),
   run: (id, tail = 40) =>
-    request(`/api/batch/runs/${encodeURIComponent(id)}?tail=${tail}`)
+    request(`/api/batch/runs/${encodeURIComponent(id)}?tail=${tail}`),
+
+  /** 最近审计事件（列表 QUERY / AUDITOR 均可；原文调阅/保全另需 AUDITOR） */
+  audit: (limit = 100) => request(`/api/audit?limit=${limit}`),
+  auditText: (eventId, reason = 'compliance-review') =>
+    request(`/api/audit/sql/${encodeURIComponent(eventId)}?reason=${encodeURIComponent(reason)}`),
+  auditHold: (eventId, hold) =>
+    request(`/api/audit/sql/${encodeURIComponent(eventId)}/hold?hold=${hold}`, { method: 'POST' })
 }
 
 /**
- * 查询流（SSE）：meta → rows… → done，失败则 error。
+ * 统一的 SSE 读取器：查询流与作业监控流共用。
  *
- * 走 POST 而不是 EventSource：EventSource 只支持 GET，把 SQL 塞进 query string 会被
- * 访问日志完整记下来、也受 URL 长度限制。所以用 fetch + ReadableStream 自己解 SSE 帧。
+ * 不用 EventSource 的两个原因：SQL 走 POST 不能塞进 query string；而且
+ * EventSource 带不了 Authorization 头，显式登录之后就没法鉴权。
  */
-export async function streamQuery(sql, maxRows, { onEvent, signal } = {}) {
+async function openSse(path, { body, signal, onEvent } = {}) {
   let res
   try {
-    res = await fetch(BASE + '/api/query/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-      body: JSON.stringify({ sql, maxRows }),
+    const headers = authHeaders({ Accept: 'text/event-stream' })
+    const isPost = body !== undefined
+    if (isPost) headers['Content-Type'] = 'application/json'
+    res = await fetch(BASE + path, {
+      method: isPost ? 'POST' : 'GET',
+      headers,
+      body: isPost ? JSON.stringify(body) : undefined,
       signal
     })
   } catch (e) {
@@ -125,6 +146,7 @@ export async function streamQuery(sql, maxRows, { onEvent, signal } = {}) {
   }
 
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized()
     // 流没开起来时后端返回的还是统一错误体（JSON）
     const text = await res.text()
     let data = null
@@ -158,6 +180,11 @@ export async function streamQuery(sql, maxRows, { onEvent, signal } = {}) {
   }
 }
 
+/** 查询流（SSE）：meta → rows… → done，失败则 error */
+export function streamQuery(sql, maxRows, { onEvent, signal } = {}) {
+  return openSse('/api/query/stream', { body: { sql, maxRows }, onEvent, signal })
+}
+
 /** SSE 帧：`event:rows` + `data:{...}`；冒号后的空格可有可无，注释帧（心跳）直接忽略 */
 function parseFrame(frame) {
   let event = 'message'
@@ -186,31 +213,43 @@ function parseFrame(frame) {
  * 作业监控流：status / log / ping / end。
  *
  * tail 是首帧回放的历史日志行数：服务端只从文件末尾往前读这么多，不从文件头回放。
- * EventSource 断线后会自己重连，而作业结束后那条连接重连毫无意义，
- * 所以收到 end 或出错就显式 close()，交给调用方决定要不要重连。
+ * 改为 fetch 流之后没有 EventSource 的自动重连：收到 end 或断流就 close()，
+ * 重连交给调用方（JobsView 已有退避逻辑），这样作业结束后不会白建连接。
  */
 export function watchRun(id, { tail = 80, onStatus, onLog, onEnd, onError } = {}) {
-  const es = new EventSource(`${BASE}/api/batch/runs/${encodeURIComponent(id)}/events?tail=${tail}`)
+  const controller = new AbortController()
   let closed = false
   const close = () => {
     if (!closed) {
       closed = true
-      es.close()
+      controller.abort()
     }
   }
 
-  es.addEventListener('status', (e) => onStatus?.(JSON.parse(e.data).run))
-  es.addEventListener('log', (e) => onLog?.(JSON.parse(e.data).lines || []))
-  es.addEventListener('end', (e) => {
-    const run = JSON.parse(e.data).run
-    close()
-    onEnd?.(run)
+  openSse(`/api/batch/runs/${encodeURIComponent(id)}/events?tail=${tail}`, {
+    signal: controller.signal,
+    onEvent({ event, data }) {
+      if (closed) return
+      if (event === 'status') onStatus?.(data.run)
+      else if (event === 'log') onLog?.(data.lines || [])
+      else if (event === 'end') {
+        close()
+        onEnd?.(data.run)
+      }
+    }
   })
-  es.addEventListener('error', () => {
-    if (closed) return
-    close()
-    onError?.()
-  })
+    .catch((e) => {
+      if (closed) return
+      close()
+      onError?.(e)
+    })
+    .then(() => {
+      // 服务端没发 end 就关流：按断线处理，交给调用方决定是否重连
+      if (!closed) {
+        close()
+        onError?.()
+      }
+    })
 
   return { close }
 }

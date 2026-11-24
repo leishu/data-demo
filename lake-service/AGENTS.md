@@ -9,6 +9,9 @@
 lake-service/src/main/java/com/demo/lake/server/
 ├── LakeServiceApplication.java
 ├── config/LakeConfiguration.java       # 运行时配置（conf/platform.properties 回显、批作业开关）
+├── controller/
+│   ├── AuthController.java             # /api/auth/session|login：控制台登录态（公开，不弹原生 Basic 框）
+│   └── AuditController.java            # /api/audit*：最近事件 + 原文保险箱（原文需 AUDITOR）
 ├── query/
 │   ├── QueryController.java            # /api/query、/api/query/stream（SSE）
 │   ├── QueryService.java               # 同步查询执行、只读守卫调用、审计记账
@@ -38,7 +41,7 @@ lake-service/src/main/resources/sql/state/   # H2/Postgres 双兼容 DDL：schem
 - **阻塞 IO offload**：WebFlux 请求线程就是 Netty 事件循环；Hikari 取连接、`rs.next()`、等子进程都要 `subscribeOn(blocking)` 到虚拟线程。改路径时别破坏这一点。
 - **SSE 流式**：查询结果与作业跟踪都是 `Flux` 推送（`meta` → `rows` → `done`）；客户端断开时服务端 `stmt.cancel()` / 停日志游标，别“白算”。
 - **批作业经子进程**：`JobExecutor`（`LocalProcessJobExecutor` / `KubernetesJobExecutor`）默认 `command-template = bin/dev-batch.sh --job {job}`（`java -cp` 跑 spark-batch）；**本模块不养 SparkSession**。
-- **权限**：`/api/**` 走 HTTP Basic（`viewer/viewer` 只读，`operator/operator` + actuator）；静态页面、`/actuator/health`、`/actuator/info` 公开。
+- **权限**：`/api/**` 走 HTTP Basic（`viewer/viewer` 只读，`operator/operator` + 批作业，`auditor/auditor` 审计原文）；静态页面、`/actuator/health`、`/actuator/info`、`/api/auth/session|login` 公开。服务无会话，控制台登录页把凭据放进每个请求头（SSE 走 fetch 流，EventSource 带不了头）；过滤器只在「没带凭据」时发挑战头，别让原生弹框盖掉登录页。
 - **状态库语义**：`lake_batch.batch_runs`（共享）+ `ops.batch_runs`（归档）合并读；`history.status` 是兜底，不要编造状态。
 - **OpenAPI/Swagger**：`/v3/api-docs` 公开；网关接管文档时设 `springdoc.api-docs.enabled=false`。
 - **审计与原文保险箱**：`AuditService` 只记身份/动作/结果 + SQL 指纹（`logs/audit.log` + 内存环形缓冲）；原文保险箱 `AuditTextStore` 可选开启，写 Postgres `lake_audit.query_text`（AES-256），`SqlRedactor` 在写入前对 SQL 字面量脱敏。

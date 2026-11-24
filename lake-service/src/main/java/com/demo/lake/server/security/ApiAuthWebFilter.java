@@ -32,7 +32,7 @@ import java.util.List;
  * 生产环境把 {@code lake.security.mode} 设为 external：网关完成认证后注入身份头，
  * 服务只认带共享密钥的请求；没配密钥时一律拒绝（fail closed）。见 docs/SECURITY.md。</p>
  *
- * <p>角色是接口级的：QUERY 能查表和跑 SQL，BATCH 才能触发作业和看 actuator 指标；
+ * <p>角色是接口级的：QUERY 能查表和跑 SQL，审计事件列表 QUERY / AUDITOR 都能看，BATCH 才能触发作业和看 actuator 指标；
  * 静态页面与健康检查公开，否则 K8s 探针和浏览器入口都会 401。</p>
  */
 @Component
@@ -42,10 +42,10 @@ import java.util.List;
 public class ApiAuthWebFilter implements WebFilter {
 
     /** external 模式：只有带正确共享密钥的请求，身份头才会被信任 */
-    static final String HEADER_SHARED_SECRET = "X-Auth-Shared-Secret";
-    static final String HEADER_FORWARDED_USER = "X-Forwarded-User";
-    static final String HEADER_OAUTH_USER = "X-Auth-Request-User";
-    static final String HEADER_FORWARDED_ROLES = "X-Forwarded-Roles";
+    public static final String HEADER_SHARED_SECRET = "X-Auth-Shared-Secret";
+    public static final String HEADER_FORWARDED_USER = "X-Forwarded-User";
+    public static final String HEADER_OAUTH_USER = "X-Auth-Request-User";
+    public static final String HEADER_FORWARDED_ROLES = "X-Forwarded-Roles";
 
     private final LakeProperties props;
     private final AuditService audit;
@@ -59,7 +59,7 @@ public class ApiAuthWebFilter implements WebFilter {
         }
 
         String path = exchange.getRequest().getPath().value();
-        String role = requiredRole(path, exchange.getRequest().getMethod());
+        List<String> required = requiredRoles(path, exchange.getRequest().getMethod());
         String user;
         List<String> roles;
 
@@ -100,11 +100,12 @@ public class ApiAuthWebFilter implements WebFilter {
             roles = account.getRoles();
         }
 
-        if (role != null && !roles.contains(role)) {
-            log.debug("权限不足: path={} user={} need={}", path, user, role);
+        if (!required.isEmpty() && required.stream().noneMatch(roles::contains)) {
+            String need = String.join("/", required);
+            log.debug("权限不足: path={} user={} need={}", path, user, need);
             audit.record("auth.denied", user,
-                    java.util.Map.of("path", path, "required_role", role));
-            return deny(exchange, HttpStatus.FORBIDDEN, "账号没有 " + role + " 权限",
+                    java.util.Map.of("path", path, "required_role", need));
+            return deny(exchange, HttpStatus.FORBIDDEN, "账号没有 " + String.join(" 或 ", required) + " 权限",
                     "请联系管理员分配角色", "insufficient-role");
         }
 
@@ -113,9 +114,15 @@ public class ApiAuthWebFilter implements WebFilter {
         return chain.filter(exchange.mutate().principal(Mono.just(principal)).build());
     }
 
-    /** 静态页面、健康检查、错误页与接口文档公开；其余一律要认证 */
+    /**
+     * 静态页面、健康检查、错误页、接口文档与登录入口公开；其余一律要认证。
+     *
+     * <p>/api/auth/session 与 /api/auth/login 自己解析 Basic 头或请求体：
+     * 它们不能先被过滤器challenge，否则登录页一加载就会弹浏览器原生登录框。</p>
+     */
     static boolean isPublic(String path) {
-        return path.equals("/") || path.equals("/index.html") || path.equals("/favicon.ico")
+        return path.equals("/api/auth/session") || path.equals("/api/auth/login")
+                || path.equals("/") || path.equals("/index.html") || path.equals("/favicon.ico")
                 || path.equals("/error")
                 || path.equals("/ui") || path.startsWith("/ui/")
                 || path.equals("/actuator/health") || path.startsWith("/actuator/health/")
@@ -127,33 +134,41 @@ public class ApiAuthWebFilter implements WebFilter {
                 || path.equals("/v3/api-docs") || path.startsWith("/v3/api-docs/");
     }
 
-    /** null 表示「认证通过即可」，不需要额外角色 */
-    static String requiredRole(String path, HttpMethod method) {
+    /**
+     * 路径 → 允许的角色集合，命中任一即可；空集合表示认证通过即可。
+     *
+     * <p>审计事件列表同时接受 QUERY 与 AUDITOR：列表只有身份/动作/结果 + SQL 指纹，
+     * 不含原文；若只放 QUERY，auditor 能读原文却看不到列表，只能靠别人贴 event_id。</p>
+     */
+    static List<String> requiredRoles(String path, HttpMethod method) {
         if (path.startsWith("/api/query") || path.startsWith("/api/tables")
                 || path.startsWith("/api/semantics") || path.equals("/api/config")) {
-            return "QUERY";
+            return List.of("QUERY");
         }
         if (path.startsWith("/api/batch")) {
             // 看列表/详情只读，触发作业才是特权操作
-            return HttpMethod.GET.equals(method) ? "QUERY" : "BATCH";
+            return List.of(HttpMethod.GET.equals(method) ? "QUERY" : "BATCH");
         }
-        // 原文保险箱是特权数据：普通 BATCH 角色也不够，必须 AUDITOR
+        // 原文保险箱是特权数据：普通 BATCH / QUERY 角色也不够，必须 AUDITOR
         if (path.startsWith("/api/audit/sql")) {
-            return "AUDITOR";
+            return List.of("AUDITOR");
         }
-        if (path.startsWith("/api/audit") || path.startsWith("/actuator/")) {
-            return "BATCH";
+        if (path.startsWith("/api/audit")) {
+            return List.of("QUERY", "AUDITOR");
         }
-        return null;
+        if (path.startsWith("/actuator/")) {
+            return List.of("BATCH");
+        }
+        return List.of();
     }
 
     /** external 模式才信任网关头；mode 拼错时按 local 处理，避免误把身份头当凭据 */
-    static boolean isExternal(LakeProperties.Security conf) {
+    public static boolean isExternal(LakeProperties.Security conf) {
         return "external".equalsIgnoreCase(conf.getMode());
     }
 
     /** 允许多个身份头别名（oauth2-proxy 用 X-Auth-Request-User），取第一个非空的 */
-    static String firstNonBlank(String... values) {
+    public static String firstNonBlank(String... values) {
         if (values == null) {
             return null;
         }
@@ -166,7 +181,7 @@ public class ApiAuthWebFilter implements WebFilter {
     }
 
     /** X-Forwarded-Roles：逗号分隔，去空白与重复；空值就是没有任何角色 */
-    static List<String> parseForwardedRoles(String value) {
+    public static List<String> parseForwardedRoles(String value) {
         List<String> roles = new ArrayList<>();
         if (value == null || value.isBlank()) {
             return roles;
@@ -181,7 +196,7 @@ public class ApiAuthWebFilter implements WebFilter {
     }
 
     /** Basic 凭据解析；大小写不敏感 scheme，用户名里允许冒号（只按第一个冒号切） */
-    static Credentials parseBasic(String header) {
+    public static Credentials parseBasic(String header) {
         if (header == null || !header.regionMatches(true, 0, "Basic ", 0, 6)) {
             return null;
         }
@@ -200,7 +215,7 @@ public class ApiAuthWebFilter implements WebFilter {
     }
 
     /** {noop} 前缀表示明文；生产应接 IdP / bcrypt，这里只防「密码写反了」这种低级错误 */
-    static boolean passwordMatches(String configured, String given) {
+    public static boolean passwordMatches(String configured, String given) {
         if (configured == null) {
             return false;
         }
@@ -209,7 +224,7 @@ public class ApiAuthWebFilter implements WebFilter {
     }
 
     /** 定长比较，避免用 equals 泄露前缀信息（demo 里也顺手做对） */
-    static boolean constantEquals(String a, String b) {
+    public static boolean constantEquals(String a, String b) {
         if (a == null || b == null) {
             return false;
         }
@@ -224,8 +239,9 @@ public class ApiAuthWebFilter implements WebFilter {
         }
         ServerHttpResponse response = exchange.getResponse();
         response.setStatusCode(status);
-        if (status == HttpStatus.UNAUTHORIZED) {
-            // 浏览器收到这个头会弹原生登录框，并自动为后续同源请求带上凭据
+        if (status == HttpStatus.UNAUTHORIZED && "missing-credentials".equals(reason)) {
+            // 只在「根本没带凭据」时挑战：浏览器据此弹原生登录框并缓存凭据。
+            // 已经带了 Basic 头但口令错/过期时再挑战只会反复弹框，控制台自己的登录页会接手。
             response.getHeaders().set(HttpHeaders.WWW_AUTHENTICATE,
                     "Basic realm=\"" + props.getSecurity().getRealm() + "\", charset=\"UTF-8\"");
         }
@@ -264,6 +280,6 @@ public class ApiAuthWebFilter implements WebFilter {
         return sb.append('"').toString();
     }
 
-    record Credentials(String username, String password) {
+    public record Credentials(String username, String password) {
     }
 }
