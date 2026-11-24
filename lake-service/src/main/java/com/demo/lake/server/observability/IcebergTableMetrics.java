@@ -33,6 +33,13 @@ import java.util.regex.Pattern;
 public class IcebergTableMetrics {
 
     private static final Pattern SAFE_TABLE = Pattern.compile("[A-Za-z0-9_]+");
+    /** 元数据表名要带 $ 且整个表名要加双引号，见 README 的 Trino 注意事项 */
+    private static final String METADATA_TABLE = "%s.%s.\"%s$%s\"";
+    private static final String FILES_SQL = """
+            SELECT count(*) AS files, coalesce(avg(file_size_in_bytes), 0) AS avg_size,
+            coalesce(sum(file_size_in_bytes), 0) AS total_size FROM %s
+            """;
+    private static final String SNAPSHOTS_SQL = "SELECT count(*) FROM %s";
 
     private final MeterRegistry registry;
     private final PlatformConfig cfg;
@@ -128,17 +135,15 @@ public class IcebergTableMetrics {
 
     /** 元数据表要带 $ 且整个表名要加双引号，见 README 的 Trino 注意事项 */
     static String metadataTable(String catalog, String schema, String table, String metadata) {
-        return catalog + "." + schema + ".\"" + table + "$" + metadata + "\"";
+        return String.format(METADATA_TABLE, catalog, schema, table, metadata);
     }
 
     static String filesSql(String catalog, String schema, String table) {
-        return "SELECT count(*) AS files, coalesce(avg(file_size_in_bytes), 0) AS avg_size, "
-                + "coalesce(sum(file_size_in_bytes), 0) AS total_size FROM "
-                + metadataTable(catalog, schema, table, "files");
+        return String.format(FILES_SQL, metadataTable(catalog, schema, table, "files"));
     }
 
     static String snapshotsSql(String catalog, String schema, String table) {
-        return "SELECT count(*) FROM " + metadataTable(catalog, schema, table, "snapshots");
+        return String.format(SNAPSHOTS_SQL, metadataTable(catalog, schema, table, "snapshots"));
     }
 
     /** 每个表四个 Atomic 容器，注册一次 gauge，后续只改值 */

@@ -25,6 +25,23 @@ public class MaintainJob implements LakeJob {
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    private static final String REWRITE_DATA_FILES =
+            "CALL %s.system.rewrite_data_files(table => '%s.%s', "
+            + "options => map('min-input-files', '2', 'target-file-size-bytes', '33554432'))";
+    private static final String REWRITE_MANIFESTS = "CALL %s.system.rewrite_manifests(table => '%s.%s')";
+    private static final String EXPIRE_SNAPSHOTS =
+            "CALL %s.system.expire_snapshots(table => '%s.%s', "
+            + "older_than => TIMESTAMP '%s', retain_last => %d)";
+    private static final String REMOVE_ORPHAN_FILES =
+            "CALL %s.system.remove_orphan_files(table => '%s.%s', "
+            + "older_than => TIMESTAMP '%s')";
+    /** ? 绑定表名，%s 是元数据表全名 */
+    private static final String FILE_STATS =
+            "SELECT ? AS tbl, count(*) AS file_cnt, "
+            + "sum(file_size_in_bytes) AS total_bytes, "
+            + "cast(avg(file_size_in_bytes) AS bigint) AS avg_file_bytes "
+            + "FROM %s";
+
     @Override
     public String name() {
         return LakeJobs.MAINTAIN;
@@ -44,9 +61,7 @@ public class MaintainJob implements LakeJob {
 
             // 1) 合并小文件：min-input-files 调小，让本地小数据集也能看到效果
             //    注意：如果每个分区只有 1 个文件，没有"小文件问题"可治，返回 0 是正常的
-            Dataset<Row> rewriteResult = spark.sql("CALL " + catalog + ".system.rewrite_data_files("
-                    + "table => '" + db + "." + table + "', "
-                    + "options => map('min-input-files', '2', 'target-file-size-bytes', '33554432'))");
+            Dataset<Row> rewriteResult = spark.sql(String.format(REWRITE_DATA_FILES, catalog, db, table));
             rewriteResult.show(false);
             // 存储过程返回的计数列类型是 Integer，别直接 getLong
             Object rewrittenCount = rewriteResult.select("rewritten_data_files_count").head().get(0);
@@ -57,24 +72,18 @@ public class MaintainJob implements LakeJob {
             }
 
             // 2) 重写 manifest，控制元数据规模
-            spark.sql("CALL " + catalog + ".system.rewrite_manifests(table => '" + db + "." + table + "')")
-                    .show(false);
+            spark.sql(String.format(REWRITE_MANIFESTS, catalog, db, table)).show(false);
 
             // 3) 清理过期快照（保留最近 retainLast 个）
             String olderThan = LocalDateTime.now(ZoneOffset.UTC).format(TS);
-            spark.sql("CALL " + catalog + ".system.expire_snapshots("
-                    + "table => '" + db + "." + table + "', "
-                    + "older_than => TIMESTAMP '" + olderThan + "', "
-                    + "retain_last => " + retainLast + ")")
+            spark.sql(String.format(EXPIRE_SNAPSHOTS, catalog, db, table, olderThan, retainLast))
                     .show(false);
 
             // 4) 清孤儿文件：只删「没有被任何有效快照引用」且早于阈值的数据文件。
             //    写入失败留下的临时文件、过期快照遗留文件都靠它收尾（默认 7 天）。
             String orphanBefore = LocalDateTime.now(ZoneOffset.UTC)
                     .minusHours(orphanRetentionHours).format(TS);
-            spark.sql("CALL " + catalog + ".system.remove_orphan_files("
-                    + "table => '" + db + "." + table + "', "
-                    + "older_than => TIMESTAMP '" + orphanBefore + "')")
+            spark.sql(String.format(REMOVE_ORPHAN_FILES, catalog, db, table, orphanBefore))
                     .show(false);
 
             printFileStats(spark, TableRef.of(cfg, table));
@@ -82,9 +91,6 @@ public class MaintainJob implements LakeJob {
     }
 
     private void printFileStats(SparkSession spark, TableRef t) {
-        spark.sql("SELECT ? AS tbl, count(*) AS file_cnt, "
-                + "sum(file_size_in_bytes) AS total_bytes, "
-                + "cast(avg(file_size_in_bytes) AS bigint) AS avg_file_bytes "
-                + "FROM " + t.metadata("files"), new Object[]{t.table()}).show(false);
+        spark.sql(String.format(FILE_STATS, t.metadata("files")), new Object[]{t.table()}).show(false);
     }
 }

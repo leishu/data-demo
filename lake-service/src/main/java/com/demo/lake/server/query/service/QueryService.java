@@ -50,6 +50,17 @@ public class QueryService {
     /** SSE 每批发多少行：太小帧数爆炸，太大首屏等得久 */
     private static final int STREAM_BATCH_ROWS = 200;
 
+    /** catalog 出现两次（tables / columns），schema 走 ? 绑定 */
+    private static final String LIST_TABLES_SQL = """
+            SELECT t.table_name, t.table_type, c.column_name, c.data_type, c.comment
+            FROM %s.information_schema.tables t
+            LEFT JOIN %s.information_schema.columns c
+            ON c.table_schema = t.table_schema AND c.table_name = t.table_name
+            WHERE t.table_schema = ?
+            ORDER BY t.table_name, c.ordinal_position
+            """;
+    private static final String SAMPLE_SQL = "SELECT * FROM %s.%s.%s LIMIT %d";
+
     @Qualifier("trinoJdbc")
     private final JdbcTemplate jdbc;
     private final LakeProperties props;
@@ -232,12 +243,7 @@ public class QueryService {
      */
     public Mono<List<TableInfo>> listTables() {
         return Mono.fromCallable(() -> {
-            String sql = "SELECT t.table_name, t.table_type, c.column_name, c.data_type, c.comment"
-                    + " FROM " + catalog() + ".information_schema.tables t"
-                    + " LEFT JOIN " + catalog() + ".information_schema.columns c"
-                    + " ON c.table_schema = t.table_schema AND c.table_name = t.table_name"
-                    + " WHERE t.table_schema = ?"
-                    + " ORDER BY t.table_name, c.ordinal_position";
+            String sql = String.format(LIST_TABLES_SQL, catalog(), catalog());
             QueryResult rs = execute(sql, null, database());
             // 表名 → 表信息；left join 下没有列的表只出现一行，column_name 为 null
             Map<String, TableInfo> byTable = new LinkedHashMap<>();
@@ -255,7 +261,7 @@ public class QueryService {
     public Mono<QueryResult> sample(String table, int limit) {
         return Mono.fromCallable(() -> {
             int n = Math.max(1, Math.min(limit, props.getQuery().getMaxRows()));
-            String sql = "SELECT * FROM " + catalog() + "." + database() + "." + identifier(table) + " LIMIT " + n;
+            String sql = String.format(SAMPLE_SQL, catalog(), database(), identifier(table), n);
             return execute(sql, n);
         }).subscribeOn(blocking);
     }

@@ -19,6 +19,9 @@ import java.util.List;
  */
 public class EvolveJob implements LakeJob {
 
+    private static final String CHANNEL_STATS_SQL =
+            "SELECT channel, COUNT(*) AS cnt FROM %s GROUP BY channel ORDER BY cnt DESC";
+
     @Override
     public String name() {
         return LakeJobs.EVOLVE;
@@ -39,8 +42,7 @@ public class EvolveJob implements LakeJob {
         System.out.println("[evolve] 回填 channel（CoW 会重写受影响的数据文件）");
         spark.sql(Migrations.backfillSilverChannel(cfg));
 
-        spark.sql("SELECT channel, COUNT(*) AS cnt FROM " + silver.fqn() + " GROUP BY channel ORDER BY cnt DESC")
-                .show(false);
+        spark.sql(String.format(CHANNEL_STATS_SQL, silver.fqn())).show(false);
         System.out.println("[evolve] 当前 schema：");
         spark.table(silver.fqn()).printSchema();
     }

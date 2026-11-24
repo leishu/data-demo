@@ -40,18 +40,59 @@ public class JdbcRunStateStore implements RunStateStore {
     private static final String S_QUEUED = BatchRunStatus.QUEUED.name();
     private static final String S_FAILED = BatchRunStatus.FAILED.name();
 
-    private static final String SELECT = "SELECT run_id, job, command, status, exit_code, started_ms,"
-            + " finished_ms, duration_ms, log_file, message FROM " + TABLE;
+    private static final String SELECT = """
+            SELECT run_id, job, command, status, exit_code, started_ms,
+            finished_ms, duration_ms, log_file, message FROM %s
+            """.formatted(TABLE);
 
-    private static final String INSERT_RUN = "INSERT INTO " + TABLE + " (run_id, job, command, status, exit_code,"
-            + " started_ms, finished_ms, duration_ms, log_file, message, owner, heartbeat_ms, updated_ms)"
-            + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)";
+    private static final String INSERT_RUN = """
+            INSERT INTO %s (run_id, job, command, status, exit_code,
+            started_ms, finished_ms, duration_ms, log_file, message, owner, heartbeat_ms, updated_ms)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """.formatted(TABLE);
 
     // insert 各列的类型：null 值按列类型 setNull（默认推断会丢失列类型，跨 H2/Postgres 不稳）
     private static final int[] INSERT_RUN_TYPES = new int[]{
             Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.INTEGER,
             Types.BIGINT, Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.VARCHAR,
             Types.VARCHAR, Types.BIGINT, Types.BIGINT};
+
+    private static final String FIND_COLUMN = """
+            SELECT 1 FROM information_schema.columns
+            WHERE LOWER(table_schema)='lake_batch'
+            AND LOWER(table_name)='batch_runs' AND LOWER(column_name)=?
+            """;
+    private static final String ADD_COLUMN = "ALTER TABLE " + TABLE + " ADD COLUMN %s";
+    private static final String FIND_IDEMPOTENCY = "SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?";
+    private static final String INSERT_IDEMPOTENCY = """
+            INSERT INTO lake_batch.idempotency (idem_key, run_id)
+            VALUES (?,?)
+            """;
+    private static final String SELECT_BY_ID = SELECT + " WHERE run_id=?";
+    private static final String SELECT_RECENT = SELECT + " ORDER BY started_ms DESC LIMIT ?";
+    private static final String SELECT_STALE = SELECT + " WHERE status=? AND heartbeat_ms < ? ORDER BY started_ms";
+    private static final String FINISH_RUN = """
+            UPDATE %s SET status=?, exit_code=?, finished_ms=?,
+            duration_ms=?, message=?, updated_ms=? WHERE run_id=?
+            """.formatted(TABLE);
+    private static final String HEARTBEAT = """
+            UPDATE %s SET heartbeat_ms=?, updated_ms=?
+            WHERE run_id=? AND status=?
+            """.formatted(TABLE);
+    private static final String MARK_LOST = """
+            UPDATE %s SET status=?, exit_code=1, finished_ms=?,
+            duration_ms=? - started_ms, message=?, updated_ms=? WHERE run_id=? AND status=?
+            """.formatted(TABLE);
+    private static final String COUNT_BY_STATUS = "SELECT COUNT(*) FROM " + TABLE + " WHERE status=?";
+    private static final String SELECT_CLAIM_CANDIDATE = """
+            SELECT run_id FROM %s
+            WHERE status=? ORDER BY started_ms LIMIT 1
+            """.formatted(TABLE);
+    private static final String CLAIM_RUN = """
+            UPDATE %s SET status=?, owner=?, heartbeat_ms=?, updated_ms=?
+            WHERE run_id=? AND status=?
+            """.formatted(TABLE);
+    private static final String SET_HANDLE = "UPDATE " + TABLE + " SET handle=?, updated_ms=? WHERE run_id=?";
 
     @Qualifier("stateJdbc")
     private final JdbcTemplate jdbc;
@@ -76,13 +117,9 @@ public class JdbcRunStateStore implements RunStateStore {
     }
 
     private void ensureColumn(String name, String ddl) {
-        List<Long> found = jdbc.query(
-                "SELECT 1 FROM information_schema.columns WHERE LOWER(table_schema)='lake_batch'"
-                        + " AND LOWER(table_name)='batch_runs' AND LOWER(column_name)=?",
-                (rs, n) -> rs.getLong(1),
-                new Object[]{name});
+        List<Long> found = jdbc.query(FIND_COLUMN, (rs, n) -> rs.getLong(1), new Object[]{name});
         if (found.isEmpty()) {
-            jdbc.execute("ALTER TABLE " + TABLE + " ADD COLUMN " + ddl);
+            jdbc.execute(String.format(ADD_COLUMN, ddl));
         }
     }
 
@@ -97,14 +134,14 @@ public class JdbcRunStateStore implements RunStateStore {
             // 全局提交锁：同一时刻只有一个请求在做「查键 + 插记录 + 登记键」
             DbLocks.lock(conn, DbLocks.SUBMIT);
             List<String> existing = jdbc.query(
-                    "SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?",
+                    FIND_IDEMPOTENCY,
                     (rs, n) -> rs.getString(1),
                     new Object[]{key});
             if (!existing.isEmpty()) {
                 return existing.getFirst();
             }
             jdbc.update(INSERT_RUN, bindRun(run, owner), INSERT_RUN_TYPES);
-            jdbc.update("INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)", key, run.id());
+            jdbc.update(INSERT_IDEMPOTENCY, key, run.id());
             return run.id();
         }));
     }
@@ -130,8 +167,7 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public void finish(BatchRun run) {
-        jdbc.update("UPDATE " + TABLE + " SET status=?, exit_code=?, finished_ms=?, duration_ms=?,"
-                        + " message=?, updated_ms=? WHERE run_id=?",
+        jdbc.update(FINISH_RUN,
                 new Object[]{run.status() == null ? null : run.status().name(), run.exitCode(),
                         run.finishedAt() == null ? System.currentTimeMillis() : run.finishedAt().toEpochMilli(),
                         run.durationMs(), run.message(), System.currentTimeMillis(), run.id()},
@@ -141,7 +177,7 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public Optional<BatchRun> find(String id) {
-        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?",
+        List<BatchRun> rows = jdbc.query(SELECT_BY_ID,
                 (rs, n) -> map(rs),
                 new Object[]{id});
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
@@ -149,36 +185,35 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public List<BatchRun> recent(int limit) {
-        return jdbc.query(SELECT + " ORDER BY started_ms DESC LIMIT ?",
+        return jdbc.query(SELECT_RECENT,
                 (rs, n) -> map(rs),
                 new Object[]{limit});
     }
 
     @Override
     public void heartbeat(String runId, Instant now) {
-        jdbc.update("UPDATE " + TABLE + " SET heartbeat_ms=?, updated_ms=? WHERE run_id=? AND status=?",
+        jdbc.update(HEARTBEAT,
                 new Object[]{now.toEpochMilli(), now.toEpochMilli(), runId, S_RUNNING},
                 new int[]{Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.VARCHAR});
     }
 
     @Override
     public List<BatchRun> staleRunning(Instant before) {
-        return jdbc.query(SELECT + " WHERE status=? AND heartbeat_ms < ? ORDER BY started_ms",
+        return jdbc.query(SELECT_STALE,
                 (rs, n) -> map(rs),
                 new Object[]{S_RUNNING, before.toEpochMilli()});
     }
 
     @Override
     public void markLost(String id, String message, Instant now) {
-        jdbc.update("UPDATE " + TABLE + " SET status=?, exit_code=1, finished_ms=?,"
-                        + " duration_ms=? - started_ms, message=?, updated_ms=? WHERE run_id=? AND status=?",
+        jdbc.update(MARK_LOST,
                 new Object[]{S_FAILED, now.toEpochMilli(), now.toEpochMilli(), message, now.toEpochMilli(), id, S_RUNNING},
                 new int[]{Types.VARCHAR, Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.BIGINT, Types.VARCHAR, Types.VARCHAR});
     }
 
     @Override
     public Optional<BatchRun> findByIdempotencyKey(String key) {
-        List<String> ids = jdbc.query("SELECT run_id FROM lake_batch.idempotency WHERE idem_key=?",
+        List<String> ids = jdbc.query(FIND_IDEMPOTENCY,
                 (rs, n) -> rs.getString(1),
                 new Object[]{key});
         return ids.isEmpty() ? Optional.empty() : find(ids.getFirst());
@@ -190,7 +225,7 @@ public class JdbcRunStateStore implements RunStateStore {
             return;
         }
         try {
-            jdbc.update("INSERT INTO lake_batch.idempotency (idem_key, run_id) VALUES (?,?)", key, runId);
+            jdbc.update(INSERT_IDEMPOTENCY, key, runId);
         } catch (RuntimeException e) {
             // 并发重复提交：别人先插了，按已存在的记录处理
             log.debug("幂等键已存在 {}: {}", key, e.getMessage());
@@ -208,7 +243,7 @@ public class JdbcRunStateStore implements RunStateStore {
     }
 
     private int countByStatus(BatchRunStatus status) {
-        return jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status=?", Long.class, status.name()).intValue();
+        return jdbc.queryForObject(COUNT_BY_STATUS, Long.class, status.name()).intValue();
     }
 
     @Override
@@ -222,7 +257,7 @@ public class JdbcRunStateStore implements RunStateStore {
             // 名额检查 + 认领在同一把全局行锁内完成，跨实例也不会一起超员
             return jdbc.execute((ConnectionCallback<BatchRun>) conn -> {
                 DbLocks.lock(conn, DbLocks.DISPATCH);
-                if (jdbc.queryForObject("SELECT COUNT(*) FROM " + TABLE + " WHERE status=?", Long.class, S_RUNNING)
+                if (jdbc.queryForObject(COUNT_BY_STATUS, Long.class, S_RUNNING)
                         >= maxConcurrent) {
                     status.setRollbackOnly();
                     return null;
@@ -233,7 +268,7 @@ public class JdbcRunStateStore implements RunStateStore {
     }
 
     private BatchRun claimOnConnection(String owner) {
-        List<String> ids = jdbc.query("SELECT run_id FROM " + TABLE + " WHERE status=? ORDER BY started_ms LIMIT 1",
+        List<String> ids = jdbc.query(SELECT_CLAIM_CANDIDATE,
                 (rs, n) -> rs.getString(1),
                 new Object[]{S_QUEUED});
         if (ids.isEmpty()) {
@@ -241,16 +276,14 @@ public class JdbcRunStateStore implements RunStateStore {
         }
         String id = ids.getFirst();
         long now = System.currentTimeMillis();
-        int changed = jdbc.update("UPDATE " + TABLE
-                + " SET status=?, owner=?, heartbeat_ms=?, updated_ms=?"
-                + " WHERE run_id=? AND status=?",
+        int changed = jdbc.update(CLAIM_RUN,
                 new Object[]{S_RUNNING, owner, now, now, id, S_QUEUED},
                 new int[]{Types.VARCHAR, Types.VARCHAR, Types.BIGINT, Types.BIGINT, Types.VARCHAR, Types.VARCHAR});
         // 多实例可能同时看到同一个候选；只有抢到 update 的那个实例真正执行
         if (changed == 0) {
             return null;
         }
-        List<BatchRun> rows = jdbc.query(SELECT + " WHERE run_id=?",
+        List<BatchRun> rows = jdbc.query(SELECT_BY_ID,
                 (rs, n) -> map(rs),
                 new Object[]{id});
         return rows.isEmpty() ? null : rows.getFirst();
@@ -258,7 +291,7 @@ public class JdbcRunStateStore implements RunStateStore {
 
     @Override
     public void setHandle(String runId, String handle) {
-        jdbc.update("UPDATE " + TABLE + " SET handle=?, updated_ms=? WHERE run_id=?",
+        jdbc.update(SET_HANDLE,
                 new Object[]{handle, System.currentTimeMillis(), runId},
                 new int[]{Types.VARCHAR, Types.BIGINT, Types.VARCHAR});
     }

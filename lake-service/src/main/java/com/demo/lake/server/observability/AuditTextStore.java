@@ -40,6 +40,17 @@ public class AuditTextStore {
     private static final int NONCE_BYTES = 12;
     private static final SecureRandom RANDOM = new SecureRandom();
 
+    private static final String INSERT_TEXT = """
+            INSERT INTO %s (event_id, actor, client_ip, at_ms, expires_at,
+            legal_hold, key_id, redacted, nonce, payload) VALUES (?,?,?,?,?,?,?,?,?,?)
+            """.formatted(TABLE);
+    private static final String FIND_TEXT = """
+            SELECT actor, client_ip, at_ms, expires_at, legal_hold,
+            key_id, redacted, nonce, payload FROM %s WHERE event_id=?
+            """.formatted(TABLE);
+    private static final String SET_LEGAL_HOLD = "UPDATE " + TABLE + " SET legal_hold=? WHERE event_id=?";
+    private static final String PURGE_TEXT = "DELETE FROM " + TABLE + " WHERE expires_at<? AND NOT legal_hold";
+
     private final LakeProperties props;
     private final JdbcTemplate jdbc;
     private final MeterRegistry registry;
@@ -100,8 +111,7 @@ public class AuditTextStore {
                     keys.get(props.getAudit().getKeyId()));
             long now = System.currentTimeMillis();
             long expires = now + Math.max(1, props.getAudit().getRetentionDays()) * 86_400_000L;
-            jdbc.update("INSERT INTO " + TABLE + " (event_id, actor, client_ip, at_ms, expires_at,"
-                            + " legal_hold, key_id, redacted, nonce, payload) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            jdbc.update(INSERT_TEXT,
                     new Object[]{eventId, actor == null ? "-" : actor, clientIp, now, expires,
                             false, props.getAudit().getKeyId(), redacted, nonce, payload},
                     new int[]{Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.BIGINT, Types.BIGINT,
@@ -117,8 +127,7 @@ public class AuditTextStore {
             return Optional.empty();
         }
         try {
-            return jdbc.query("SELECT actor, client_ip, at_ms, expires_at, legal_hold, key_id, redacted, nonce, payload"
-                            + " FROM " + TABLE + " WHERE event_id=?",
+            return jdbc.query(FIND_TEXT,
                     rs -> {
                         if (!rs.next()) {
                             return Optional.empty();
@@ -160,7 +169,7 @@ public class AuditTextStore {
             return false;
         }
         try {
-            return jdbc.update("UPDATE " + TABLE + " SET legal_hold=? WHERE event_id=?",
+            return jdbc.update(SET_LEGAL_HOLD,
                     new Object[]{hold, eventId}, new int[]{Types.BOOLEAN, Types.VARCHAR}) > 0;
         } catch (DataAccessException e) {
             log.warn("设置法律保全失败 event={}: {}", eventId, e.getMessage());
@@ -174,7 +183,7 @@ public class AuditTextStore {
             return 0;
         }
         try {
-            return jdbc.update("DELETE FROM " + TABLE + " WHERE expires_at<? AND NOT legal_hold", now.toEpochMilli());
+            return jdbc.update(PURGE_TEXT, now.toEpochMilli());
         } catch (DataAccessException e) {
             log.warn("清理过期查询原文失败: {}", e.getMessage());
             return 0;

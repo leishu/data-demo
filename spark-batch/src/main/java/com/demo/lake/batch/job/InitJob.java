@@ -17,6 +17,8 @@ import java.util.List;
 /** 建库建表：ODS / DWD / ADS 三层。幂等，可重复执行 */
 public class InitJob implements LakeJob {
 
+    private static final String SHOW_TABLES = "SHOW TABLES IN %s.%s";
+
     @Override
     public String name() {
         return LakeJobs.INIT;
@@ -35,7 +37,7 @@ public class InitJob implements LakeJob {
         prepareBatchRuns(spark, cfg);
 
         System.out.println("[init] 当前库表：");
-        spark.sql("SHOW TABLES IN " + cfg.catalogName() + "." + cfg.database()).show(false);
+        spark.sql(String.format(SHOW_TABLES, cfg.catalogName(), cfg.database())).show(false);
     }
 
     /**

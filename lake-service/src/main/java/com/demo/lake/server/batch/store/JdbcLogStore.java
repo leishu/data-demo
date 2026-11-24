@@ -30,6 +30,19 @@ public class JdbcLogStore implements LogStore {
     private static final String TABLE = StateDbTables.BATCH_LOG_LINES;
     private static final int MAX_LINES = 2000;
 
+    private static final String MAX_SEQ = "SELECT COALESCE(MAX(seq), 0) FROM " + TABLE + " WHERE run_id=?";
+    private static final String INSERT_LINES = "INSERT INTO " + TABLE + " (run_id, seq, line, at_ms) VALUES (?,?,?,?)";
+    private static final String TRIM_LINES = "DELETE FROM " + TABLE + " WHERE run_id=? AND seq<=?";
+    private static final String TAIL_LINES = """
+            SELECT seq, line FROM (SELECT seq, line FROM %s
+            WHERE run_id=? ORDER BY seq DESC LIMIT ?) t ORDER BY seq ASC
+            """.formatted(TABLE);
+    private static final String SINCE_LINES = """
+            SELECT seq, line FROM %s
+            WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?
+            """.formatted(TABLE);
+    private static final String PURGE_LINES = "DELETE FROM " + TABLE + " WHERE at_ms<?";
+
     @Qualifier("stateJdbc")
     private final JdbcTemplate jdbc;
     @Qualifier("stateTx")
@@ -56,18 +69,17 @@ public class JdbcLogStore implements LogStore {
             tx.execute(status -> jdbc.execute((ConnectionCallback<Void>) conn -> {
                 // MAX(seq)+1 必须在锁内：同一 run 出现第二个写入者时，否则会主键冲突整批丢日志
                 DbLocks.lock(conn, DbLocks.LOG_APPEND);
-                long seq = jdbc.queryForObject(
-                        "SELECT COALESCE(MAX(seq), 0) FROM " + TABLE + " WHERE run_id=?", Long.class, runId);
+                long seq = jdbc.queryForObject(MAX_SEQ, Long.class, runId);
                 long now = System.currentTimeMillis();
                 List<Object[]> batch = new ArrayList<>(lines.size());
                 for (String line : lines) {
                     batch.add(new Object[]{runId, ++seq, truncate(line), now});
                 }
-                jdbc.batchUpdate("INSERT INTO " + TABLE + " (run_id, seq, line, at_ms) VALUES (?,?,?,?)", batch);
+                jdbc.batchUpdate(INSERT_LINES, batch);
                 // 只留尾部，避免一次长日志把状态库撑爆
                 long cutoff = seq - MAX_LINES;
                 if (cutoff > 0) {
-                    jdbc.update("DELETE FROM " + TABLE + " WHERE run_id=? AND seq<=?",
+                    jdbc.update(TRIM_LINES,
                             new Object[]{runId, cutoff}, new int[]{Types.VARCHAR, Types.BIGINT});
                 }
                 return null;
@@ -81,8 +93,7 @@ public class JdbcLogStore implements LogStore {
     @Override
     public List<LogLine> tail(String runId, int lines) {
         try {
-            return jdbc.query("SELECT seq, line FROM (SELECT seq, line FROM " + TABLE
-                            + " WHERE run_id=? ORDER BY seq DESC LIMIT ?) t ORDER BY seq ASC",
+            return jdbc.query(TAIL_LINES,
                     (rs, n) -> new LogLine(rs.getLong("seq"), rs.getString("line")),
                     runId, Math.max(1, lines));
         } catch (DataAccessException e) {
@@ -95,7 +106,7 @@ public class JdbcLogStore implements LogStore {
     @Override
     public List<LogLine> since(String runId, long afterSeq, int limit) {
         try {
-            return jdbc.query("SELECT seq, line FROM " + TABLE + " WHERE run_id=? AND seq>? ORDER BY seq LIMIT ?",
+            return jdbc.query(SINCE_LINES,
                     (rs, n) -> new LogLine(rs.getLong("seq"), rs.getString("line")),
                     runId, afterSeq, Math.max(1, limit));
         } catch (DataAccessException e) {
@@ -107,7 +118,7 @@ public class JdbcLogStore implements LogStore {
     @Override
     public int purge(Instant before) {
         try {
-            return jdbc.update("DELETE FROM " + TABLE + " WHERE at_ms<?", before.toEpochMilli());
+            return jdbc.update(PURGE_LINES, before.toEpochMilli());
         } catch (DataAccessException e) {
             log.warn("过期作业日志清理失败: {}", e.getMessage());
             return 0;

@@ -63,6 +63,19 @@ public class QueryQuotaService {
     private static final String EVENTS = StateDbTables.QUERY_EVENTS;
     /** 名额释放通知的频道；只有 Postgres 有 LISTEN/NOTIFY，H2 自动走兜底轮询 */
     private static final String NOTIFY_CHANNEL = "query_slot_free";
+
+    private static final String DELETE_OLD_EVENTS = "DELETE FROM " + EVENTS + " WHERE at_ms < ?";
+    private static final String DELETE_EXPIRED_LEASES = "DELETE FROM " + LEASES + " WHERE expires_ms <= ?";
+    private static final String COUNT_EVENTS = "SELECT COUNT(*) FROM " + EVENTS + " WHERE client=?";
+    private static final String COUNT_LEASES = "SELECT COUNT(*) FROM " + LEASES;
+    private static final String INSERT_LEASE = """
+            INSERT INTO %s (permit_id, client, acquired_ms, expires_ms)
+            VALUES (?,?,?,?)
+            """.formatted(LEASES);
+    private static final String INSERT_EVENT = "INSERT INTO " + EVENTS + " (client, at_ms) VALUES (?,?)";
+    private static final String DELETE_LEASE = "DELETE FROM " + LEASES + " WHERE permit_id=?";
+    private static final String NOTIFY_SQL = "SELECT pg_notify('" + NOTIFY_CHANNEL + "', '')";
+
     /** listener 在专用连接上读通知的间隔，与等待请求无关 */
     private static final long LISTEN_POLL_MS = 100;
     /** LISTEN 连接断开后的重连退避 */
@@ -154,9 +167,7 @@ public class QueryQuotaService {
     /** 专用长连接上循环 LISTEN；不在任何请求线程上做 IO */
     private void listenLoop(String url, String user, String password) {
         while (listenerRunning.get()) {
-            Connection conn = null;
-            try {
-                conn = DriverManager.getConnection(url, user, password);
+            try (Connection conn = DriverManager.getConnection(url, user, password)) {
                 PGConnection pg = conn.unwrap(PGConnection.class);
                 try (Statement st = conn.createStatement()) {
                     st.execute("LISTEN " + NOTIFY_CHANNEL);
@@ -184,13 +195,7 @@ public class QueryQuotaService {
             } finally {
                 listening = false;
                 listenConn = null;
-                if (conn != null) {
-                    try {
-                        conn.close();
-                    } catch (SQLException ignored) {
-                        // 连接已断，忽略
-                    }
-                }
+                // 连接已断，忽略
                 // 断线期间的通知可能丢失：让现有等待者重查一次，并改用轮询兜底
                 wakeAll();
             }
@@ -238,8 +243,8 @@ public class QueryQuotaService {
     }
 
     /** 切换唤醒方式：生产由 LISTEN 连接管理，单测用它模拟 Postgres 主路径 */
-    void setListening(boolean value) {
-        this.listening = value;
+    void setListening() {
+        this.listening = true;
     }
 
     /** 拿到名额才能执行查询；限流或超时都抛 {@link QueryQuotaExceededException} → 429 */
@@ -302,24 +307,23 @@ public class QueryQuotaService {
         return tx.execute(status -> jdbc.execute((ConnectionCallback<String>) conn -> {
             DbLocks.lock(conn, DbLocks.QUERY_QUOTA);
             long now = System.currentTimeMillis();
-            jdbc.update("DELETE FROM " + EVENTS + " WHERE at_ms < ?", now - WINDOW_MS);
+            jdbc.update(DELETE_OLD_EVENTS, now - WINDOW_MS);
             // 崩溃实例没来得及 close 的租约，到期后在这里顺手回收
-            jdbc.update("DELETE FROM " + LEASES + " WHERE expires_ms <= ?", now);
-            int usedInWindow = jdbc.queryForObject(
-                    "SELECT COUNT(*) FROM " + EVENTS + " WHERE client=?", Long.class, client).intValue();
+            jdbc.update(DELETE_EXPIRED_LEASES, now);
+            int usedInWindow = jdbc.queryForObject(COUNT_EVENTS, Long.class, client).intValue();
             if (usedInWindow >= maxRate) {
                 status.setRollbackOnly();
                 return "rate-limit";
             }
-            int leased = jdbc.queryForObject("SELECT COUNT(*) FROM " + LEASES, Long.class).intValue();
+            int leased = jdbc.queryForObject(COUNT_LEASES, Long.class).intValue();
             if (leased >= maxConcurrent) {
                 status.setRollbackOnly();
                 return "concurrency";
             }
-            jdbc.update("INSERT INTO " + LEASES + " (permit_id, client, acquired_ms, expires_ms) VALUES (?,?,?,?)",
+            jdbc.update(INSERT_LEASE,
                     new Object[]{permitId, client, now, now + leaseMs},
                     new int[]{Types.VARCHAR, Types.VARCHAR, Types.BIGINT, Types.BIGINT});
-            jdbc.update("INSERT INTO " + EVENTS + " (client, at_ms) VALUES (?,?)",
+            jdbc.update(INSERT_EVENT,
                     new Object[]{client, now}, new int[]{Types.VARCHAR, Types.BIGINT});
             return null;
         }));
@@ -329,7 +333,7 @@ public class QueryQuotaService {
         try {
             tx.execute(status -> jdbc.execute((ConnectionCallback<Void>) conn -> {
                 DbLocks.lock(conn, DbLocks.QUERY_QUOTA);
-                jdbc.update("DELETE FROM " + LEASES + " WHERE permit_id=?", permitId);
+                jdbc.update(DELETE_LEASE, permitId);
                 return null;
             }));
         } catch (DataAccessException e) {
@@ -348,7 +352,7 @@ public class QueryQuotaService {
         try {
             jdbc.execute((ConnectionCallback<Void>) conn -> {
                 try (Statement st = conn.createStatement()) {
-                    st.execute("SELECT pg_notify('" + NOTIFY_CHANNEL + "', '')");
+                    st.execute(NOTIFY_SQL);
                 }
                 return null;
             });

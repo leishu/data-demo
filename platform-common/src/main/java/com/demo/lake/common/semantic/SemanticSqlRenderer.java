@@ -23,6 +23,18 @@ public final class SemanticSqlRenderer {
     private static final Map<String, String> SQL_OPS = Map.of(
             "eq", "=", "neq", "<>", "gt", ">", "gte", ">=", "lt", "<", "lte", "<=");
 
+    /** SQL 子句片段集中在这里，render 只负责拼装已校验的标识符/字面量 */
+    private static final String SELECT = "SELECT ";
+    private static final String SEPARATOR = ", ";
+    private static final String AS = " AS ";
+    private static final String FROM = " FROM ";
+    private static final String WHERE = " WHERE ";
+    private static final String AND = " AND ";
+    private static final String GROUP_BY = " GROUP BY ";
+    private static final String ORDER_BY = " ORDER BY ";
+    private static final String DESC = " DESC";
+    private static final String LIMIT = " LIMIT ";
+
     public enum Dialect {
         TRINO {
             @Override
@@ -67,33 +79,33 @@ public final class SemanticSqlRenderer {
             }
         }
 
-        StringBuilder sql = new StringBuilder("SELECT ");
+        StringBuilder sql = new StringBuilder(SELECT);
         for (int i = 0; i < dims.size(); i++) {
-            sql.append(dialect.ident(dims.get(i))).append(", ");
+            sql.append(dialect.ident(dims.get(i))).append(SEPARATOR);
         }
-        sql.append(metric.getMeasure()).append(" AS ").append(dialect.ident(metric.getName()));
-        sql.append(" FROM ").append(tableFqn);
+        sql.append(metric.getMeasure()).append(AS).append(dialect.ident(metric.getName()));
+        sql.append(FROM).append(tableFqn);
 
         if (filters != null && !filters.isEmpty()) {
-            sql.append(" WHERE ");
+            sql.append(WHERE);
             for (int i = 0; i < filters.size(); i++) {
                 if (i > 0) {
-                    sql.append(" AND ");
+                    sql.append(AND);
                 }
                 sql.append(condition(filters.get(i), allowed, dialect));
             }
         }
         if (!dims.isEmpty()) {
-            sql.append(" GROUP BY ");
+            sql.append(GROUP_BY);
             for (int i = 0; i < dims.size(); i++) {
                 if (i > 0) {
-                    sql.append(", ");
+                    sql.append(SEPARATOR);
                 }
                 sql.append(dialect.ident(dims.get(i)));
             }
-            sql.append(" ORDER BY ").append(dialect.ident(dims.get(0))).append(" DESC");
+            sql.append(ORDER_BY).append(dialect.ident(dims.get(0))).append(DESC);
         }
-        sql.append(" LIMIT ").append(Math.max(1, Math.min(limit, 1000)));
+        sql.append(LIMIT).append(Math.max(1, Math.min(limit, 1000)));
         return sql.toString();
     }
 

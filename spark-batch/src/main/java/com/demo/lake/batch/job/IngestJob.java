@@ -47,6 +47,34 @@ import java.util.List;
  */
 public class IngestJob implements LakeJob {
 
+    private static final String INSERT_BRONZE =
+            "INSERT INTO %s "
+            + "(order_id, user_id, merchant_id, category, amount, currency, status, "
+            + " event_time, ingest_time, source_file, run_id) "
+            + "SELECT order_id, user_id, merchant_id, category, amount, currency, status, "
+            + "       event_time, CURRENT_TIMESTAMP() AS ingest_time, INPUT_FILE_NAME() AS source_file, run_id "
+            + "FROM raw_orders";
+    private static final String BRONZE_DAILY_STATS =
+            "SELECT CAST(event_time AS DATE) AS dt, COUNT(*) AS cnt, COUNT(DISTINCT order_id) AS distinct_orders "
+            + "FROM %s GROUP BY 1 ORDER BY 1";
+    private static final String DELETE_LEGACY = "DELETE FROM %s WHERE run_id IS NULL";
+    /** ? 绑定业务日期，%s 是当天临时视图名；每天一个视图互不覆盖 */
+    private static final String BUILD_DAY_SQL =
+            "SELECT concat('ORD-', ?, '-', lpad(cast(id AS string), 7, '0')) AS order_id,"
+            + " concat('U', lpad(cast(cast(r_user * 5000 AS int) AS string), 5, '0')) AS user_id,"
+            + " concat('M', lpad(cast(cast(r_merchant * 20 AS int) AS string), 3, '0')) AS merchant_id,"
+            + " element_at(array('3C','FASHION','GROCERY','HOME','BEAUTY'), "
+            + "cast(r_category * 5 AS int) + 1) AS category,"
+            + " cast(round(10 + r_amount * 990, 2) AS decimal(12,2)) AS amount,"
+            + " 'CNY' AS currency,"
+            + " CASE WHEN r_status < 0.06 THEN 'REFUNDED' "
+            + "WHEN r_status < 0.10 THEN 'CANCELLED' ELSE 'PAID' END AS status,"
+            + " to_timestamp(concat(cast(date_sub(CAST(? AS DATE), "
+            + "CASE WHEN r_late < 0.10 THEN 1 ELSE 0 END) AS string), ' ', "
+            + "lpad(cast(cast(r_hour * 24 AS int) AS string), 2, '0'), ':00:00')) AS event_time,"
+            + " r_dup"
+            + " FROM %s";
+
     @Override
     public String name() {
         return LakeJobs.INGEST;
@@ -84,16 +112,10 @@ public class IngestJob implements LakeJob {
         raw.withColumn("run_id", functions.lit(runId)).createOrReplaceTempView("raw_orders");
 
         // 纯追加：重跑会把同一批日期再叠一份，幂等去重交给 DWD 的 MERGE
-        spark.sql("INSERT INTO " + bronze.fqn() + " "
-                + "(order_id, user_id, merchant_id, category, amount, currency, status, "
-                + " event_time, ingest_time, source_file, run_id) "
-                + "SELECT order_id, user_id, merchant_id, category, amount, currency, status, "
-                + "       event_time, CURRENT_TIMESTAMP() AS ingest_time, INPUT_FILE_NAME() AS source_file, run_id "
-                + "FROM raw_orders");
+        spark.sql(String.format(INSERT_BRONZE, bronze.fqn()));
 
         System.out.println("[ingest] bronze 总行数 = " + spark.table(bronze.fqn()).count());
-        spark.sql("SELECT CAST(event_time AS DATE) AS dt, COUNT(*) AS cnt, COUNT(DISTINCT order_id) AS distinct_orders "
-                + "FROM " + bronze.fqn() + " GROUP BY 1 ORDER BY 1").show(false);
+        spark.sql(String.format(BRONZE_DAILY_STATS, bronze.fqn())).show(false);
     }
 
     /**
@@ -111,7 +133,7 @@ public class IngestJob implements LakeJob {
         long legacy = spark.table(bronze.fqn()).filter("run_id IS NULL").count();
         if (legacy > 0) {
             System.out.println("[ingest] 删除无法归属批次的旧数据 " + legacy + " 行（run_id IS NULL）");
-            spark.sql("DELETE FROM " + bronze.fqn() + " WHERE run_id IS NULL");
+            spark.sql(String.format(DELETE_LEGACY, bronze.fqn()));
         }
     }
 
@@ -136,21 +158,7 @@ public class IngestJob implements LakeJob {
         base.createOrReplaceTempView(view);
 
         // 10% 的记录 event_time 落在前一天（迟到数据）
-        Dataset<Row> clean = spark.sql(
-                "SELECT concat('ORD-', ?, '-', lpad(cast(id AS string), 7, '0')) AS order_id,"
-                        + " concat('U', lpad(cast(cast(r_user * 5000 AS int) AS string), 5, '0')) AS user_id,"
-                        + " concat('M', lpad(cast(cast(r_merchant * 20 AS int) AS string), 3, '0')) AS merchant_id,"
-                        + " element_at(array('3C','FASHION','GROCERY','HOME','BEAUTY'), "
-                        + "cast(r_category * 5 AS int) + 1) AS category,"
-                        + " cast(round(10 + r_amount * 990, 2) AS decimal(12,2)) AS amount,"
-                        + " 'CNY' AS currency,"
-                        + " CASE WHEN r_status < 0.06 THEN 'REFUNDED' "
-                        + "WHEN r_status < 0.10 THEN 'CANCELLED' ELSE 'PAID' END AS status,"
-                        + " to_timestamp(concat(cast(date_sub(CAST(? AS DATE), "
-                        + "CASE WHEN r_late < 0.10 THEN 1 ELSE 0 END) AS string), ' ', "
-                        + "lpad(cast(cast(r_hour * 24 AS int) AS string), 2, '0'), ':00:00')) AS event_time,"
-                        + " r_dup"
-                        + " FROM " + view,
+        Dataset<Row> clean = spark.sql(String.format(BUILD_DAY_SQL, view),
                 new Object[]{dt.toString(), dt.toString()});
 
         // 约 3% 的 PAID 单再造一条 2 小时后的 REFUNDED 记录，制造重复

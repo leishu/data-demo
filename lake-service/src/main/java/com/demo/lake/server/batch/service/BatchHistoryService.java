@@ -53,6 +53,17 @@ public class BatchHistoryService {
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final int MAX_LIMIT = 100;
 
+    private static final String SELECT_RUNS = """
+            SELECT run_id, job, command, status, exit_code, started_ms, finished_ms,
+            duration_ms, log_file, message FROM %s
+            """;
+    private static final String SELECT_RECENT = SELECT_RUNS + " ORDER BY started_ms DESC LIMIT %d";
+    private static final String SELECT_BY_ID = SELECT_RUNS + " WHERE run_id = ? LIMIT 1";
+    private static final String TABLE_EXISTS = """
+            SELECT COUNT(*) FROM %s.information_schema.tables
+            WHERE table_schema = ? AND table_name = ?
+            """;
+
     private final QueryService queries;
     private final PlatformConfig cfg;
 
@@ -107,7 +118,7 @@ public class BatchHistoryService {
                 return new Result(List.of(), new RunsView.History(RunsView.History.NOT_INITIALIZED,
                         "运行历史表 " + table + " 还没建（先跑一次 init），当前只显示本进程的记录", table));
             }
-            return new Result(List.copyOf(select(" ORDER BY started_ms DESC LIMIT " + n)),
+            return new Result(List.copyOf(select(String.format(SELECT_RECENT, table(), n))),
                     new RunsView.History(RunsView.History.OK, null, table));
         } catch (TrinoUnavailableException e) {
             invalidateProbe();
@@ -137,7 +148,7 @@ public class BatchHistoryService {
             if (!present()) {
                 return null;
             }
-            List<BatchRun> hits = select(" WHERE run_id = ? LIMIT 1", id);
+            List<BatchRun> hits = select(String.format(SELECT_BY_ID, table()), id);
             return hits.isEmpty() ? null : hits.getFirst();
         } catch (RuntimeException e) {
             invalidateProbe();
@@ -146,12 +157,9 @@ public class BatchHistoryService {
         }
     }
 
-    private List<BatchRun> select(String suffix, Object... params) {
+    private List<BatchRun> select(String sql, Object... params) {
         // 时间的权威列就是 epoch 毫秒：BatchApp 直接写入，InitJob 为老表回填。
         // 不再对 timestamp 做时区换算——绝对时刻编进 schema，而不是靠连接属性/约定。
-        String sql = "SELECT run_id, job, command, status, exit_code,"
-                + " started_ms, finished_ms,"
-                + " duration_ms, log_file, message FROM " + table() + suffix;
         QueryResult result = queries.executeQuiet(sql, null, params);
         List<BatchRun> runs = new ArrayList<>(result.rows().size());
         for (List<String> row : result.rows()) {
@@ -167,9 +175,7 @@ public class BatchHistoryService {
         if (at != 0 && now - at < PROBE_TTL_NANOS) {
             return present;
         }
-        String sql = "SELECT COUNT(*) FROM " + catalog() + ".information_schema.tables"
-                + " WHERE table_schema = ?"
-                + " AND table_name = ?";
+        String sql = String.format(TABLE_EXISTS, catalog());
         QueryResult result = queries.executeQuiet(sql, null, LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
         boolean found = !result.rows().isEmpty() && !"0".equals(result.rows().getFirst().getFirst());
         present = found;

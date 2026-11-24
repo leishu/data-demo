@@ -17,6 +17,14 @@ import org.apache.spark.sql.SparkSession;
  */
 public class TransformJob implements LakeJob {
 
+    private static final String GOLD_TOP_SQL =
+            "SELECT dt, merchant_id, category, order_cnt, buyer_cnt, gmv, refund_amount, net_revenue "
+            + "FROM %s ORDER BY gmv DESC LIMIT 10";
+    private static final String GOLD_DAILY_SQL =
+            "SELECT dt, SUM(order_cnt) AS orders, SUM(buyer_cnt) AS buyer_cnt_sum, "
+            + "CAST(SUM(gmv) AS DECIMAL(18,2)) AS gmv, CAST(SUM(net_revenue) AS DECIMAL(18,2)) AS net_revenue "
+            + "FROM %s GROUP BY dt ORDER BY dt";
+
     @Override
     public String name() {
         return LakeJobs.TRANSFORM;
@@ -41,12 +49,9 @@ public class TransformJob implements LakeJob {
         spark.sql(TransformSql.rebuildGold(cfg));
 
         System.out.println("[transform] gold 明细 Top 10（按 GMV）：");
-        spark.sql("SELECT dt, merchant_id, category, order_cnt, buyer_cnt, gmv, refund_amount, net_revenue "
-                + "FROM " + gold.fqn() + " ORDER BY gmv DESC LIMIT 10").show(false);
+        spark.sql(String.format(GOLD_TOP_SQL, gold.fqn())).show(false);
 
         System.out.println("[transform] gold 每日大盘：");
-        spark.sql("SELECT dt, SUM(order_cnt) AS orders, SUM(buyer_cnt) AS buyer_cnt_sum, "
-                + "CAST(SUM(gmv) AS DECIMAL(18,2)) AS gmv, CAST(SUM(net_revenue) AS DECIMAL(18,2)) AS net_revenue "
-                + "FROM " + gold.fqn() + " GROUP BY dt ORDER BY dt").show(false);
+        spark.sql(String.format(GOLD_DAILY_SQL, gold.fqn())).show(false);
     }
 }

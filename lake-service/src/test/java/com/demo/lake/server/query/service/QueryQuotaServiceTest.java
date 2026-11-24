@@ -105,7 +105,7 @@ class QueryQuotaServiceTest {
         QueryQuotaService quotas = service(1, 10, 2000, 10_000);
         QueryQuotaService.Permit held = quotas.acquire("a").block();
         // H2 本来走轮询；这里强制切到 LISTEN 唤醒方式，验证主路径的「通知替代轮询」
-        quotas.setListening(true);
+        quotas.setListening();
 
         AtomicReference<QueryQuotaService.Permit> got = new AtomicReference<>();
         AtomicReference<Throwable> err = new AtomicReference<>();

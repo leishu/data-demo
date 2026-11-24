@@ -20,6 +20,9 @@ public final class DbLocks {
 
     public static final String TABLE = StateDbTables.SERVER_LOCKS;
 
+    private static final String LOCK_ROW = "SELECT name FROM " + TABLE + " WHERE name=? FOR UPDATE";
+    private static final String INSERT_ROW = "INSERT INTO " + TABLE + " (name) VALUES (?)";
+
     /** 各主题在锁表里对应的固定行名。用到的地方必须在这里登记，便于 init 一次建好。 */
     public static final String SUBMIT = "batch-submit";
     public static final String DISPATCH = "batch-dispatch";
@@ -47,7 +50,7 @@ public final class DbLocks {
      */
     public static void lock(Connection conn, String name) throws SQLException {
         insert(conn, name); // 首次使用时按需补行
-        try (PreparedStatement ps = conn.prepareStatement("SELECT name FROM " + TABLE + " WHERE name=? FOR UPDATE")) {
+        try (PreparedStatement ps = conn.prepareStatement(LOCK_ROW)) {
             ps.setString(1, name);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -60,7 +63,7 @@ public final class DbLocks {
     /** 插入锁行，已存在就忽略；在事务里用 savepoint 避免 Postgres 把事务标记为 aborted。 */
     private static void insert(Connection conn, String name) throws SQLException {
         Savepoint savepoint = conn.getAutoCommit() ? null : conn.setSavepoint();
-        try (PreparedStatement ps = conn.prepareStatement("INSERT INTO " + TABLE + " (name) VALUES (?)")) {
+        try (PreparedStatement ps = conn.prepareStatement(INSERT_ROW)) {
             ps.setString(1, name);
             ps.executeUpdate();
         } catch (SQLException duplicate) {
