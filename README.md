@@ -1,6 +1,7 @@
 # lakehouse-demo
 
 [![CI](https://github.com/leishu/data-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/leishu/data-demo/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/leishu/data-demo/actions/workflows/codeql.yml/badge.svg)](https://github.com/leishu/data-demo/actions/workflows/codeql.yml)
 
 Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的湖仓脚手架，外面套一个 Spring Boot 4
 服务层做查询接口与作业编排。三条命令就能在本地跑通，不装 Hadoop、不装 Docker 也行；要接集群时只改 3 个配置项。
@@ -71,7 +72,8 @@ lakehouse-demo/
 │   ├── grafana/              数据源、面板与自动装载配置
 │   ├── trino/auth/           LDAP + 表级授权模板（profile=security）
 │   └── ranger/               HMS Ranger 插件配置模板与安装步骤
-├── .github/workflows/ci.yml  CI：构建/单测 + 主分支 E2E
+├── .github/workflows/        ci.yml（构建/单测 + 主分支 E2E）+ codeql.yml（Java 安全扫描）
+│   └── codeql/               codeql-config.yml（排除 test 源码，降低假阳性）
 ├── scheduler/                外部调度示例：Airflow DAG / DolphinScheduler 任务入口 / 接入说明
 ├── bin/                      便捷脚本（build / stack / smoke / scheduled-batch / dev-batch / infra ...）
 └── conf/platform.properties.example   集群模式配置模板
@@ -336,6 +338,10 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
   （含 Spark 真实建表/MERGE/加列/清理快照的集成测试），并归档 surefire 报告与 jar；
   `master/main` 和手动触发额外跑 E2E：起 Postgres/MinIO/HMS/Trino、跑
   `init → ingest → transform`、启动服务、执行 `bin/smoke.sh`。
+- **CodeQL（`.github/workflows/codeql.yml`）**：PR / push（master/main）与每周一用 JDK 21
+  构建整个 Maven reactor 后做 Java/Kotlin 安全扫描，用 `security-extended` 查询集，
+  排除 `src/test`（见 `.github/codeql/codeql-config.yml`）；告警进 Security → Code scanning，
+  并在 PR 上显示。私有仓库需先开启 GitHub Code Security，否则 SARIF 上传会被拒绝。
 - **全栈模式（`infra/docker-compose.full.yml`）**：在原有 infra 之上加 `lake-service` 容器。
   容器里的服务关闭批作业（`LAKE_BATCH_ENABLED=false`），因为镜像只带 JRE，没有
   `bin/dev-batch.sh` 需要的 Maven/Spark classpath；批作业用 `bin/stack.sh batch` 在宿主机执行。

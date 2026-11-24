@@ -1,0 +1,6 @@
+name: "lakehouse-demo CodeQL config"
+
+# 只扫生产代码：测试夹具里常有硬编码口令、拼接 SQL 等假阳性，会淹没真实告警。
+# 路径相对仓库根目录；不写 queries，查询集由 workflow 的 init 步骤指定。
+paths-ignore:
+  - '**/src/test/**'
