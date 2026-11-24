@@ -13,9 +13,16 @@ import reactor.core.scheduler.Schedulers;
 
 import java.sql.Connection;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** 配额：单账号限流与全局并发名额（状态放 H2，验证的是真实的跨实例 SQL 行为） */
@@ -24,10 +31,15 @@ class QueryQuotaServiceTest {
     private JdbcDataSource ds;
 
     private QueryQuotaService service(int concurrent, int perMinute, int timeoutMs) {
+        return service(concurrent, perMinute, timeoutMs, 300);
+    }
+
+    private QueryQuotaService service(int concurrent, int perMinute, int timeoutMs, int pollMs) {
         LakeProperties props = new LakeProperties();
         props.getQuery().setMaxConcurrentQueries(concurrent);
         props.getQuery().setMaxQueriesPerMinute(perMinute);
         props.getQuery().setAcquireTimeoutMs(timeoutMs);
+        props.getQuery().setQuotaFallbackPollMs(pollMs);
         ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:quota-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
         QueryQuotaService quotas = new QueryQuotaService(props, Schedulers.immediate(),
@@ -70,5 +82,43 @@ class QueryQuotaServiceTest {
             stmt.executeUpdate("UPDATE lake_batch.query_leases SET expires_ms = 0");
         }
         assertDoesNotThrow(() -> quotas.acquire("waiter").block());
+    }
+
+    @Test
+    void 一次通知只唤醒一个等待者() {
+        QueryQuotaService quotas = service(1, 10, 1000);
+        List<Integer> woke = Collections.synchronizedList(new ArrayList<>());
+        quotas.registerWaiter().subscribe(v -> woke.add(1));
+        quotas.registerWaiter().subscribe(v -> woke.add(2));
+
+        assertEquals(2, quotas.pendingWaiters());
+        quotas.wakeOne();
+        assertEquals(1, woke.size());
+        quotas.wakeAll();
+        assertEquals(2, woke.size());
+        assertEquals(0, quotas.pendingWaiters());
+    }
+
+    @Test
+    void 通知唤醒可替代轮询且不需要等满超时() {
+        // 兜底轮询间隔设得比 deadline 还长：没有通知就一定会超时
+        QueryQuotaService quotas = service(1, 10, 2000, 10_000);
+        QueryQuotaService.Permit held = quotas.acquire("a").block();
+        // H2 本来走轮询；这里强制切到 LISTEN 唤醒方式，验证主路径的「通知替代轮询」
+        quotas.setListening(true);
+
+        AtomicReference<QueryQuotaService.Permit> got = new AtomicReference<>();
+        AtomicReference<Throwable> err = new AtomicReference<>();
+        // Schedulers.immediate()：tryOnce + 登记等待者在 subscribe 调用内同步完成
+        quotas.acquire("b").doOnSuccess(got::set).subscribe(v -> {}, err::set);
+        assertEquals(1, quotas.pendingWaiters());
+
+        held.close();   // 归还名额（H2 不发通知）
+        quotas.wakeOne(); // 模拟 Postgres 的 pg_notify 到达
+
+        assertNull(err.get());
+        assertNotNull(got.get());
+        assertEquals(0, quotas.pendingWaiters());
+        got.get().close();
     }
 }

@@ -51,6 +51,8 @@ public class LakeProperties {
         private int maxQueriesPerMinute = 60;
         /** 并发名额最长等待时间，超时直接 429，不让请求一直挂在事件循环上 */
         private int acquireTimeoutMs = 3000;
+        /** LISTEN/NOTIFY 不可用时的兜底轮询间隔（H2 / 连接断开期间），不是主唤醒机制 */
+        private int quotaFallbackPollMs = 300;
     }
 
     @Getter

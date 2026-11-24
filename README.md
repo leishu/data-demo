@@ -188,6 +188,9 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
   （`max-queries-per-minute`）都放在 Postgres（`lake_batch.query_leases` / `query_events`），
   多实例共享同一份额度；并发名额是带过期时间的租约，实例崩溃没归还也会自动回收；
   等不到名额返回 **429** 而不是一直挂着；内部读运行历史不占配额。
+  等名额走 Postgres `LISTEN query_slot_free` 推送（专用长连接，一次通知只唤醒一个本地等待者），
+  LISTEN 不可用时退化为低频轮询（`quota-fallback-poll-ms`，默认 300ms）；
+  `acquire-timeout-ms` 是最后兜底，防止通知丢失导致请求永久挂起。
 - **Trino 挂了服务照常启动**（连接池 `initializationFailTimeout=-1`），查询返回 **503** 并给出
   「先起 Trino」的提示，而不是 500 或起不来。健康检查则如实报 `DOWN`。
 - **批作业用子进程**，不在 Web 容器里养 SparkSession：内存、线程、崩溃隔离都更省心，

@@ -75,7 +75,7 @@
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
       <version>42.7.11</version>
-      <scope>runtime</scope>
+      <!-- 配额的 LISTEN 连接要直接引用 PGConnection/PGNotification，故用 compile 而非 runtime -->
     </dependency>
     <!-- H2 只在测试里当 Postgres 的轻量替身，验 RunStateStore 的 SQL 行为 -->
     <dependency>
