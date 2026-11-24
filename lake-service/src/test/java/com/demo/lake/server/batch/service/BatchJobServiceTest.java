@@ -50,7 +50,7 @@ class BatchJobServiceTest {
             @Override
             public BatchHistoryService.Result recent(int limit) {
                 return new BatchHistoryService.Result(List.of(),
-                        new RunsView.History(RunsView.History.NOT_INITIALIZED, "test", "iceberg.ops.batch_runs"));
+                        new RunsView.History(RunsView.History.Status.NOT_INITIALIZED, "test", "iceberg.ops.batch_runs"));
             }
 
             @Override
@@ -175,7 +175,7 @@ class BatchJobServiceTest {
             @Override
             public BatchHistoryService.Result recent(int limit) {
                 return new BatchHistoryService.Result(List.of(persisted),
-                        new RunsView.History(RunsView.History.OK, null, "iceberg.ops.batch_runs"));
+                        new RunsView.History(RunsView.History.Status.OK, null, "iceberg.ops.batch_runs"));
             }
 
             @Override

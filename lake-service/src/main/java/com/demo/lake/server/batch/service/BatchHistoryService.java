@@ -115,20 +115,20 @@ public class BatchHistoryService {
         String table = table();
         try {
             if (!present()) {
-                return new Result(List.of(), new RunsView.History(RunsView.History.NOT_INITIALIZED,
+                return new Result(List.of(), new RunsView.History(RunsView.History.Status.NOT_INITIALIZED,
                         "运行历史表 " + table + " 还没建（先跑一次 init），当前只显示本进程的记录", table));
             }
             return new Result(List.copyOf(select(String.format(SELECT_RECENT, table(), n))),
-                    new RunsView.History(RunsView.History.OK, null, table));
+                    new RunsView.History(RunsView.History.Status.OK, null, table));
         } catch (TrinoUnavailableException e) {
             invalidateProbe();
             log.warn("读运行历史失败（Trino 不可用）: {}", e.getMessage());
-            return new Result(List.of(), new RunsView.History(RunsView.History.UNAVAILABLE,
+            return new Result(List.of(), new RunsView.History(RunsView.History.Status.UNAVAILABLE,
                     "连不上 Trino，当前只显示本进程的运行记录", table));
         } catch (RuntimeException e) {
             invalidateProbe();
             log.warn("读运行历史失败: {}", e.getMessage());
-            return new Result(List.of(), new RunsView.History(RunsView.History.ERROR,
+            return new Result(List.of(), new RunsView.History(RunsView.History.Status.ERROR,
                     "读运行历史失败：" + e.getMessage(), table));
         }
     }
