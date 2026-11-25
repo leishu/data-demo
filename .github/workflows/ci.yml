@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: surefire-reports
           path: "**/target/surefire-reports/**"
@@ -75,7 +75,7 @@ jobs:
           retention-days: 7
 
       - name: Upload service jar
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lake-service-jar
           path: lake-service/target/lake-service-*.jar
