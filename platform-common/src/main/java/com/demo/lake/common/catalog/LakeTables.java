@@ -63,6 +63,10 @@ public final class LakeTables {
         return out;
     }
 
+    /**
+     * 读取模板文件，绑定变量，生成 DDL 语句列表。
+     * rowLevelWrites：这张表是否有行级写入（MERGE / UPDATE / DELETE）
+     */
     private static List<String> ddl(PlatformConfig cfg, String resource, boolean rowLevelWrites) {
         List<String> out = new ArrayList<>();
         for (String stmt : SqlScript.split(SqlTemplate.renderResource(resource, vars(cfg, rowLevelWrites)))) {

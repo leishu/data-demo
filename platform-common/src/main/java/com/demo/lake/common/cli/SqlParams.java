@@ -1,10 +1,9 @@
 package com.demo.lake.common.cli;
 
 import com.demo.lake.common.sql.SqlScript;
-import lombok.experimental.UtilityClass;
 import com.demo.lake.common.sql.SqlTemplate;
+import lombok.experimental.UtilityClass;
 
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,56 +13,12 @@ import java.util.Map;
  * 即席查询 SQL 预处理器：把 {@code ${var}} 占位符替换成实际参数，缺参的语句整条跳过。
  *
  * <p>从 trino-adhoc 迁出，只保留「参数化」这一项自研约定；SQL 执行交给 lake-adhoc 里的官方 trino-jdbc。
+ * 由 lake-adhoc 的 {@code TrinoQuery} 在同一个 JVM 内调用 {@link #prepare(String, Map, boolean)}，
+ * 不再单独提供命令行入口（只想看预处理结果用 {@code bin/trino-query.sh --print-only}）。
  * 切句复用 {@link SqlScript#split(String)}，保证与 verify-sql 用同一套规则（跳过注释与字符串里的分号）。
- *
- * <p>用法（由 bin/trino-query.sh 调用，输出可直接喂给 Trino CLI）：
- * <pre>
- *   java ... com.demo.lake.common.cli.SqlParams &lt;sql-file&gt; \
- *     [--params k=v,k2=v2] [--explain]
- * </pre>
  */
 @UtilityClass
 public final class SqlParams {
-
-    public static void main(String[] argv) {
-        String file = null;
-        Map<String, String> params = new LinkedHashMap<>();
-        boolean explain = false;
-
-        for (int i = 0; i < argv.length; i++) {
-            String arg = argv[i];
-            switch (arg) {
-                case "--params":
-                    if (i + 1 >= argv.length) {
-                        fail("--params 缺少参数值");
-                        return;
-                    }
-                    params.putAll(parseParams(argv[++i]));
-                    break;
-                case "--explain":
-                    explain = true;
-                    break;
-                default:
-                    if (file == null) {
-                        file = arg;
-                    } else {
-                        fail("未知参数: " + arg);
-                        return;
-                    }
-            }
-        }
-
-        if (file == null) {
-            fail("用法: SqlParams <sql-file> [--params k=v,k2=v2] [--explain]");
-            return;
-        }
-
-        String script = SqlScript.read(Paths.get(file));
-        for (String sql : prepare(script, params, explain)) {
-            System.out.println(sql);
-            System.out.println();
-        }
-    }
 
     /**
      * 把脚本预处理成可直接执行的语句列表（供 lake-adhoc 复用，避免多起一次 JVM）：
@@ -93,8 +48,12 @@ public final class SqlParams {
         return statements;
     }
 
-    /** 解析 {@code k=v,k2=v2}，取第一个等号切分，值可含等号。 */
-    private static Map<String, String> parseParams(String raw) {
+    /**
+     * 解析 {@code k=v,k2=v2}，取第一个等号切分，值可含等号。
+     *
+     * <p>lake-adhoc 的 {@code --params} 也复用这里，避免两处解析各写一份后行为漂移。
+     */
+    public static Map<String, String> parseParams(String raw) {
         Map<String, String> map = new LinkedHashMap<>();
         if (raw == null || raw.trim().isEmpty()) {
             return map;
@@ -107,10 +66,4 @@ public final class SqlParams {
         }
         return map;
     }
-
-    private static void fail(String message) {
-        System.err.println(message);
-        System.exit(2);
-    }
-
 }

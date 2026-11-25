@@ -9,9 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -72,7 +70,7 @@ public final class TrinoQuery {
         boolean failFast = args.flag("fail-fast");
         int limit = args.getInt("limit", 200);
         int timeout = args.getInt("timeout", 300);
-        Map<String, String> params = parseParams(args.get("params"));
+        Map<String, String> params = SqlParams.parseParams(args.get("params"));
 
         // 预处理：SqlParams 复用 SqlScript.split() 精确切句，替换 ${var}，缺参跳过
         List<String> statements = SqlParams.prepare(script, params, explain);
@@ -137,20 +135,6 @@ public final class TrinoQuery {
             return "jdbc:trino://" + base + "/" + cfg.catalogName() + "/" + cfg.database();
         }
         return cfg.trinoJdbcUrl();
-    }
-
-    private static Map<String, String> parseParams(String raw) {
-        Map<String, String> map = new LinkedHashMap<>();
-        if (raw == null || raw.trim().isEmpty()) {
-            return map;
-        }
-        for (String pair : raw.split(",")) {
-            int idx = pair.indexOf('=');
-            if (idx > 0) {
-                map.put(pair.substring(0, idx).trim(), pair.substring(idx + 1).trim());
-            }
-        }
-        return map;
     }
 
     private static void listScripts() {
