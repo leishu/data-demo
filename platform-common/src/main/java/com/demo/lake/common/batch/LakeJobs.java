@@ -27,13 +27,14 @@ public final class LakeJobs {
     public static final String SHOW = "show";
     public static final String VERIFY_SQL = "verify-sql";
     public static final String QUALITY = "quality";
+    public static final String RETENTION = "retention";
 
     /** 跑完整条链路的快捷方式：不是作业实现，但同样是 --job 的合法取值 */
     public static final String ALL = "all";
 
     /** 已注册的作业名，顺序即 --help 与页面里的展示顺序 */
     public static final List<String> NAMES = List.of(
-            INIT, INGEST, TRANSFORM, EVOLVE, MAINTAIN, SHOW, VERIFY_SQL, QUALITY);
+            INIT, INGEST, TRANSFORM, EVOLVE, MAINTAIN, SHOW, VERIFY_SQL, QUALITY, RETENTION);
 
     /** 允许作为 --job 取值的全部名字（{@link #NAMES} + {@link #ALL}），服务端白名单的默认值 */
     public static final List<String> CHOICES = choices();
@@ -69,6 +70,9 @@ public final class LakeJobs {
             JobMeta.other(QUALITY, "数据质量",
                     "跑唯一性/非空/金额范围/退款率/净收入一致性/行数波动六项检查，结果写 ops.dq_results；"
                             + "ERROR 项失败即作业失败（--inject-faults 可注入重复单与负金额演示）"),
+            JobMeta.other(RETENTION, "保留治理",
+                    "按 GovernanceCatalog 的保留期列出/删除业务表的旧分区，默认 dry-run 只列不删；"
+                            + "--execute 才真删，前后写 ops.retention_audit 审计事件，不改表结构"),
             JobMeta.other(ALL, "全链路",
                     "按 init → ingest → transform → maintain → show 顺序跑完整链路"
                             + "（加 --evolve 会插入 evolve），全程复用同一个 SparkSession").withFeatured());

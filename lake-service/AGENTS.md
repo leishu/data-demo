@@ -12,7 +12,7 @@ lake-service/src/main/java/com/demo/lake/server/
 ├── controller/
 │   ├── AuthController.java             # /api/auth/session|login：控制台登录态（公开，不弹原生 Basic 框）
 │   ├── AuditController.java            # /api/audit*：最近事件 + 原文保险箱（原文需 AUDITOR）
-│   └── GovernanceController.java       # /api/governance/{assets,dq}：资产目录 + 质量结果（ops.dq_results）
+│   └── GovernanceController.java       # /api/governance/{assets,dq,lineage,retention}：资产/质量/血缘/保留审计
 ├── query/
 │   ├── QueryController.java            # /api/query、/api/query/stream（SSE）
 │   ├── QueryService.java               # 同步查询执行、只读守卫调用、审计记账

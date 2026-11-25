@@ -22,6 +22,8 @@ public final class SqlResources {
     public static final String DDL_GOLD = "sql/ddl/30_gold_daily_revenue.sql";
     public static final String DDL_BATCH_RUNS = "sql/ddl/40_ops_batch_runs.sql";
     public static final String DDL_DQ_RESULTS = "sql/ddl/50_ops_dq_results.sql";
+    public static final String DDL_LINEAGE_RUNS = "sql/ddl/60_ops_lineage_runs.sql";
+    public static final String DDL_RETENTION_AUDIT = "sql/ddl/70_ops_retention_audit.sql";
 
     public static final String PROPS_ROW_LEVEL = "sql/ddl/_properties_row_level.sql";
     public static final String PROPS_PLAIN = "sql/ddl/_properties_plain.sql";
@@ -46,6 +48,7 @@ public final class SqlResources {
 
     private static final List<String> ALL = Collections.unmodifiableList(Arrays.asList(
             DDL_DATABASES, DDL_BRONZE, DDL_SILVER, DDL_GOLD, DDL_BATCH_RUNS, DDL_DQ_RESULTS,
+            DDL_LINEAGE_RUNS, DDL_RETENTION_AUDIT,
             PROPS_ROW_LEVEL, PROPS_PLAIN,
             TRANSFORM_MERGE, TRANSFORM_GOLD,
             QUALITY_SILVER_UNIQUE, QUALITY_SILVER_NOT_NULL, QUALITY_SILVER_AMOUNT_RANGE,

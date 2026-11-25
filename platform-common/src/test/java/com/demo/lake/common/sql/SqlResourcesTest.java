@@ -55,7 +55,7 @@ class SqlResourcesTest {
     void ddlRenderingKeepsTableNamesAndPropertyDifferences() {
         PlatformConfig cfg = cfg();
         List<String> ddl = LakeTables.all(cfg);
-        assertEquals(7, ddl.size()); // 2 建库 + 5 建表（含 ops.dq_results）
+        assertEquals(9, ddl.size()); // 2 建库 + 7 建表（业务 3 + ops 4）
         for (String stmt : ddl) {
             assertFalse(SqlTemplate.hasUnresolved(stmt), "DDL 残留占位符: " + stmt);
         }
@@ -67,6 +67,8 @@ class SqlResourcesTest {
         assertTrue(ddl.get(4).contains(LakeTables.GOLD_DAILY_REVENUE));
         assertTrue(ddl.get(5).contains(LakeTables.OPS_SCHEMA + "." + LakeTables.BATCH_RUNS));
         assertTrue(ddl.get(6).contains(LakeTables.OPS_SCHEMA + "." + LakeTables.DQ_RESULTS));
+        assertTrue(ddl.get(7).contains(LakeTables.OPS_SCHEMA + "." + LakeTables.LINEAGE_RUNS));
+        assertTrue(ddl.get(8).contains(LakeTables.OPS_SCHEMA + "." + LakeTables.RETENTION_AUDIT));
 
         // bronze/silver 有行级写入属性，gold/ops 没有
         assertTrue(ddl.get(2).contains("'write.merge.mode'"));

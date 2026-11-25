@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { api } from '@/api'
 import { fmtTime } from '@/utils'
@@ -9,6 +9,9 @@ const LIMIT = 100
 
 const dq = ref([])
 const assets = ref([])
+const lineage = ref(null)
+const selectedTable = ref('gold_daily_revenue')
+const retention = ref([])
 const loading = ref(false)
 const error = ref(null)
 const showAll = ref(false)
@@ -34,17 +37,31 @@ function freshnessTag(row) {
   return ({ OK: 'success', WARN: 'warning', BREACH: 'danger', UNKNOWN: 'info' })[status] || 'info'
 }
 
+const tableOptions = computed(() =>
+  assets.value.length ? assets.value.map((a) => a.table) : ['bronze_orders', 'silver_orders', 'gold_daily_revenue'])
+
+async function loadLineage() {
+  try {
+    lineage.value = await api.lineage(selectedTable.value, LIMIT)
+  } catch (e) {
+    lineage.value = null
+  }
+}
+
 async function load() {
   loading.value = true
   error.value = null
   try {
-    // 目录读不到不挡质量页：它只是补充信息
-    const [dqRows, assetRows] = await Promise.all([
+    // 目录/血缘/审计读不到不挡质量页：它们都是补充信息
+    const [dqRows, assetRows, retentionRows] = await Promise.all([
       api.dqResults(LIMIT),
-      api.governanceAssets().catch(() => [])
+      api.governanceAssets().catch(() => []),
+      api.retentionAudit(LIMIT).catch(() => [])
     ])
     dq.value = Array.isArray(dqRows) ? dqRows : []
     assets.value = Array.isArray(assetRows) ? assetRows : []
+    retention.value = Array.isArray(retentionRows) ? retentionRows : []
+    await loadLineage()
   } catch (e) {
     dq.value = []
     error.value = e
@@ -53,6 +70,7 @@ async function load() {
   }
 }
 
+watch(selectedTable, loadLineage)
 onMounted(load)
 </script>
 
@@ -148,6 +166,84 @@ onMounted(load)
           </el-table-column>
         </el-table>
       </el-card>
+
+      <el-card>
+        <template #header>
+          <div class="card-head">
+            <span class="card-title">血缘</span>
+            <div class="extra">
+              <span class="faint note">表/列声明来自转换 SQL 注释，运行记录来自 ops.lineage_runs</span>
+              <el-select v-model="selectedTable" size="small" class="table-select">
+                <el-option v-for="t in tableOptions" :key="t" :label="t" :value="t" />
+              </el-select>
+            </div>
+          </div>
+        </template>
+        <div v-if="lineage" class="lineage">
+          <div class="lineage-block">
+            <span class="faint">上游</span>
+            <el-tag v-for="t in lineage.upstream" :key="t" size="small" effect="plain">{{ t }}</el-tag>
+            <span v-if="!lineage.upstream.length" class="faint">无</span>
+          </div>
+          <div class="lineage-block">
+            <span class="faint">下游</span>
+            <el-tag v-for="t in lineage.downstream" :key="t" size="small" effect="plain">{{ t }}</el-tag>
+            <span v-if="!lineage.downstream.length" class="faint">无</span>
+          </div>
+          <el-table :data="lineage.columns" size="small" stripe style="width: 100%">
+            <el-table-column prop="sourceTable" label="来源表" min-width="150" />
+            <el-table-column prop="sourceColumn" label="来源列" min-width="120" />
+            <el-table-column prop="targetColumn" label="目标列" min-width="120" />
+          </el-table>
+          <div class="sub-title">最近写入（点 run_id 看作业日志）</div>
+          <el-table :data="lineage.runs" size="small" stripe style="width: 100%">
+            <el-table-column label="运行" min-width="180">
+              <template #default="{ row }">
+                <a class="run-link mono" :href="runHref(row.runId)">{{ row.runId }}</a>
+              </template>
+            </el-table-column>
+            <el-table-column prop="job" label="作业" width="120" />
+            <el-table-column prop="snapshotId" label="快照 ID" width="120" />
+            <el-table-column label="时间" width="140">
+              <template #default="{ row }">{{ fmtTime(row.recordedMs) }}</template>
+            </el-table-column>
+          </el-table>
+          <div v-if="!lineage.runs.length" class="faint note empty-note">
+            这张表还没有写入血缘记录，先跑一次 ingest / transform
+          </div>
+        </div>
+      </el-card>
+
+      <el-card>
+        <template #header>
+          <div class="card-head">
+            <span class="card-title">保留审计</span>
+            <span class="faint note">执行前后各一条事件，dry-run 同样留痕</span>
+          </div>
+        </template>
+        <el-table :data="retention" size="small" stripe style="width: 100%">
+          <el-table-column prop="event" label="事件" width="140" />
+          <el-table-column prop="table" label="表" min-width="150" />
+          <el-table-column label="模式" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.dryRun ? 'info' : 'warning'" effect="light">
+                {{ row.dryRun ? 'dry-run' : 'execute' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="partitions" label="分区" width="80" />
+          <el-table-column prop="rowCount" label="行数" width="90" />
+          <el-table-column label="运行" min-width="180">
+            <template #default="{ row }">
+              <a class="run-link mono" :href="runHref(row.runId)">{{ row.runId }}</a>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="140">
+            <template #default="{ row }">{{ fmtTime(row.auditedMs) }}</template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!retention.length" description="还没有保留作业审计事件" :image-size="40" />
+      </el-card>
     </template>
   </div>
 </template>
@@ -180,6 +276,32 @@ onMounted(load)
 
 .note {
   font-size: 11.5px;
+}
+
+.table-select {
+  width: 180px;
+}
+
+.lineage {
+  display: grid;
+  gap: 10px;
+}
+
+.lineage-block {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sub-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.empty-note {
+  padding: 8px 0;
 }
 
 .state-box {

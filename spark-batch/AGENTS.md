@@ -12,6 +12,7 @@ spark-batch/
     ├── BatchApp.java                        # 入口：解析 --job/--days/... → 创建 SparkSession → 分发 job → 记账
     ├── SparkSessionFactory.java             # SparkSession 组装（PlatformConfig.sparkConf）
     ├── RunRecordWriter.java                 # 落 ops.batch_runs 终态（run_id / job / status / 耗时 / 日志路径）
+    ├── LineageWriter.java                   # 每个写表作业后落 ops.lineage_runs（run_id/table/snapshot_id）
     ├── LakeJob.java                         # 接口：name() + run(SparkSession, PlatformConfig, Args)
     └── job/
         ├── InitJob.java                     # 建库建表（LakeTables.all）；老表 ADD COLUMNS + UTC 回填
@@ -21,7 +22,8 @@ spark-batch/
         ├── MaintainJob.java                 # rewrite_data_files / rewrite_manifests / expire_snapshots
         ├── ShowJob.java                     # 只读巡检（快照/分区/小文件）
         ├── VerifySqlJob.java                # Spark 执行 sql/adhoc 脚本（跳过 @trino-only）
-        └── QualityJob.java                  # 六项质量检查，结果写 ops.dq_results；--inject-faults 注入演示脏数据
+        ├── QualityJob.java                  # 六项质量检查，结果写 ops.dq_results；--inject-faults 注入演示脏数据
+        └── RetentionJob.java                # 按资产保留期删旧分区，默认 dry-run；前后写 ops.retention_audit
 ```
 
 ## 2. 工作流

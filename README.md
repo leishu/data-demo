@@ -161,6 +161,8 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 | `GET /api/tables` | 当前库的表清单 + 字段清单（读 Trino 的 `information_schema`，字段 `comment` 即 DDL 里的中文名） |
 | `GET /api/governance/assets` | 治理资产清单：`GovernanceCatalog` ∪ `information_schema` ∪ Iceberg 指标，含 owner / 域 / 分层 / 敏感级别 / 保留天数 / 新鲜度 SLA / 多久没更新 |
 | `GET /api/governance/dq?limit=50` | 最近质量检查结果（`ops.dq_results`），含 observed / threshold / 证据 / 所属 run_id；表不存在返回空列表 |
+| `GET /api/governance/lineage?table=gold_daily_revenue` | 表级/列级血缘（声明在转换 SQL 注释里）+ 该表最近写入的 run_id / snapshot_id（`ops.lineage_runs`） |
+| `GET /api/governance/retention?limit=50` | 保留作业执行前后的审计事件（`ops.retention_audit`），含 dry_run / 命中分区与行数 |
 | `GET /api/tables/{t}/sample?limit=10` | 采样一张表 |
 | `GET /api/config` | 生效配置回显（S3 密钥打码）；`batch.jobs` 带作业卡片的标题/描述/分组/是否仅命令行 |
 | `POST /api/batch/{job}` | 触发批作业，202 + runId；job 走白名单；带 `Idempotency-Key` 头可去重 |
@@ -193,6 +195,10 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
   SQL 在 `sql/quality/`，结果写 `ops.dq_results`（observed / threshold / 证据 / run_id / snapshot_id）；
   ERROR 项失败即作业 FAILED，WARN 只记录。`bin/dev-batch.sh --job quality --inject-faults` 可注入重复单与负金额，
   治理页 `#/governance` 能看到失败证据并点 run_id 跳回作业日志。
+- **有版本级血缘与保留治理**。每个写表作业结束把 `run_id → table → snapshot_id` 写进 `ops.lineage_runs`，
+  不改业务表结构；表级/列级血缘声明就写在 `sql/transform/*.sql` 头部的 `@lineage` 注释里，
+  `LineageCatalogTest` 防止改了 SQL 忘改声明。`bin/dev-batch.sh --job retention` 默认 dry-run 列出待删分区，
+  加 `--execute` 才真删；前后都写 `ops.retention_audit`，治理页可查。
 - **API 需要鉴权**（demo 级）。`/api/**` 走 HTTP Basic：`viewer/viewer` 只读查询，
   `operator/operator` 额外能触发作业和看 actuator 指标；页面、`/actuator/health`、`/actuator/info` 公开。
   生产环境请设 `lake.security.enabled=false`，由网关 / IdP 做认证授权（静态口令只适合本机演示）。
@@ -246,7 +252,7 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
 | 批作业 `#/jobs` | 按白名单触发作业、运行记录自动刷新、点开看退出码/耗时/日志尾部（RUNNING 时用 SSE 实时跟） |
 | 指标语义 `#/semantics` | 选指标/维度/过滤，预览 Trino / Spark 两种方言 SQL，或直接执行语义查询 |
 | 审计 `#/audit` | 最近审计事件（动作/身份/字段/SQL 指纹）；按事件 ID 调阅脱敏 SQL 原文、置位/解除法律保全。列表 QUERY 或 AUDITOR 角色都能看（三个账号都可以），原文与保全需 AUDITOR 角色 |
-| 数据治理 `#/governance` | 质量检查失败项（检查项/级别/实测/阈值/证据/快照），点 run_id 跳到对应作业日志；下方是表级资产档案 |
+| 数据治理 `#/governance` | 质量检查失败项、表级资产档案、表/列血缘（可反查写入 run 与快照）、保留审计事件；点 run_id 跳到对应作业日志 |
 | 配置 `#/config` | 生效的 catalog / 仓库 / 写模式 / Trino 连接 / 查询上限 / 作业命令模板，可展开原始 JSON |
 
 首次打开先走登录页（演示账号 `viewer` / `operator` / `auditor`，密码与用户名相同）；
@@ -383,7 +389,7 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
   另附 bucket lifecycle 模板（`bin/storage-lifecycle.sh`）与 `maintain` 的 `remove_orphan_files`，
   前者清分片/非当前版本，后者做引用感知的孤儿文件清理。
 - **冒烟脚本（`bin/smoke.sh`）**：健康检查、401 鉴权、配置回显、表清单、同步查询、SSE、
-  语义层 render/query、资产目录、质量结果、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
+  语义层 render/query、资产目录、质量结果、血缘、保留审计、审计事件、只读守卫、Prometheus 指标抓取；服务开了批作业时还会真的
   提交一次 `show` 并等到 `SUCCEEDED`。容器模式用 `SMOKE_BATCH=0` 跳过批作业项。
   失败非零退出，可直接放进 CI（宿主机 22 项 / 容器 19 项）。
 

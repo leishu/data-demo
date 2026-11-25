@@ -31,5 +31,9 @@
 | **检查级别** | ERROR 失败即作业 FAILED；WARN 只记录不阻断（行数波动用 WARN） |
 | **dq_results** | `ops.dq_results`：一行一次检查，`run_id` 与 `ops.batch_runs` 对齐，`snapshot_id` 定位被检查表的最近快照，observed > threshold 即失败 |
 | **注入故障** | `--inject-faults`：quality 作业演示开关，往 silver 写两条重复订单号 + 一条负金额，稳定产出失败证据 |
+| **血缘声明** | 写在 `sql/transform/*.sql` 头部注释里的 `@lineage table/column`，由 `LineageParser` 解析，`LineageCatalogTest` 防漂移 |
+| **写入级血缘** | `ops.lineage_runs`：每次作业写表后记 `run_id → table → snapshot_id`；靠快照映射拿版本级血缘，不动业务表结构 |
+| **保留治理** | `retention` 作业按 `GovernanceCatalog.retentionDays` 删旧分区，默认 dry-run；`--execute` 才真删，`--retention-days` 可覆盖天数 |
+| **保留审计** | `ops.retention_audit`：保留作业每表执行前后各一条 `retention.start/done`，dry-run 同样留痕 |
 
 > 词条会迭代：新增设计决策的同时补充术语。

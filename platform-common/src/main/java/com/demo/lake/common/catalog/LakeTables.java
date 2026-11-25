@@ -44,6 +44,10 @@ public final class LakeTables {
     public static final String BATCH_RUNS = "batch_runs";
     /** 数据质量检查结果：一行一次检查，quality 作业写、治理页读 */
     public static final String DQ_RESULTS = "dq_results";
+    /** 写入级血缘：run_id -> table -> snapshot_id */
+    public static final String LINEAGE_RUNS = "lineage_runs";
+    /** 保留作业的执行前后审计事件 */
+    public static final String RETENTION_AUDIT = "retention_audit";
 
     /** 建库 2 条 + 建表 4 条，顺序即执行顺序。 */
     public static List<String> all(PlatformConfig cfg) {
@@ -54,6 +58,8 @@ public final class LakeTables {
         out.addAll(ddl(cfg, SqlResources.DDL_GOLD, false));
         out.addAll(ddl(cfg, SqlResources.DDL_BATCH_RUNS, false));
         out.addAll(ddl(cfg, SqlResources.DDL_DQ_RESULTS, false));
+        out.addAll(ddl(cfg, SqlResources.DDL_LINEAGE_RUNS, false));
+        out.addAll(ddl(cfg, SqlResources.DDL_RETENTION_AUDIT, false));
         return out;
     }
 

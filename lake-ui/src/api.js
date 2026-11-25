@@ -102,6 +102,9 @@ export const api = {
   tables: () => request('/api/tables'),
   governanceAssets: () => request('/api/governance/assets'),
   dqResults: (limit = 50) => request(`/api/governance/dq?limit=${limit}`),
+  lineage: (table, limit = 50) =>
+    request(`/api/governance/lineage?table=${encodeURIComponent(table)}&limit=${limit}`),
+  retentionAudit: (limit = 50) => request(`/api/governance/retention?limit=${limit}`),
   sample: (table, limit = 50) =>
     request(`/api/tables/${encodeURIComponent(table)}/sample?limit=${limit}`),
   config: () => request('/api/config'),

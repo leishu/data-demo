@@ -144,3 +144,28 @@ observed / threshold / detail ──写──> iceberg.ops.dq_results（run_id +
 - `--inject-faults` 只往 silver 写脏数据（不重跑 transform），所以能稳定命中唯一性与金额范围两项 ERROR；
   集成测试用真实 Spark 验证「干净数据全 PASS → 注入后失败并留下证据」这条闭环。
 - 结果表读不到（没跑 init / Trino 不可用）时接口返回空列表，治理页照常打开。
+
+## 10. 血缘与保留
+
+```
+写表作业（init/ingest/transform/evolve/maintain）
+    └─ BatchApp 调 LineageWriter ──> ops.lineage_runs（run_id, table, snapshot_id）
+sql/transform/*.sql 头部 @lineage 注释 ──LineageParser──> LineageCatalog（表级/列级声明）
+                                                          │
+                                    GET /api/governance/lineage?table=gold_daily_revenue
+                                    → upstream: silver → bronze；runs: 哪次运行/哪个快照
+
+retention 作业（默认 dry-run）
+    ├─ 按 GovernanceCatalog.retentionDays 找旧分区 → 列出分区与行数
+    ├─ AUDIT retention.start / retention.done（stdout + ops.retention_audit）
+    └─ 仅 --execute 时 DELETE，不 ALTER 业务表
+```
+
+关键取舍：
+
+- 血缘分两层：**设计层**声明在转换 SQL 注释里（改 SQL 忘改声明由单测拦住），**运行层**在 `ops.lineage_runs`
+  （快照 ID 来自 Iceberg 元数据表）。两者都不改业务表结构。
+- 写入级血缘由 BatchApp 在**每个作业成功后**统一记录，按 `LineageCatalog.writtenTables(job)` 决定记录哪些表；
+  记账是旁路，失败只提示不改变作业退出码。
+- 保留期是资产目录的一个字段（`retentionDays`），不在 retention 作业里重复维护；`--retention-days` 只作为演示/回归覆盖。
+- dry-run 是默认，且同样写前后审计事件——审计的是「评估过什么」，不只是「删过什么」。

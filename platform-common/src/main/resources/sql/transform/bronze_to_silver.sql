@@ -4,6 +4,18 @@
 -- 列必须显式列出，不能用 UPDATE SET * / INSERT *：silver 会被 EvolveJob 加列（如 channel），
 -- 而 source 只有 ODS 的 11 列，用 * 时 target 多出来的列解析不到，transform 直接失败。
 -- 显式列下，target 新增列在 MATCHED 时保留原值、在 NOT MATCHED 时填 NULL。
+--
+-- @lineage table: bronze_orders -> silver_orders
+-- @lineage column: bronze_orders.order_id -> silver_orders.order_id
+-- @lineage column: bronze_orders.user_id -> silver_orders.user_id
+-- @lineage column: bronze_orders.merchant_id -> silver_orders.merchant_id
+-- @lineage column: bronze_orders.category -> silver_orders.category
+-- @lineage column: bronze_orders.amount -> silver_orders.amount
+-- @lineage column: bronze_orders.currency -> silver_orders.currency
+-- @lineage column: bronze_orders.status -> silver_orders.status
+-- @lineage column: bronze_orders.status -> silver_orders.is_refund
+-- @lineage column: bronze_orders.event_time -> silver_orders.dt
+-- @lineage column: bronze_orders.event_time -> silver_orders.event_time
 MERGE INTO ${silver_table} AS t
 USING (
   SELECT order_id, user_id, merchant_id, category, amount, currency, status,

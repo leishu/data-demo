@@ -6,6 +6,7 @@ import com.demo.lake.batch.job.IngestJob;
 import com.demo.lake.batch.job.InitJob;
 import com.demo.lake.batch.job.MaintainJob;
 import com.demo.lake.batch.job.QualityJob;
+import com.demo.lake.batch.job.RetentionJob;
 import com.demo.lake.batch.job.ShowJob;
 import com.demo.lake.batch.job.TransformJob;
 import com.demo.lake.batch.job.VerifySqlJob;
@@ -51,6 +52,7 @@ public final class BatchApp {
         register(new ShowJob());
         register(new VerifySqlJob());
         register(new QualityJob());
+        register(new RetentionJob());
     }
 
     private static void register(LakeJob job) {
@@ -98,6 +100,7 @@ public final class BatchApp {
                 long start = System.currentTimeMillis();
                 System.out.printf("%n>>> [%s] 开始%n", name);
                 job.run(spark, cfg, args);
+                LineageWriter.record(spark, cfg, runId, name);
                 System.out.printf("<<< [%s] 完成，耗时 %.1fs%n", name, (System.currentTimeMillis() - start) / 1000.0);
             }
         } catch (Exception e) {
@@ -157,6 +160,10 @@ public final class BatchApp {
         System.out.println();
         System.out.println("quality:");
         System.out.println("  --inject-faults       演示用：先注入重复单 + 负金额，再跑检查（预期 FAILED）");
+        System.out.println();
+        System.out.println("retention:");
+        System.out.println("  --retention-days <n>  覆盖 GovernanceCatalog 的保留天数（演示/回归用）");
+        System.out.println("  --execute             真正删除旧分区；默认 dry-run 只列出待删分区");
         System.out.println();
         System.out.println("示例:");
         System.out.println("  --job all --days 7 --orders-per-day 3000");
