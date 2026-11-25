@@ -34,7 +34,7 @@
     <hadoop.version>3.4.2</hadoop.version>
     <!-- 对齐 Spark 4.1 发行版自带的 Hive（spark-parent 2.13 的 hive.version=2.3.10） -->
     <hive.version>2.3.10</hive.version>
-    <trino.version>476</trino.version>
+    <trino.version>484</trino.version>
     <!-- 注解处理：编译期生成访问器 / 构造器 / logger，scope=provided 不进产物 -->
     <lombok.version>1.18.34</lombok.version>
     <!-- 与 Spark 4.1.4 自带版本对齐（spark-parent 的 log4j.version=2.24.3 / slf4j.version=2.0.17），
