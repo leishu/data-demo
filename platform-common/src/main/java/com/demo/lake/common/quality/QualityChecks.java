@@ -36,7 +36,7 @@ public final class QualityChecks {
 
     public static QualityCheck get(String name) {
         for (QualityCheck check : ALL) {
-            if (check.getName().equals(name)) {
+            if (check.name().equals(name)) {
                 return check;
             }
         }

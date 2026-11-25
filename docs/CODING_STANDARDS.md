@@ -22,7 +22,7 @@
 - 参数非法 → `IllegalArgumentException`，消息中文且带关键上下文（如 `PlatformConfig`：`"缺少必填配置: " + key`）。
 - 运行时状态错误 → `IllegalStateException`。
 - 不要：空 `catch` 吞异常；这里没有对外错误码体系，`IOException` 等标准异常即可。
-- **Java 语言级别按模块区分**：`platform-common` / `spark-batch` / `lake-adhoc` 是 `release=17`（Spark 4.1 要求 Java 17+，record、switch 表达式、text blocks 均可用）；`lake-service` 是 `release=21`。改代码前先看所在模块的 pom。
+- **Java 语言级别按模块区分**：`platform-common` / `spark-batch` / `lake-adhoc` 是 `release=17`（Spark 4.1 要求 Java 17+，record、switch 表达式、text blocks 均可用）；`lake-service` 是 `release=21`。改代码前先看所在模块的 pom。跨模块不可变值对象优先用 record（如 `JobMeta` / `QualityCheck`），不要再手写「不可变类 + Lombok getter」。
 
 ## 3. SQL 与方言约定
 

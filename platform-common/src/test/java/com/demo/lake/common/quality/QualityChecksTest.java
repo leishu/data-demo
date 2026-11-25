@@ -27,14 +27,14 @@ class QualityChecksTest {
     void 六项检查登记完整且名字唯一() {
         Set<String> names = new HashSet<>();
         for (QualityCheck check : QualityChecks.ALL) {
-            assertTrue(names.add(check.getName()), "检查名重复: " + check.getName());
-            assertNotNull(check.getResource());
-            assertNotNull(check.getLabel());
-            assertTrue(List.of("silver", "gold").contains(check.getSource()));
+            assertTrue(names.add(check.name()), "检查名重复: " + check.name());
+            assertNotNull(check.resource());
+            assertNotNull(check.label());
+            assertTrue(List.of("silver", "gold").contains(check.source()));
         }
         assertEquals(6, names.size());
-        assertEquals(QualitySeverity.ERROR, QualityChecks.GOLD_REFUND_RATE.getSeverity());
-        assertEquals(QualitySeverity.WARN, QualityChecks.GOLD_ROW_COUNT.getSeverity());
+        assertEquals(QualitySeverity.ERROR, QualityChecks.GOLD_REFUND_RATE.severity());
+        assertEquals(QualitySeverity.WARN, QualityChecks.GOLD_ROW_COUNT.severity());
         assertTrue(QualitySeverity.ERROR.failsJob());
         assertFalse(QualitySeverity.WARN.failsJob());
     }
@@ -50,13 +50,13 @@ class QualityChecksTest {
         PlatformConfig cfg = cfg();
         for (QualityCheck check : QualityChecks.ALL) {
             String sql = QualitySql.render(check, cfg);
-            assertFalse(sql.isBlank(), check.getName());
-            assertFalse(SqlTemplate.hasUnresolved(sql), check.getName() + " 残留占位符");
-            assertFalse(sql.contains(";"), check.getName() + " 应只有一条语句");
-            if ("silver".equals(check.getSource())) {
-                assertTrue(sql.contains(TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn()), check.getName());
+            assertFalse(sql.isBlank(), check.name());
+            assertFalse(SqlTemplate.hasUnresolved(sql), check.name() + " 残留占位符");
+            assertFalse(sql.contains(";"), check.name() + " 应只有一条语句");
+            if ("silver".equals(check.source())) {
+                assertTrue(sql.contains(TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn()), check.name());
             } else {
-                assertTrue(sql.contains(TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn()), check.getName());
+                assertTrue(sql.contains(TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn()), check.name());
             }
         }
     }

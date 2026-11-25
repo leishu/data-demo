@@ -57,12 +57,12 @@ public class QualityJob implements LakeJob {
             double threshold = ((Number) observed.get(1)).doubleValue();
             String detail = observed.get(2) == null ? "" : String.valueOf(observed.get(2));
             boolean failed = value > threshold;
-            rows.add(RowFactory.create(runId, snapshotId(spark, cfg, check), check.getName(),
-                    check.getSeverity().name(), value, threshold, detail, System.currentTimeMillis()));
+            rows.add(RowFactory.create(runId, snapshotId(spark, cfg, check), check.name(),
+                    check.severity().name(), value, threshold, detail, System.currentTimeMillis()));
             System.out.printf("[quality] %-20s %-6s observed=%.4f threshold=%.4f -> %s (%s)%n",
-                    check.getName(), check.getSeverity(), value, threshold,
+                    check.name(), check.severity(), value, threshold,
                     failed ? "FAIL" : "PASS", detail.isEmpty() ? "-" : detail);
-            if (failed && check.getSeverity().failsJob()) {
+            if (failed && check.severity().failsJob()) {
                 failedErrors++;
             } else if (failed) {
                 failedWarns++;
@@ -80,7 +80,7 @@ public class QualityJob implements LakeJob {
 
     /** 快照 ID 取被检查来源表的最近一次提交，让结果能定位到具体数据版本 */
     private static String snapshotId(SparkSession spark, PlatformConfig cfg, QualityCheck check) {
-        String table = "silver".equals(check.getSource())
+        String table = "silver".equals(check.source())
                 ? TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn()
                 : TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn();
         try {

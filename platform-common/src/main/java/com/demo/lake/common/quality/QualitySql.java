@@ -19,9 +19,9 @@ public final class QualitySql {
         Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(cfg));
         vars.put("silver_table", TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn());
         vars.put("gold_table", TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn());
-        List<String> statements = SqlScript.split(SqlTemplate.renderResource(check.getResource(), vars));
+        List<String> statements = SqlScript.split(SqlTemplate.renderResource(check.resource(), vars));
         if (statements.size() != 1) {
-            throw new IllegalStateException("质量检查模板应只有一条语句: " + check.getResource());
+            throw new IllegalStateException("质量检查模板应只有一条语句: " + check.resource());
         }
         return SqlScript.stripComments(statements.get(0)).trim();
     }
