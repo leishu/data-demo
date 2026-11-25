@@ -142,15 +142,15 @@ class IcebergLocalRoundTripTest {
     @Order(4)
     void maintenanceProceduresWork() {
         spark.sql("CALL " + cfg.catalogName() + ".system.rewrite_data_files("
-                + "table => '" + cfg.database() + "." + LakeTables.SILVER_ORDERS + "', "
+                + "table => '" + silver.fqn() + "', "
                 + "options => map('min-input-files', '2', 'target-file-size-bytes', '1048576'))");
 
         spark.sql("CALL " + cfg.catalogName() + ".system.rewrite_manifests("
-                + "table => '" + cfg.database() + "." + LakeTables.SILVER_ORDERS + "')");
+                + "table => '" + silver.fqn() + "')");
 
         String olderThan = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(1).format(TS);
         spark.sql("CALL " + cfg.catalogName() + ".system.expire_snapshots("
-                + "table => '" + cfg.database() + "." + LakeTables.SILVER_ORDERS + "', "
+                + "table => '" + silver.fqn() + "', "
                 + "older_than => TIMESTAMP '" + olderThan + "', retain_last => 1)");
 
         assertEquals(1L, spark.sql("SELECT count(*) FROM " + silver.metadata("snapshots")).head().getLong(0));
