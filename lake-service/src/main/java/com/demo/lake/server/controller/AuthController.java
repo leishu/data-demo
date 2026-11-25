@@ -1,7 +1,7 @@
 package com.demo.lake.server.controller;
 
 import com.demo.lake.server.config.LakeProperties;
-import com.demo.lake.server.observability.AuditService;
+import com.demo.lake.server.observability.service.AuditService;
 import com.demo.lake.server.security.ApiAuthWebFilter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

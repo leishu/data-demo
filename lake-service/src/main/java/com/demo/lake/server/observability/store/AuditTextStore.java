@@ -1,4 +1,4 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.store;
 
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.support.StateDbDdl;

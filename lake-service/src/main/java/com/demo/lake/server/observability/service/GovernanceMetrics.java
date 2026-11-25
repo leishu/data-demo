@@ -1,4 +1,4 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.service;
 
 import com.demo.lake.common.governance.AssetDefinition;
 import com.demo.lake.common.governance.GovernanceCatalog;

@@ -4,7 +4,7 @@ import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.store.RunStateStore;
 import com.demo.lake.server.config.LakeProperties;
-import com.demo.lake.server.observability.LakeMetrics;
+import com.demo.lake.server.observability.service.LakeMetrics;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;

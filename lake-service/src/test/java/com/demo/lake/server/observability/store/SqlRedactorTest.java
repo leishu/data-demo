@@ -1,4 +1,4 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.store;
 
 import org.junit.jupiter.api.Test;
 

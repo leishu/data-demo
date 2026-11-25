@@ -1,4 +1,4 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.model;
 
 import java.time.Instant;
 import java.util.Map;

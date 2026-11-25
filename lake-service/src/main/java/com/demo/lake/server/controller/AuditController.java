@@ -1,9 +1,9 @@
 package com.demo.lake.server.controller;
 
-import com.demo.lake.server.observability.AuditBuffer;
-import com.demo.lake.server.observability.AuditEvent;
-import com.demo.lake.server.observability.AuditService;
-import com.demo.lake.server.observability.AuditTextStore;
+import com.demo.lake.server.observability.store.AuditBuffer;
+import com.demo.lake.server.observability.model.AuditEvent;
+import com.demo.lake.server.observability.service.AuditService;
+import com.demo.lake.server.observability.store.AuditTextStore;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;

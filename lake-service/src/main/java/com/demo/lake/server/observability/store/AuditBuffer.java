@@ -1,5 +1,6 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.store;
 
+import com.demo.lake.server.observability.model.AuditEvent;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayDeque;

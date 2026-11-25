@@ -1,8 +1,8 @@
 package com.demo.lake.server.security;
 
 import com.demo.lake.server.config.LakeProperties;
-import com.demo.lake.server.observability.AuditService;
-import com.demo.lake.server.observability.LakeMetrics;
+import com.demo.lake.server.observability.service.AuditService;
+import com.demo.lake.server.observability.service.LakeMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.Ordered;

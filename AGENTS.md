@@ -39,10 +39,12 @@ lakehouse-demo/
 ├── lake-adhoc/               即席查询：官方 trino-jdbc 薄封装 + ${var} 预处理 + 表格输出
 ├── lake-service/             Spring Boot 4 服务（查询/作业 REST + SSE + 控制台）
 │   └── src/main/java/com/demo/lake/server/
-│       ├── query/{QueryController, QueryService, SqlGuard, ...}   查询 + 只读守卫
+│       ├── controller/                    HTTP 入口（Auth / Audit / Batch / Governance / Query / Semantic）
+│       ├── query/{SqlGuard, service/QueryService, service/QueryQuotaService, ...}  查询 + 只读守卫
 │       ├── batch/service/                 作业调度（JobDispatcher / JobExecutor / 完成回调）
 │       ├── batch/store/                   运行态/日志的 JDBC 存储（JdbcRunStateStore / JdbcLogStore）
-│       ├── observability/{AuditService, IcebergTableMetrics, ...} 审计 / 指标
+│       ├── governance/{model,service}     资产目录 / 质量 / 血缘 / 保留审计
+│       ├── observability/{model,store,service}  审计 / 指标（同 governance 分层）
 │       ├── support/{StateDbDdl, StateDbTables}  状态库 DDL 装载 + 表名常量
 │       ├── config/LakeConfiguration.java  运行时配置（conf/platform.properties 回显）
 │   └── src/main/resources/sql/state/     H2/Postgres 状态库 DDL（schema/表/索引/迁移）

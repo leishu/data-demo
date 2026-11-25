@@ -1,4 +1,4 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.service;
 
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.config.LakeProperties;

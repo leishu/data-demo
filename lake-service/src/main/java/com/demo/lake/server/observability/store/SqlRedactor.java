@@ -1,4 +1,4 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.store;
 
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
  * 「哪天、哪个商户」），其余字符串掩码；出现 password/token/phone/id_card 等上下文时一律掩码。
  * 合规要求逐字原文时把 {@code lake.audit.redact} 关掉，并按最高敏感级管理保险箱。</p>
  */
-public final class SqlRedactor {
+final class SqlRedactor {
 
     private static final Pattern DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
     private static final Pattern SAFE_NUMBER = Pattern.compile("-?\\d{1,10}(\\.\\d{1,6})?");

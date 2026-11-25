@@ -1,4 +1,4 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.service;
 
 import com.demo.lake.common.batch.BatchRunStatus;
 import io.micrometer.core.instrument.Counter;

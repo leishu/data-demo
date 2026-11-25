@@ -7,26 +7,39 @@
 
 ```
 lake-service/src/main/java/com/demo/lake/server/
-├── LakeServiceApplication.java
-├── config/LakeConfiguration.java       # 运行时配置（conf/platform.properties 回显、批作业开关）
-├── controller/
-│   ├── AuthController.java             # /api/auth/session|login：控制台登录态（公开，不弹原生 Basic 框）
-│   ├── AuditController.java            # /api/audit*：最近事件 + 原文保险箱（原文需 AUDITOR）
-│   └── GovernanceController.java       # /api/governance/{assets,dq,lineage,retention}：资产/质量/血缘/保留审计
+├── LakeServiceApplication.java          # Spring Boot 入口（JDK 21）
+├── config/                              # LakeProperties / LakeConfiguration / OpenApiConfig / WebConfig
+├── controller/                          # 全部 HTTP 入口（除公开接口外走 HTTP Basic）
+│   ├── AuthController.java              # /api/auth/session|login：控制台登录态（公开，不弹原生 Basic 框）
+│   ├── AuditController.java             # /api/audit*：最近事件 + 原文保险箱（原文需 AUDITOR）
+│   ├── BatchController.java             # /api/batch/{job}（202 + runId）、/api/batch/runs（含 SSE 事件流）
+│   ├── GovernanceController.java        # /api/governance/{assets,dq,lineage,retention}
+│   ├── QueryController.java             # /api/query、/api/query/stream（SSE）、/api/tables、/api/config
+│   └── SemanticController.java          # /api/semantics/**（指标查询与 SQL 渲染）
 ├── query/
-│   ├── QueryController.java            # /api/query、/api/query/stream（SSE）
-│   ├── QueryService.java               # 同步查询执行、只读守卫调用、审计记账
-│   ├── SqlGuard.java                   # 只读守卫：默认白名单 select/with/show/describe/explain，看穿 EXPLAIN ANALYZE
-│   └── ...                             # QueryFailedException / InvalidQueryException / TrinoUnavailableException
+│   ├── SqlGuard.java                    # 只读守卫：默认白名单 select/with/show/describe/explain，看穿 EXPLAIN ANALYZE
+│   ├── QueryFailedException.java ...    # InvalidQueryException / TrinoUnavailableException / QueryQuotaExceededException 等
+│   ├── model/                           # Column / QueryResult / TableInfo / QueryEvent
+│   └── service/                         # QueryService（执行 + 审计记账）/ QueryQuotaService（配额并发）
 ├── batch/
-│   ├── BatchController.java            # /api/batch/{job}（202 + runId）、/api/batch/runs
-│   ├── service/                        # JobDispatcher / JobExecutor / JobCompletionService / BatchHistoryService
-│   └── store/                          # RunStateStore / JdbcRunStateStore / LogStore / JdbcLogStore（状态库访问）
-├── observability/                      # AuditService / AuditEvent / IcebergTableMetrics / LakeMetrics
-├── support/StateDbDdl.java              # 状态库 DDL 模板装载（classpath:sql/state/）
-├── support/StateDbTables.java           # lake_batch / lake_audit 表名单一事实源
-├── health/TrinoHealthIndicator.java    # /actuator/health（trino 组件）
-└── observability/SqlRedactor.java      # 审计原文保险箱写入前的 SQL 脱敏（保留结构，掩码敏感字面量）
+│   ├── model/                           # BatchRun / JobView / RunsView / BatchEvent
+│   ├── service/                         # JobDispatcher / JobExecutor（Local / Kubernetes）/ JobCompletionService
+│   │                                    # + BatchJobService / BatchHistoryService / BatchWatcher / RunningRunRegistry
+│   └── store/                           # RunStateStore / JdbcRunStateStore / LogStore / JdbcLogStore（状态库访问）
+├── governance/
+│   ├── model/                           # GovernanceAsset / DqResultView / LineageView / RetentionAuditView
+│   └── service/                         # GovernanceService / DqResultService / LineageService / RetentionAuditService
+├── observability/                       # 审计 / 指标（按 model / store / service 分层，同 governance）
+│   ├── model/                           # AuditEvent（审计事件 record）
+│   ├── store/                           # AuditBuffer（内存环形缓冲）/ AuditTextStore（加密原文保险箱）
+│   │                                    # + SqlRedactor（写保险箱前的 SQL 字面量脱敏）
+│   └── service/                         # AuditService / LakeMetrics / IcebergTableMetrics / GovernanceMetrics
+│                                        # + LakeViewDdl（启动时建脱敏视图）
+├── security/                            # ApiAuthWebFilter（HTTP Basic）/ ApiPrincipal
+├── exception/                           # ApiExceptionHandler / ErrorMapper / ApiError
+├── filter/                              # WebAccessLogFilter
+├── health/TrinoHealthIndicator.java     # /actuator/health（trino 组件）
+└── support/                             # StateDbDdl（DDL 模板装载）/ StateDbTables（表名单一事实源）/ DbLocks
 
 lake-service/src/main/resources/sql/state/   # H2/Postgres 双兼容 DDL：schema / 各表 / 索引 / 迁移列定义
 ```

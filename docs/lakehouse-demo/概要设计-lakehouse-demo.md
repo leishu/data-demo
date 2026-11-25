@@ -647,10 +647,10 @@ staleRunning(now - 120s) → 查湖表 ops.batch_runs
 
 ### 4.12 审计与可观测流
 
-- **审计三重出口**：`AuditService.record()` 生成 UUID eventId → 写 `logs/audit.log`（90 天滚动，独立 logger）+ 内存环形缓冲（最近 200 条，`GET /api/audit`）+ 返回 eventId 供保险箱关联。SQL 只写 SHA-256 前 16 位指纹，不写原文/口令。〔FACT｜observability/AuditService.java:14-47〕〔FACT｜OBSERVABILITY.md:45-58〕
-- **原文保险箱**（可选）：开启后 SQL 经 `SqlRedactor` 启发式脱敏 → AES-GCM 加密（eventId 作 AAD）→ Postgres `lake_audit.query_text`，同时记录 `key_id`；密钥按 `key_id` 组成密钥环，轮换后旧原文仍可读，缺密钥/解密失败会抛错并计 `lake.audit.vault.decrypt.error`，不再伪装成 404；读取需 AUDITOR 角色且每次读取再写一条审计。〔FACT｜observability/AuditTextStore.java:49-165〕〔FACT｜OBSERVABILITY.md:60-100〕
-- **指标**：Micrometer 埋点同时经 `/actuator/metrics`（人看）与 `/actuator/prometheus`（抓取，需 BATCH 角色）暴露；内置 `micrometer-registry-prometheus`，名字含 `lake.query.*` / `lake.batch.*` / `lake.auth.denied` / `lake.iceberg.*`。SLI/SLO、PromQL 与 5 条告警规则见 `docs/OBSERVABILITY.md` 与 `infra/prometheus/rules/lake-slo.yml`。〔FACT｜observability/LakeMetrics.java:11-24〕〔FACT｜observability/IcebergTableMetrics.java:23-30〕
-- **湖表指标采集**：`IcebergTableMetrics` 每 60s 经 Trino 查 `iceberg.lake."{table}$files"` / `$snapshots`，把文件数、平均文件大小、总字节数、快照数写成带 `table` 标签的 gauge；Trino 没起或表不存在时保留上次值，不影响启动。Grafana 面板已加「Iceberg 文件数/快照数」「平均文件大小」两屏。〔FACT｜observability/IcebergTableMetrics.java:35-140〕〔FACT｜infra/grafana/dashboards/lake-service-slo.json:100-140〕
+- **审计三重出口**：`AuditService.record()` 生成 UUID eventId → 写 `logs/audit.log`（90 天滚动，独立 logger）+ 内存环形缓冲（最近 200 条，`GET /api/audit`）+ 返回 eventId 供保险箱关联。SQL 只写 SHA-256 前 16 位指纹，不写原文/口令。〔FACT｜observability/service/AuditService.java:16-49〕〔FACT｜OBSERVABILITY.md:45-58〕
+- **原文保险箱**（可选）：开启后 SQL 经 `SqlRedactor` 启发式脱敏 → AES-GCM 加密（eventId 作 AAD）→ Postgres `lake_audit.query_text`，同时记录 `key_id`；密钥按 `key_id` 组成密钥环，轮换后旧原文仍可读，缺密钥/解密失败会抛错并计 `lake.audit.vault.decrypt.error`，不再伪装成 404；读取需 AUDITOR 角色且每次读取再写一条审计。〔FACT｜observability/store/AuditTextStore.java:49-165〕〔FACT｜OBSERVABILITY.md:60-100〕
+- **指标**：Micrometer 埋点同时经 `/actuator/metrics`（人看）与 `/actuator/prometheus`（抓取，需 BATCH 角色）暴露；内置 `micrometer-registry-prometheus`，名字含 `lake.query.*` / `lake.batch.*` / `lake.auth.denied` / `lake.iceberg.*`。SLI/SLO、PromQL 与 5 条告警规则见 `docs/OBSERVABILITY.md` 与 `infra/prometheus/rules/lake-slo.yml`。〔FACT｜observability/service/LakeMetrics.java:11-24〕〔FACT｜observability/service/IcebergTableMetrics.java:23-30〕
+- **湖表指标采集**：`IcebergTableMetrics` 每 60s 经 Trino 查 `iceberg.lake."{table}$files"` / `$snapshots`，把文件数、平均文件大小、总字节数、快照数写成带 `table` 标签的 gauge；Trino 没起或表不存在时保留上次值，不影响启动。Grafana 面板已加「Iceberg 文件数/快照数」「平均文件大小」两屏。〔FACT｜observability/service/IcebergTableMetrics.java:35-140〕〔FACT｜infra/grafana/dashboards/lake-service-slo.json:100-140〕
 - **监控栈**：可选 `monitoring` profile 起 Prometheus（host 网络，抓 `127.0.0.1:8088`，basic_auth=operator）与 Grafana（数据源/面板自动装载），同一 target 同时覆盖宿主机服务与全栈容器服务。〔FACT｜infra/docker-compose.yml:161-212〕〔FACT｜infra/prometheus/prometheus.yml:1-25〕
 
 ### 4.13 前端控制台流（lake-ui）
@@ -733,7 +733,7 @@ Trino metadata 表（iceberg.lake."{table}$files" / $snapshots）
 **为什么用 Trino 而不是 Iceberg 客户端**：服务侧已经有只读 Trino 连接池，元数据表查询只是两条 SQL，
 不需要再引一个 Iceberg runtime 依赖（版本与 Spark 绑死，容易冲突）。表名做白名单校验（`[A-Za-z0-9_]+`），
 `$` 元数据表名整体加双引号；查询失败只 debug 记日志并保留上次 gauge 值。
-〔FACT｜observability/IcebergTableMetrics.java:35-140〕〔FACT｜lake-service/src/main/resources/application.yml:38-46〕
+〔FACT｜observability/service/IcebergTableMetrics.java:35-140〕〔FACT｜lake-service/src/main/resources/application.yml:38-46〕
 
 ---
 
@@ -945,7 +945,7 @@ erDiagram
 
 指标侧：Micrometer 同时暴露 `/actuator/metrics` 与 `/actuator/prometheus`（后者需 BATCH 角色）；可选 `monitoring` profile 起 Prometheus + Grafana，告警规则与 SLO 一一对应；`IcebergTableMetrics` 每 60s 补 `$files` / `$snapshots` 表级指标。访问日志在 `doFinally` 记录整段耗时（SSE 为全流时长），且因 SQL 走 POST body 不会记下原文。详见 `docs/OBSERVABILITY.md`。
 
-〔FACT｜observability/*〕〔FACT｜filter/WebAccessLogFilter.java:88-106〕〔FACT｜infra/prometheus/rules/lake-slo.yml:1-59〕
+〔FACT｜observability/{model,store,service}/*〕〔FACT｜filter/WebAccessLogFilter.java:88-106〕〔FACT｜infra/prometheus/rules/lake-slo.yml:1-59〕
 
 ### 7.4 配置管理方式
 两套配置分工：`platform.*`（连哪个湖，五级覆盖，全项目唯一来源）与 `lake.*`（服务怎么跑，`application.yml` 绑定）。`/api/config` 回显生效配置（S3 密钥打码）并下发作业卡片。〔FACT｜common/config/PlatformConfig.java:16-26〕〔FACT｜controller/QueryController.java:143-166〕

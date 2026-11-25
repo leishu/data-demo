@@ -1,5 +1,7 @@
-package com.demo.lake.server.observability;
+package com.demo.lake.server.observability.service;
 
+import com.demo.lake.server.observability.model.AuditEvent;
+import com.demo.lake.server.observability.store.AuditBuffer;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

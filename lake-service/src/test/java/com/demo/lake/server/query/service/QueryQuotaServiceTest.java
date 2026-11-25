@@ -1,7 +1,7 @@
 package com.demo.lake.server.query.service;
 
 import com.demo.lake.server.config.LakeProperties;
-import com.demo.lake.server.observability.LakeMetrics;
+import com.demo.lake.server.observability.service.LakeMetrics;
 import com.demo.lake.server.query.QueryQuotaExceededException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.h2.jdbcx.JdbcDataSource;

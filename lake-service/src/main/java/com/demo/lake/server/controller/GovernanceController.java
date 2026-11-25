@@ -1,4 +1,4 @@
-package com.demo.lake.server.governance.controller;
+package com.demo.lake.server.controller;
 
 import com.demo.lake.server.governance.model.DqResultView;
 import com.demo.lake.server.governance.model.GovernanceAsset;
