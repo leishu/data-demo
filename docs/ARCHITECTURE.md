@@ -122,3 +122,25 @@ lake-ui：独立 Vue 前端，构建产物进 lake-service 静态资源，不参
 | 文件数 / 快照数 / 最近更新时间 | `IcebergTableMetrics.snapshot()` | 从 `$files` / `$snapshots` 定时采集，关闭采集时显示 UNKNOWN |
 
 表浏览页的徽标与档案条都读 `/api/governance/assets`，不在前端硬编码负责人或级别。
+
+## 9. 数据质量检查流
+
+```
+QualityJob --job quality [--inject-faults]
+    │  逐项执行 sql/quality/*.sql（common 的 QualityChecks 是注册表）
+    ▼
+observed / threshold / detail ──写──> iceberg.ops.dq_results（run_id + snapshot_id）
+    │                                      │
+    │ ERROR 项失败即抛异常 → BatchApp 落 FAILED ─┘
+    └──────────────────────────────────────> GET /api/governance/dq → 治理页（点 run_id 跳作业日志）
+```
+
+设计约定：
+
+- 所有检查统一产出「越大越差」的 `observed` 与允许上限 `threshold`，`observed > threshold` 即失败，
+  Java 侧不需要为每种检查写一套比较逻辑；`detail` 存重复订单号/异常行示例作为证据。
+- 检查项与级别只在 `QualityChecks` 登记，SQL 全外置到 `sql/quality/`；DDL 在 `sql/ddl/50_ops_dq_results.sql`，
+  由 `LakeTables` 装载、`SqlResources` 登记，单测遍历保证没有漏模板。
+- `--inject-faults` 只往 silver 写脏数据（不重跑 transform），所以能稳定命中唯一性与金额范围两项 ERROR；
+  集成测试用真实 Spark 验证「干净数据全 PASS → 注入后失败并留下证据」这条闭环。
+- 结果表读不到（没跑 init / Trino 不可用）时接口返回空列表，治理页照常打开。

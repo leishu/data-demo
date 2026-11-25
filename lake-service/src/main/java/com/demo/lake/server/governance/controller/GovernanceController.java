@@ -1,12 +1,16 @@
 package com.demo.lake.server.governance.controller;
 
+import com.demo.lake.server.governance.model.DqResultView;
 import com.demo.lake.server.governance.model.GovernanceAsset;
+import com.demo.lake.server.governance.service.DqResultService;
 import com.demo.lake.server.governance.service.GovernanceService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
@@ -20,11 +24,20 @@ import java.util.List;
 public class GovernanceController {
 
     private final GovernanceService service;
+    private final DqResultService dq;
 
     @Operation(summary = "治理资产清单",
             description = "GovernanceCatalog ∪ information_schema，并合并 Iceberg 文件数/快照数/最近更新时间")
     @GetMapping("/assets")
     public Mono<List<GovernanceAsset>> assets() {
         return service.assets(System.currentTimeMillis());
+    }
+
+    @Operation(summary = "质量检查结果",
+            description = "ops.dq_results 最近 N 条，含 observed / threshold / 证据与所属 run_id；表不存在时返回空列表")
+    @GetMapping("/dq")
+    public Mono<List<DqResultView>> dq(
+            @Parameter(description = "返回条数，默认 50，最大 100") @RequestParam(defaultValue = "50") int limit) {
+        return dq.recent(limit);
     }
 }

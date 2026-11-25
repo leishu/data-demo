@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lake-service 端到端冒烟：健康检查 / 鉴权 / 查询 / SSE / 语义层 / 资产目录 / 批作业 / 审计 / 只读守卫 / 指标抓取
+# lake-service 端到端冒烟：健康检查 / 鉴权 / 查询 / SSE / 语义层 / 资产目录 / 质量结果 / 批作业 / 审计 / 只读守卫 / 指标抓取
 #
 #   bin/smoke.sh                         # 默认 http://localhost:8088，operator/operator
 #   BASE_URL=http://host:8088 bin/smoke.sh
@@ -105,6 +105,9 @@ if grep -q '"owner"' "${TMP}/body" && grep -q '"sensitivityLabel"' "${TMP}/body"
 else
   bad "治理资产字段不完整：$(head -c 300 "${TMP}/body" 2>/dev/null || true)"
 fi
+
+code="$(req GET "/api/governance/dq?limit=5" "")"
+check_code "GET /api/governance/dq" 200 "${code}"
 
 step "3. 同步查询"
 code="$(req POST /api/query '{"sql":"select count(*) as c from silver_orders","maxRows":10}')"

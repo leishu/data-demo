@@ -5,6 +5,7 @@ import com.demo.lake.batch.job.EvolveJob;
 import com.demo.lake.batch.job.IngestJob;
 import com.demo.lake.batch.job.InitJob;
 import com.demo.lake.batch.job.MaintainJob;
+import com.demo.lake.batch.job.QualityJob;
 import com.demo.lake.batch.job.ShowJob;
 import com.demo.lake.batch.job.TransformJob;
 import com.demo.lake.batch.job.VerifySqlJob;
@@ -49,6 +50,7 @@ public final class BatchApp {
         register(new MaintainJob());
         register(new ShowJob());
         register(new VerifySqlJob());
+        register(new QualityJob());
     }
 
     private static void register(LakeJob job) {
@@ -152,6 +154,9 @@ public final class BatchApp {
         System.out.println();
         System.out.println("verify-sql:");
         System.out.println("  --sql-file <path>     用 Spark 校验 ad-hoc SQL（跳过 @trino-only 语句）");
+        System.out.println();
+        System.out.println("quality:");
+        System.out.println("  --inject-faults       演示用：先注入重复单 + 负金额，再跑检查（预期 FAILED）");
         System.out.println();
         System.out.println("示例:");
         System.out.println("  --job all --days 7 --orders-per-day 3000");

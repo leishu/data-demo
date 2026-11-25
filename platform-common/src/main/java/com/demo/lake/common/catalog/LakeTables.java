@@ -42,6 +42,8 @@ public final class LakeTables {
     public static final String OPS_SCHEMA = "ops";
     /** 批作业运行历史：一行一次运行的终态，由 BatchApp 写、lake-service 读 */
     public static final String BATCH_RUNS = "batch_runs";
+    /** 数据质量检查结果：一行一次检查，quality 作业写、治理页读 */
+    public static final String DQ_RESULTS = "dq_results";
 
     /** 建库 2 条 + 建表 4 条，顺序即执行顺序。 */
     public static List<String> all(PlatformConfig cfg) {
@@ -51,6 +53,7 @@ public final class LakeTables {
         out.addAll(ddl(cfg, SqlResources.DDL_SILVER, true));
         out.addAll(ddl(cfg, SqlResources.DDL_GOLD, false));
         out.addAll(ddl(cfg, SqlResources.DDL_BATCH_RUNS, false));
+        out.addAll(ddl(cfg, SqlResources.DDL_DQ_RESULTS, false));
         return out;
     }
 

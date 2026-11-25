@@ -27,5 +27,9 @@
 | **敏感级别** | L1 公开 → L4 受限（`Sensitivity` 枚举）；页面按级别给徽标着色 |
 | **新鲜度 SLA** | 一张表允许的最大更新间隔（小时）；用 Iceberg 最近快照提交时间判定 OK / WARN(2×SLA 内) / BREACH / UNKNOWN |
 | **治理资产** | `/api/governance/assets` 的一行：`GovernanceCatalog` ∪ `information_schema` ∪ Iceberg 指标；未登记的表也会显示出来 |
+| **质量检查** | `quality` 作业的六项检查：银层唯一性/非空/金额范围、金层退款率/净收入一致性/相邻天行数波动；SQL 在 `sql/quality/` |
+| **检查级别** | ERROR 失败即作业 FAILED；WARN 只记录不阻断（行数波动用 WARN） |
+| **dq_results** | `ops.dq_results`：一行一次检查，`run_id` 与 `ops.batch_runs` 对齐，`snapshot_id` 定位被检查表的最近快照，observed > threshold 即失败 |
+| **注入故障** | `--inject-faults`：quality 作业演示开关，往 silver 写两条重复订单号 + 一条负金额，稳定产出失败证据 |
 
 > 词条会迭代：新增设计决策的同时补充术语。

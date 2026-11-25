@@ -15,7 +15,8 @@ const NAV = [
   { key: '/semantics', label: '指标', index: '3' },
   { key: '/jobs', label: '批作业', index: '4' },
   { key: '/audit', label: '审计', index: '5' },
-  { key: '/config', label: '配置', index: '6' }
+  { key: '/governance', label: '治理', index: '6' },
+  { key: '/config', label: '配置', index: '7' }
 ]
 
 const activeKey = computed(() => '/' + (route.path.split('/')[1] || 'query'))

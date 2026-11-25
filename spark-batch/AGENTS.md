@@ -20,7 +20,8 @@ spark-batch/
         ├── EvolveJob.java                   # 加 channel 列 + 回填（纯元数据变更）
         ├── MaintainJob.java                 # rewrite_data_files / rewrite_manifests / expire_snapshots
         ├── ShowJob.java                     # 只读巡检（快照/分区/小文件）
-        └── VerifySqlJob.java                # Spark 执行 sql/adhoc 脚本（跳过 @trino-only）
+        ├── VerifySqlJob.java                # Spark 执行 sql/adhoc 脚本（跳过 @trino-only）
+        └── QualityJob.java                  # 六项质量检查，结果写 ops.dq_results；--inject-faults 注入演示脏数据
 ```
 
 ## 2. 工作流

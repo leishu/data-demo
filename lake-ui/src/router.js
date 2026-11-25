@@ -5,6 +5,7 @@ import TablesView from './views/TablesView.vue'
 import JobsView from './views/JobsView.vue'
 import SemanticView from './views/SemanticView.vue'
 import AuditView from './views/AuditView.vue'
+import GovernanceView from './views/GovernanceView.vue'
 import ConfigView from './views/ConfigView.vue'
 
 // hash 模式：被 Spring Boot 当静态资源托管时不需要服务端做 history fallback
@@ -41,6 +42,12 @@ const router = createRouter({
       name: 'audit',
       component: AuditView,
       meta: { title: '审计', subtitle: '最近事件与查询原文保险箱（原文读取需 AUDITOR 角色）' }
+    },
+    {
+      path: '/governance',
+      name: 'governance',
+      component: GovernanceView,
+      meta: { title: '数据治理', subtitle: '质量检查失败项、证据与运行溯源，以及表级治理档案' }
     },
     {
       path: '/config',

@@ -26,13 +26,14 @@ public final class LakeJobs {
     public static final String MAINTAIN = "maintain";
     public static final String SHOW = "show";
     public static final String VERIFY_SQL = "verify-sql";
+    public static final String QUALITY = "quality";
 
     /** 跑完整条链路的快捷方式：不是作业实现，但同样是 --job 的合法取值 */
     public static final String ALL = "all";
 
     /** 已注册的作业名，顺序即 --help 与页面里的展示顺序 */
     public static final List<String> NAMES = List.of(
-            INIT, INGEST, TRANSFORM, EVOLVE, MAINTAIN, SHOW, VERIFY_SQL);
+            INIT, INGEST, TRANSFORM, EVOLVE, MAINTAIN, SHOW, VERIFY_SQL, QUALITY);
 
     /** 允许作为 --job 取值的全部名字（{@link #NAMES} + {@link #ALL}），服务端白名单的默认值 */
     public static final List<String> CHOICES = choices();
@@ -65,6 +66,9 @@ public final class LakeJobs {
             JobMeta.other(VERIFY_SQL, "SQL 校验",
                     "用 Spark 执行 --sql-file 指定的 ad-hoc 脚本（默认 01_daily_revenue.sql）；"
                             + "跳过 @trino-only 语句，其余做最小方言适配，有失败即作业失败").withCliOnly(),
+            JobMeta.other(QUALITY, "数据质量",
+                    "跑唯一性/非空/金额范围/退款率/净收入一致性/行数波动六项检查，结果写 ops.dq_results；"
+                            + "ERROR 项失败即作业失败（--inject-faults 可注入重复单与负金额演示）"),
             JobMeta.other(ALL, "全链路",
                     "按 init → ingest → transform → maintain → show 顺序跑完整链路"
                             + "（加 --evolve 会插入 evolve），全程复用同一个 SparkSession").withFeatured());
