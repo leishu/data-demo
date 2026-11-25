@@ -169,3 +169,25 @@ retention 作业（默认 dry-run）
   记账是旁路，失败只提示不改变作业退出码。
 - 保留期是资产目录的一个字段（`retentionDays`），不在 retention 作业里重复维护；`--retention-days` 只作为演示/回归覆盖。
 - dry-run 是默认，且同样写前后审计事件——审计的是「评估过什么」，不只是「删过什么」。
+
+## 11. 敏感列分级与治理告警
+
+```
+敏感列口径（MaskingCatalog 单一事实源）
+   ├─ Trino 视图：sql/view/*_masked（analyst）/ *_restricted（viewer）
+   │       └─ 服务采样按角色选目标；AUDITOR 走单独授权读基础表明文
+   └─ rules.json 的 columns[].mask：误给基础表 SELECT 时仍兜底（masked_reader 演示）
+
+GovernanceCatalog.SLA + IcebergTableMetrics.snapshot ─┐
+ops.dq_results（quality 作业写） ─────────────────────┴─> GovernanceMetrics
+                                                            └─> /actuator/prometheus
+                                                                  └─> lake-slo.yml 告警
+```
+
+关键取舍：
+
+- 视图读基础表的最新快照，不存数据副本；`--evolve` 加的可选列不进明细视图，聚合口径继续走 gold。
+- 视图里做的是可区分的哈希/分桶，access-control 兜底掩码直接给 `***`：即使有人误把基础表
+  授权给分析角色，也拿不到明文；而正常走视图时哈希仍有区分度。
+- 服务只暴露 gauge 数字，SLA 阈值只在 Prometheus 规则里维护一份，避免 Java 与 YAML 两处漂移。
+- 新鲜度没有快照时补 -1，规则用 `>= 0` 跳过 UNKNOWN；质量检查恢复时 gauge 清零，告警才会自动消。

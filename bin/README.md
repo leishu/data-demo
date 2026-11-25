@@ -12,6 +12,7 @@ AI 助手改代码后需要重跑的命令见 [AGENTS.md「修改前的校验思
 | `stack.sh` | 全栈模式（Docker infra + Trino + 服务容器） | `bin/stack.sh up` / `up --monitoring` / `smoke` / `batch --job all` / `down` |
 | `infra.sh` | 起/停/诊断基础设施（Postgres + MinIO + HMS；Trino 按需） | `bin/infra.sh up trino`；`bin/infra.sh doctor`（端口/HTTP 自检） |
 | `trino-query.sh` | 即席查询 CLI（`${var}` 占位符由 platform-common 替换） | `bin/trino-query.sh --list`；`--sql "select ..." --stats`；`--sql-file ... --params snapshot_id=123` |
+| `init-views.sh` | 在 Trino 侧建/刷新脱敏视图（模板来自 platform-common） | `bin/init-views.sh --print-only`；`bin/init-views.sh --user etl`（security profile 需有 OWNERSHIP 的账号） |
 | `submit-batch.sh` | 集群模式提交批作业（`spark-submit --packages` 拉 Iceberg runtime） | `SPARK_MASTER=yarn bin/submit-batch.sh --job all --catalog-type hive --warehouse s3a://lake/warehouse` |
 | `scheduled-batch.sh` | 外部调度接入（以 `(job, 逻辑日期)` 为幂等键） | 给 Airflow/DolphinScheduler 等调度器调用 |
 | `storage-lifecycle.sh` | 配置了 bucket lifecycle 模板 | `bin/storage-lifecycle.sh` |
@@ -28,3 +29,4 @@ AI 助手改代码后需要重跑的命令见 [AGENTS.md「修改前的校验思
 | 想看三层表/数据 | `bin/dev-batch.sh --job show`；`bin/trino-query.sh --list` 查表清单 |
 | 语义层/审计异常 | `curl -u operator:operator http://localhost:8088/api/config` |
 | 怀疑查询被拒 | `curl -u viewer:viewer -H 'Content-Type: application/json' -d '{"sql":"update t set x=1"}' http://localhost:8088/api/query` 应报只读拦截；注意 `bin/trino-query.sh` 直连 Trino，不经过 SqlGuard |
+| 脱敏视图没建出来 | 先看服务启动日志的「创建脱敏视图失败」，再 `bin/init-views.sh --print-only` 查渲染 SQL；安全 profile 下用 `--user etl` |

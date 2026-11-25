@@ -2,6 +2,7 @@ package com.demo.lake.server.controller;
 
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.config.PlatformConfig;
+import com.demo.lake.common.governance.MaskingCatalog;
 import com.demo.lake.server.batch.model.JobView;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.exception.ErrorMapper;
@@ -13,6 +14,7 @@ import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.model.TableInfo;
 import com.demo.lake.server.query.service.QueryQuotaService;
 import com.demo.lake.server.query.service.QueryService;
+import com.demo.lake.server.security.ApiPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -151,15 +153,29 @@ public class QueryController {
                 quotas::release);
     }
 
-    @Operation(summary = "表采样", description = "按 limit 采样一张表，返回结构与 /api/query 相同")
+    @Operation(summary = "表采样", description = "按 limit 采样一张表；敏感表按角色走脱敏视图，返回结构与 /api/query 相同")
     @GetMapping("/tables/{table}/sample")
     public Mono<QueryResult> sample(
             @Parameter(description = "表名", example = "orders") @PathVariable String table,
             @Parameter(description = "采样行数，默认 10") @RequestParam(defaultValue = "10") int limit,
             @Parameter(hidden = true) Principal principal) {
+        MaskingCatalog.Access access = accessOf(principal);
         return Mono.usingWhen(quotas.acquire(client(principal)),
-                permit -> queryService.sample(table, limit),
+                permit -> queryService.sample(table, limit, access),
                 quotas::release);
+    }
+
+    /** 服务角色 → 脱敏档位：AUDITOR 看明文，ANALYST 看 merchant_id 明文，其余一律最严 */
+    static MaskingCatalog.Access accessOf(Principal principal) {
+        if (principal instanceof ApiPrincipal api) {
+            if (api.roles().contains("AUDITOR")) {
+                return MaskingCatalog.Access.AUDITOR;
+            }
+            if (api.roles().contains("ANALYST")) {
+                return MaskingCatalog.Access.ANALYST;
+            }
+        }
+        return MaskingCatalog.Access.RESTRICTED;
     }
 
     /** 配额按认证账号分桶；没拿到 Principal（鉴权关闭时）退回匿名桶 */

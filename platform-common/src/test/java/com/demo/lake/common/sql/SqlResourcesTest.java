@@ -1,8 +1,10 @@
 package com.demo.lake.common.sql;
 
 import com.demo.lake.common.catalog.LakeTables;
+import com.demo.lake.common.catalog.LakeViews;
 import com.demo.lake.common.catalog.Migrations;
 import com.demo.lake.common.catalog.TableRef;
+import com.demo.lake.common.governance.MaskingCatalog;
 import com.demo.lake.common.catalog.TransformSql;
 import com.demo.lake.common.config.PlatformConfig;
 import org.junit.jupiter.api.Test;
@@ -96,6 +98,30 @@ class SqlResourcesTest {
         assertTrue(gold.contains("INSERT OVERWRITE "
                         + TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn() + " ("),
                 "INSERT OVERWRITE 必须显式列列表");
+    }
+
+    @Test
+    void viewTemplatesRenderMaskedColumnsAndRoleScopedMerchant() {
+        PlatformConfig cfg = cfg();
+        List<String> views = LakeViews.all(cfg);
+        assertEquals(4, views.size(), "两张明细表 × 两档角色视图");
+        for (String view : views) {
+            assertTrue(view.startsWith("CREATE OR REPLACE VIEW"), view);
+            assertFalse(SqlTemplate.hasUnresolved(view), "视图残留占位符: " + view);
+        }
+
+        String analyst = views.stream()
+                .filter(v -> v.contains(LakeTables.SILVER_ORDERS_MASKED)).findFirst().orElseThrow();
+        for (String column : MaskingCatalog.MASKED_COLUMNS) {
+            assertTrue(analyst.contains("AS " + column), "视图缺少脱敏列 " + column);
+        }
+        assertTrue(analyst.contains("sha256(to_utf8(user_id))"));
+        assertTrue(analyst.contains("AS amount"));
+        assertFalse(analyst.contains("sha256(to_utf8(merchant_id))"), "analyst 视图应保留 merchant_id 明文");
+
+        String restricted = views.stream()
+                .filter(v -> v.contains(LakeTables.SILVER_ORDERS_RESTRICTED)).findFirst().orElseThrow();
+        assertTrue(restricted.contains("sha256(to_utf8(merchant_id))"), "viewer 视图必须哈希 merchant_id");
     }
 
     @Test

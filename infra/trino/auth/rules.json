@@ -1,47 +1,53 @@
 {
   "catalogs": [
-    {
-      "user": "admin",
-      "catalog": ".*",
-      "allow": "all"
-    },
-    {
-      "user": "etl",
-      "catalog": "iceberg",
-      "allow": "read-write"
-    },
-    {
-      "user": "analyst",
-      "catalog": "iceberg",
-      "allow": "read-only"
-    }
+    { "user": "admin", "catalog": ".*", "allow": "all" },
+    { "user": "etl", "catalog": "iceberg", "allow": "read-write" },
+    { "user": "auditor", "catalog": "iceberg", "allow": "read-only" },
+    { "user": "analyst", "catalog": "iceberg", "allow": "read-only" },
+    { "user": "viewer", "catalog": "iceberg", "allow": "read-only" },
+    { "user": "masked_reader", "catalog": "iceberg", "allow": "read-only" },
+    { "user": "lake_service", "catalog": "iceberg", "allow": "read-only" },
+    { "catalog": "system", "allow": "none" }
   ],
   "schemas": [
-    {
-      "user": "admin",
-      "owner": true
-    }
+    { "user": "admin", "owner": true },
+    { "user": "etl", "catalog": "iceberg", "schema": "lake", "owner": true }
   ],
   "tables": [
+    { "user": "admin", "privileges": ["SELECT", "INSERT", "UPDATE", "DELETE", "OWNERSHIP", "GRANT_SELECT"] },
+    { "user": "etl", "catalog": "iceberg", "schema": "lake",
+      "privileges": ["SELECT", "INSERT", "UPDATE", "DELETE", "OWNERSHIP", "GRANT_SELECT"] },
+
+    { "user": "auditor", "catalog": "iceberg", "schema": "lake", "privileges": ["SELECT"] },
+
     {
-      "user": "etl",
-      "catalog": "iceberg",
-      "schema": "lake",
-      "privileges": ["SELECT", "INSERT", "UPDATE", "DELETE"]
+      "user": "masked_reader", "catalog": "iceberg", "schema": "lake",
+      "table": "(bronze|silver)_orders", "privileges": ["SELECT"],
+      "columns": [
+        { "name": "user_id", "mask": "'***'" },
+        { "name": "order_id", "mask": "'***'" },
+        { "name": "amount", "mask": "cast(0 as decimal(12,2))" },
+        { "name": "merchant_id", "mask": "'***'" }
+      ]
     },
-    {
-      "user": "analyst",
-      "catalog": "iceberg",
-      "schema": "lake",
-      "table": "silver_orders",
-      "privileges": ["SELECT"]
-    },
-    {
-      "user": "analyst",
-      "catalog": "iceberg",
-      "schema": "lake",
-      "table": "gold_daily_revenue",
-      "privileges": ["SELECT"]
-    }
+
+    { "user": "analyst", "catalog": "iceberg", "schema": "lake",
+      "table": "gold_daily_revenue", "privileges": ["SELECT"] },
+    { "user": "analyst", "catalog": "iceberg", "schema": "lake",
+      "table": "(bronze|silver)_orders", "privileges": ["GRANT_SELECT"] },
+    { "user": "analyst", "catalog": "iceberg", "schema": "lake",
+      "table": ".*_masked", "privileges": ["SELECT"] },
+
+    { "user": "viewer", "catalog": "iceberg", "schema": "lake",
+      "table": "(bronze|silver)_orders", "privileges": ["GRANT_SELECT"] },
+    { "user": "viewer", "catalog": "iceberg", "schema": "lake",
+      "table": ".*_restricted", "privileges": ["SELECT"] },
+
+    { "user": "lake_service", "catalog": "iceberg", "schema": "lake",
+      "table": "(bronze|silver)_orders", "privileges": ["GRANT_SELECT"] },
+    { "user": "lake_service", "catalog": "iceberg", "schema": "lake",
+      "table": "(gold_daily_revenue|.*_(masked|restricted))", "privileges": ["SELECT"] },
+
+    { "catalog": ".*", "schema": ".*", "table": ".*", "privileges": [] }
   ]
 }

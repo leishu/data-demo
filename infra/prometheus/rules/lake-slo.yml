@@ -57,3 +57,36 @@ groups:
         annotations:
           summary: "lake-service 抓取失败"
           description: "确认服务进程与 /actuator/prometheus 的鉴权配置；Prometheus 用的是 operator 账号。"
+
+      # 新鲜度与质量：服务只暴露数字，阈值比较放在告警侧，避免两边各维护一份 SLA。
+      - alert: LakeFreshnessSlaBreached
+        expr: |
+          lake_governance_freshness_hours >= 0
+            and lake_governance_freshness_hours > on(table) lake_governance_freshness_sla_hours
+        for: 10m
+        labels:
+          severity: warning
+          slo: freshness
+        annotations:
+          summary: "湖表新鲜度超过 SLA（{{ $labels.table }}）"
+          description: "最近快照距今 {{ $value }} 小时，已超过 GovernanceCatalog 里的 SLA；先查 ingest / transform 是否还在跑。"
+
+      - alert: LakeQualityCheckFailed
+        expr: lake_governance_dq_failed{severity="ERROR"} == 1
+        for: 5m
+        labels:
+          severity: critical
+          slo: quality
+        annotations:
+          summary: "质量检查 ERROR 失败（{{ $labels.check }}）"
+          description: "ops.dq_results 的最新一条 observed 已超 threshold；去治理页按 run_id 跳作业日志看证据。"
+
+      - alert: LakeQualityWarnCheckFailed
+        expr: lake_governance_dq_failed{severity="WARN"} == 1
+        for: 15m
+        labels:
+          severity: warning
+          slo: quality
+        annotations:
+          summary: "质量检查 WARN 超阈值（{{ $labels.check }}）"
+          description: "连续 15 分钟未恢复；WARN 不阻断作业，但需要人工确认数据是否仍可用。"

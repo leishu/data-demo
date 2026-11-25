@@ -19,12 +19,14 @@ lake:
     realm: lakehouse
     accounts:
       - { username: viewer,   password: "{noop}viewer",   roles: [QUERY] }
+      - { username: analyst,  password: "{noop}analyst",  roles: [QUERY, ANALYST] }
       - { username: operator, password: "{noop}operator", roles: [QUERY, BATCH] }
       - { username: auditor,  password: "{noop}auditor",  roles: [AUDITOR] }
 ```
 
-角色是接口级的：`QUERY` 可查表/跑 SQL，`BATCH` 才能触发作业和看 actuator，审计事件列表 `QUERY` / `AUDITOR` 都能看，`AUDITOR`
-才能读查询原文保险箱。健康检查、静态页面和接口文档公开，便于探针和浏览器使用。
+角色是接口级的：`QUERY` 可查表/跑 SQL（采样走最严档脱敏视图），`ANALYST` 额外可在采样里看 `merchant_id` 明文，
+`BATCH` 才能触发作业和看 actuator，审计事件列表 `QUERY` / `AUDITOR` 都能看，`AUDITOR`
+才能读查询原文保险箱和采样基础表明文。健康检查、静态页面和接口文档公开，便于探针和浏览器使用。
 
 **控制台登录**：`POST /api/auth/login`（body `{username,password}`，成功返回 `{user,roles,mode}`）
 和 `GET /api/auth/session`（带 Basic 头回显当前身份，没带只回 `authenticated=false`）是公开的，
@@ -88,8 +90,8 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.security.yml 
 
 - `infra/trino/auth/config.properties` 打开 `http-server.authentication.type=PASSWORD`；
 - `password-authenticator.properties` 指向 LDAPS（**必须 TLS**，别用明文 ldap://）；
-- `access-control.properties` + `rules.json` 实现 catalog/schema/table 三级授权：
-  `analyst` 只能 SELECT 白名单表，`etl` 可读写 `iceberg.lake`，`admin` 全部权限。
+- `access-control.properties` + `rules.json` 实现 catalog/schema/table 三级授权 + 列掩码：
+  `etl` 可读写 `iceberg.lake`，`admin` 全部权限；分析/普通角色只能查脱敏视图，见下一节。
 
 使用前按实际环境改 LDAP 地址、bind pattern 和 `rules.json` 的用户/角色。
 更集中化的做法是 Ranger Trino 插件或 OPA，文件规则适合先跑起来、可审计的最小版本。
@@ -102,7 +104,61 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.security.yml 
 - **对齐**：同一批用户/角色在 Ranger（HMS）、Trino 规则、对象存储三处要一致，
   否则会出现「一个层放行、另一层拒绝」的诡异现象。
 
-## 4. 验证清单
+## 4. 敏感列分级：视图 + 列掩码
+
+两层同时生效，任一层单独配错都还有另一层兜底：
+
+| 层 | 在哪 | 作用 |
+|---|---|---|
+| Trino 视图 | `platform-common/src/main/resources/sql/view/*.sql` | 明细表按角色给两份视图，掩码表达式写在 SQL 里；分析角色只授权视图 |
+| 列掩码 | `infra/trino/auth/rules.json` 的 table rule → `columns[].mask` | 即使误给基础表 SELECT，敏感列仍返回掩码值 |
+
+列口径（单一事实源是 `MaskingCatalog`，SQL 与 rules.json 都按它维护）：
+
+| 列 | analyst | viewer | auditor |
+|---|---|---|---|
+| `user_id` | SHA-256 前 16 位 | 同左 | 明文 |
+| `order_id` | 前 6 位 + `***` | 同左 | 明文 |
+| `amount` | 向下分桶到 100 | 同左 | 明文 |
+| `merchant_id` | 明文 | SHA-256 前 12 位 | 明文 |
+
+- `bronze_orders` / `silver_orders` 对 analyst / viewer 只有 `GRANT_SELECT`（查视图需要），**没有 SELECT**，
+  直连 `SELECT *` 会被引擎拒绝；`gold_daily_revenue` 是聚合结果，原样给 analyst。
+- `*_masked` 给 analyst（merchant_id 明文），`*_restricted` 给 viewer（merchant_id 也哈希）。
+  服务侧 `/api/query/tables/{table}/sample` 按角色自动选目标：`QUERY` → restricted，
+  `QUERY,ANALYST` → masked，`AUDITOR` → 基础表明文；没带身份时走最严档。
+  服务 Trino 账号（`lake_service`）只需视图 SELECT + 基础表 GRANT_SELECT，不需要 DDL 权限。
+- `masked_reader` 是演示列掩码的角色：它能直连基础表，但四个敏感列全部返回掩码值。
+- 视图由 lake-service 启动时创建，也可手动 `bin/init-views.sh --user etl`；安全 profile 下
+  服务账号没有 OWNERSHIP，需由 etl / admin 先把视图建好。
+- AUDITOR 看明文走单独授权（对应查询原文保险箱的 legal_hold 流程），不给 analyst 开后门。
+
+验证（启用 security profile 后）：
+
+```bash
+# analyst 直连基础表：拒绝
+trino --server https://trino.example.com --user analyst \
+  --execute 'select user_id from iceberg.lake.silver_orders limit 1'
+# analyst 走视图：user_id 哈希、merchant_id 明文
+trino --server https://trino.example.com --user analyst \
+  --execute 'select user_id, merchant_id from iceberg.lake.silver_orders_masked limit 1'
+# viewer 走受限视图：merchant_id 也变成哈希
+trino --server https://trino.example.com --user viewer \
+  --execute 'select merchant_id from iceberg.lake.silver_orders_restricted limit 1'
+# masked_reader 直连基础表：四列都是掩码值
+trino --server https://trino.example.com --user masked_reader \
+  --execute 'select user_id, order_id, amount, merchant_id from iceberg.lake.silver_orders limit 1'
+# auditor 走单独授权：明文
+trino --server https://trino.example.com --user auditor \
+  --execute 'select user_id from iceberg.lake.silver_orders limit 1'
+
+# 服务侧采样对比：viewer / analyst / auditor 的 merchant_id 依次是哈希 / 明文 / 明文
+curl -u viewer:viewer   'http://localhost:8088/api/query/tables/silver_orders/sample?limit=1'
+curl -u analyst:analyst 'http://localhost:8088/api/query/tables/silver_orders/sample?limit=1'
+curl -u auditor:auditor 'http://localhost:8088/api/query/tables/silver_orders/sample?limit=1'
+```
+
+## 5. 验证清单
 
 ```bash
 # local 模式：角色边界

@@ -142,6 +142,18 @@ public class LakeProperties {
     @Setter
     public static class Metrics {
         private final Iceberg iceberg = new Iceberg();
+        private final Governance governance = new Governance();
+
+        /**
+         * 新鲜度 / 数据质量告警指标：从 Iceberg 快照时间与 ops.dq_results 定时算 gauge，
+         * 交给 Prometheus 规则判定 SLA 超时与质量失败。
+         */
+        @Getter
+        @Setter
+        public static class Governance {
+            private boolean enabled = true;
+            private int intervalSeconds = 60;
+        }
 
         @Getter
         @Setter
@@ -174,9 +186,10 @@ public class LakeProperties {
         private String mode = "local";
         /** external 模式下网关与服务的共享密钥，从 LAKE_SECURITY_SHARED_SECRET 注入，不进配置文件 */
         private String sharedSecret = null;
-        /** viewer 只读；operator 额外可以触发批作业、看 actuator 指标 */
+        /** viewer 只读；analyst 额外可看 merchant_id 明文；operator 能触发批作业；auditor 看明文与保险箱 */
         private List<Account> accounts = List.of(
                 new Account("viewer", "{noop}viewer", List.of("QUERY")),
+                new Account("analyst", "{noop}analyst", List.of("QUERY", "ANALYST")),
                 new Account("operator", "{noop}operator", List.of("QUERY", "BATCH")),
                 new Account("auditor", "{noop}auditor", List.of("AUDITOR")));
 

@@ -428,6 +428,13 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
 | `06_refund_by_category.sql` | 品类退款率（经方言适配可用 Spark 校验） |
 | `07_channel_mix.sql` | 渠道结构（需先跑过 `--job evolve`） |
 
+### 脱敏视图（`sql/view/`）
+
+明细表另有按角色授权的 Trino 视图：`*_masked`（analyst，merchant_id 明文）与
+`*_restricted`（viewer，merchant_id 也哈希）。服务启动时自动创建；纯 Trino 环境用
+`bin/init-views.sh --user etl` 手动建（`--print-only` 先看渲染后的 SQL）。
+列口径与验证命令见 [SECURITY.md](docs/SECURITY.md#4-敏感列分级视图--列掩码)。
+
 ## 几个关键设计决定
 
 **1. 行级写一律 copy-on-write，不用 merge-on-read。**

@@ -1,6 +1,7 @@
 package com.demo.lake.server.query.service;
 
 import com.demo.lake.common.config.PlatformConfig;
+import com.demo.lake.common.governance.MaskingCatalog;
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.query.*;
 import com.demo.lake.server.query.model.Column;
@@ -262,12 +263,26 @@ public class QueryService {
         }).subscribeOn(blocking);
     }
 
+    /** 默认采样走最严档：普通 QUERY 角色拿不到 merchant_id 明文 */
     public Mono<QueryResult> sample(String table, int limit) {
+        return sample(table, limit, MaskingCatalog.Access.RESTRICTED);
+    }
+
+    /** 按调用方角色选目标：分析角色读 *_masked，审计角色读基础表，其余读 *_restricted。 */
+    public Mono<QueryResult> sample(String table, int limit, MaskingCatalog.Access access) {
         return Mono.fromCallable(() -> {
             int n = Math.max(1, Math.min(limit, props.getQuery().getMaxRows()));
-            String sql = String.format(SAMPLE_SQL, catalog(), database(), identifier(table), n);
+            String sql = sampleSql(catalog(), database(), table, n, access);
             return execute(sql, n);
         }).subscribeOn(blocking);
+    }
+
+    /** 包内可见，单测用：验证角色到视图名的映射，不用起 Trino */
+    static String sampleSql(String catalog, String database, String table, int limit,
+                            MaskingCatalog.Access access) {
+        MaskingCatalog.Access effective = access == null ? MaskingCatalog.Access.RESTRICTED : access;
+        String target = MaskingCatalog.targetFor(identifier(table), effective);
+        return String.format(SAMPLE_SQL, identifier(catalog), identifier(database), identifier(target), limit);
     }
 
     private String catalog() {

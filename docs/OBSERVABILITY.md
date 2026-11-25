@@ -27,12 +27,20 @@ lake-service 用 Micrometer 埋点，同时暴露 `GET /actuator/metrics`（人�
 | `lake.iceberg.total_size_bytes` | gauge | `table` | 数据文件总字节数 |
 | `lake.iceberg.snapshots` | gauge | `table` | 快照数（查 `$snapshots`，暴涨说明该跑 `maintain` 了） |
 | `lake.iceberg.last_committed_epoch_ms` | gauge | `table` | 最近快照提交时间（epoch 毫秒）；资产目录据此判定新鲜度 SLA |
+| `lake.governance.freshness.hours` | gauge | `table` | 最近快照距今小时数；无快照补 -1（UNKNOWN，不参与告警） |
+| `lake.governance.freshness.sla.hours` | gauge | `table` | 该表在 `GovernanceCatalog` 里登记的新鲜度 SLA（小时） |
+| `lake.governance.dq.failed` | gauge | `check`, `severity` | 最新一轮质量检查是否失败（1/0），恢复后清零 |
 
 表级指标由 `IcebergTableMetrics` 每 60s 从 Trino 查元数据表写入，可用
 `lake.metrics.iceberg.enabled/interval-seconds/tables` 调整；表还不存在或 Trino 没起时保留上次的值，
 不影响服务启动。元数据表在 Trino 里要写成 `iceberg.lake."silver_orders$files"`（`$` 必须加双引号）。
 同一份采集结果也通过 `IcebergTableMetrics.snapshot()` 暴露给 `/api/governance/assets`，用来算「多久没更新」；
 没快照或采集未开启时返回 UNKNOWN，不会拿当前时间冒充更新时间。
+
+新鲜度与质量告警指标由 `GovernanceMetrics` 同样每 60s 换算一次：新鲜度直接读 `IcebergTableMetrics.snapshot()`，
+质量读 `ops.dq_results` 每个检查项的最新一条（治理页同一份数据），可用
+`lake.metrics.governance.enabled/interval-seconds` 调整。服务只暴露数字，不在 Java 里判定告警，
+阈值交给 Prometheus 规则比较。
 
 Spring Boot 自带 `http.server.requests`、`jvm.*`、`hikari.*` 等基础指标，不再重复定义。
 
@@ -73,13 +81,18 @@ bin/infra.sh up monitoring                              # Prometheus :9090 + Gra
 
 ### 建议告警
 
-下面四条已落成 Prometheus 规则（`infra/prometheus/rules/lake-slo.yml`），告警名带 `Lake` 前缀：
+下面这些都已落成 Prometheus 规则（`infra/prometheus/rules/lake-slo.yml`），告警名带 `Lake` 前缀：
 
 - **查询错误率 > 5% 持续 5 分钟**：先看 `/actuator/health` 的 trino 组件与 `lake.query.quota.rejected`；
   配额拒绝多说明是容量问题而不是依赖挂了。
 - **队列深度 > 20 持续 10 分钟**：调大 `lake.batch.max-concurrent-jobs`，或检查是否有作业卡在 RUNNING。
 - **作业失败率 > 10% 持续 15 分钟**：看 `logs/batch/*.log` 与审计里 `batch.completed` 的 status 分布。
 - **鉴权失败突增**：`lake.auth.denied` 计数异常通常意味着有人在扫接口或凭据配置错了。
+- **新鲜度 SLA 超时**：`lake_governance_freshness_hours > on(table) lake_governance_freshness_sla_hours`
+  持续 10 分钟；`>= 0` 条件会跳过没有快照的 UNKNOWN 表，不会在没跑 init 时误报。
+  先查 ingest / transform 是否还在跑，再看 `/api/governance/assets` 的徽标。
+- **质量检查失败**：`lake_governance_dq_failed == 1`——ERROR 持续 5 分钟为 critical，
+  WARN 持续 15 分钟为 warning；去治理页按 `run_id` 跳作业日志看 `detail` 证据。
 
 ## 审计事件
 
@@ -156,6 +169,11 @@ curl -u admin:admin http://localhost:3000/api/dashboards/uid/lake-service-slo | 
 # 审计
 curl -u operator:operator 'http://localhost:8088/api/audit?limit=20'
 tail -20 logs/audit.log
+
+# 新鲜度 / 质量告警输入
+curl -u operator:operator http://localhost:8088/actuator/metrics/lake.governance.freshness.hours
+curl -u operator:operator http://localhost:8088/actuator/metrics/lake.governance.dq.failed
+curl -u operator:operator http://localhost:8088/actuator/prometheus | grep lake_governance_
 
 # 一条命令把上面这些（含 401/查询/SSE/语义层/审计/只读守卫/指标抓取）全验一遍
 bin/smoke.sh                       # 宿主机模式 22 项；容器模式 19 项

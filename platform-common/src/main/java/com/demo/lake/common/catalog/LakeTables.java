@@ -38,6 +38,12 @@ public final class LakeTables {
     public static final String SILVER_ORDERS = "silver_orders";
     public static final String GOLD_DAILY_REVENUE = "gold_daily_revenue";
 
+    /** 脱敏视图：分析角色（merchant_id 明文）与普通 viewer（全掩码）各一份，定义见 sql/view/ */
+    public static final String BRONZE_ORDERS_MASKED = "bronze_orders_masked";
+    public static final String BRONZE_ORDERS_RESTRICTED = "bronze_orders_restricted";
+    public static final String SILVER_ORDERS_MASKED = "silver_orders_masked";
+    public static final String SILVER_ORDERS_RESTRICTED = "silver_orders_restricted";
+
     /** 运维元数据 namespace：不进三层业务表清单 */
     public static final String OPS_SCHEMA = "ops";
     /** 批作业运行历史：一行一次运行的终态，由 BatchApp 写、lake-service 读 */

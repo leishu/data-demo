@@ -64,6 +64,10 @@ lake:
       - username: viewer
         password: "{noop}viewer"
         roles: [QUERY]
+      # 分析角色：采样明细表时 merchant_id 保留明文，其余敏感列仍脱敏
+      - username: analyst
+        password: "{noop}analyst"
+        roles: [QUERY, ANALYST]
       - username: operator
         password: "{noop}operator"
         roles: [QUERY, BATCH]
@@ -77,6 +81,10 @@ lake:
       interval-seconds: 60
       # 默认采集三层业务表；按需覆盖（表名只允许字母/数字/下划线）
       # tables: [bronze_orders, silver_orders, gold_daily_revenue]
+    # 新鲜度 / 质量失败：复用 Iceberg 快照时间 + ops.dq_results，写 gauge 给 Prometheus 告警
+    governance:
+      enabled: true
+      interval-seconds: 60
   # 合规用的查询原文保险箱：默认关；开启必须同时提供 LAKE_AUDIT_KEY（base64 32 字节）
   audit:
     sql-capture-enabled: false

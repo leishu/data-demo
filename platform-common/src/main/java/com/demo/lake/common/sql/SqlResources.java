@@ -25,6 +25,11 @@ public final class SqlResources {
     public static final String DDL_LINEAGE_RUNS = "sql/ddl/60_ops_lineage_runs.sql";
     public static final String DDL_RETENTION_AUDIT = "sql/ddl/70_ops_retention_audit.sql";
 
+    public static final String VIEW_BRONZE_MASKED = "sql/view/10_bronze_orders_masked.sql";
+    public static final String VIEW_BRONZE_RESTRICTED = "sql/view/11_bronze_orders_restricted.sql";
+    public static final String VIEW_SILVER_MASKED = "sql/view/20_silver_orders_masked.sql";
+    public static final String VIEW_SILVER_RESTRICTED = "sql/view/21_silver_orders_restricted.sql";
+
     public static final String PROPS_ROW_LEVEL = "sql/ddl/_properties_row_level.sql";
     public static final String PROPS_PLAIN = "sql/ddl/_properties_plain.sql";
 
@@ -49,6 +54,7 @@ public final class SqlResources {
     private static final List<String> ALL = Collections.unmodifiableList(Arrays.asList(
             DDL_DATABASES, DDL_BRONZE, DDL_SILVER, DDL_GOLD, DDL_BATCH_RUNS, DDL_DQ_RESULTS,
             DDL_LINEAGE_RUNS, DDL_RETENTION_AUDIT,
+            VIEW_BRONZE_MASKED, VIEW_BRONZE_RESTRICTED, VIEW_SILVER_MASKED, VIEW_SILVER_RESTRICTED,
             PROPS_ROW_LEVEL, PROPS_PLAIN,
             TRANSFORM_MERGE, TRANSFORM_GOLD,
             QUALITY_SILVER_UNIQUE, QUALITY_SILVER_NOT_NULL, QUALITY_SILVER_AMOUNT_RANGE,
