@@ -193,7 +193,7 @@ function startRun(job) {
 
 const TAIL = (job) => [
   `[mock] job=${job} 开始`,
-  '26/11/18 09:12:01 INFO SparkContext: Running Spark version 3.5.1',
+  '26/11/18 09:12:01 INFO SparkContext: Running Spark version 4.1.4',
   '26/11/18 09:12:03 INFO IcebergSparkSessionExtensions: Iceberg extensions registered',
   `26/11/18 09:12:05 INFO ${'BatchApp'}: job=${job} warehouse=${config.warehouse}`,
   '26/11/18 09:12:08 INFO SparkSqlParser: Parsing command: CREATE TABLE IF NOT EXISTS ...',

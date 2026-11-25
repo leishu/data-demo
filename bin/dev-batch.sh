@@ -45,7 +45,7 @@ ABS_JAR="$(cd "$(dirname "${JAR}")" && printf '%s/%s' "$(pwd)" "$(basename "${JA
 CLASSES="${ROOT}/spark-batch/target/classes:${ROOT}/platform-common/target/classes"
 DEPS="$(cat "${CLASSPATH_FILE}")"
 
-# 复用 .mvn/jvm.config 里的 --add-opens：Spark 3.5 在 JDK 21 上靠这些参数访问 JDK 内部类
+# 复用 .mvn/jvm.config 里的 --add-opens：Spark 4.1 在 JDK 21 上靠这些参数访问 JDK 内部类
 JAVA_OPTS=()
 while IFS= read -r opt || [[ -n "${opt}" ]]; do
   [[ -n "${opt}" ]] && JAVA_OPTS+=("${opt}")

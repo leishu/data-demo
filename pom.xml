@@ -23,23 +23,24 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-    <!-- 默认产出 Java 11 字节码，供 Spark 集群使用；lake-service 在模块内覆盖成 21 -->
-    <maven.compiler.release>11</maven.compiler.release>
-    <java.version>11</java.version>
+    <!-- Spark 4.1 要求 Java 17+，批处理模块产出 Java 17 字节码；lake-service 在模块内覆盖成 21 -->
+    <maven.compiler.release>17</maven.compiler.release>
+    <java.version>17</java.version>
 
-    <!-- 版本矩阵：Spark 3.5.x(Java11/Scala2.12) + Iceberg 1.5.x + Trino 476(JDBC) -->
-    <spark.version>3.5.1</spark.version>
-    <scala.binary.version>2.12</scala.binary.version>
-    <iceberg.version>1.5.2</iceberg.version>
-    <scala.collection.compat.version>2.11.0</scala.collection.compat.version>
-    <hadoop.version>3.3.4</hadoop.version>
-    <!-- 对齐 Spark 3.5 发行版自带的 Hive，HMS 客户端 API 用这个版本 -->
-    <hive.version>2.3.9</hive.version>
+    <!-- 版本矩阵：Spark 4.1.x(Java17/Scala2.13) + Iceberg 1.11.x + Trino 476(JDBC) -->
+    <spark.version>4.1.4</spark.version>
+    <scala.binary.version>2.13</scala.binary.version>
+    <iceberg.version>1.11.0</iceberg.version>
+    <hadoop.version>3.4.2</hadoop.version>
+    <!-- 对齐 Spark 4.1 发行版自带的 Hive（spark-parent 2.13 的 hive.version=2.3.10） -->
+    <hive.version>2.3.10</hive.version>
     <trino.version>476</trino.version>
     <!-- 注解处理：编译期生成访问器 / 构造器 / logger，scope=provided 不进产物 -->
     <lombok.version>1.18.34</lombok.version>
-    <log4j.version>2.20.0</log4j.version>
-    <slf4j.version>2.0.7</slf4j.version>
+    <!-- 与 Spark 4.1.4 自带版本对齐（spark-parent 的 log4j.version=2.24.3 / slf4j.version=2.0.17），
+         版本错配会在启动 SparkSession 时报 ServiceLoaderUtil.loadServices NoSuchMethodError -->
+    <log4j.version>2.24.3</log4j.version>
+    <slf4j.version>2.0.17</slf4j.version>
     <junit.version>5.10.2</junit.version>
 
     <!--
@@ -95,18 +96,8 @@
       <!-- runtime 包已 relocate 掉 Iceberg 内部依赖，避免与 Spark 的 guava/jackson 冲突 -->
       <dependency>
         <groupId>org.apache.iceberg</groupId>
-        <artifactId>iceberg-spark-runtime-3.5_${scala.binary.version}</artifactId>
+        <artifactId>iceberg-spark-runtime-4.1_${scala.binary.version}</artifactId>
         <version>${iceberg.version}</version>
-      </dependency>
-      <!--
-        iceberg-spark-runtime 的 SQL 扩展（CALL 存储过程）编译时用了 scala.jdk.CollectionConverters，
-        该 API 只在 Scala 2.13 原生存在；Spark 2.12 发行版又不带 scala-collection-compat，
-        所以走 CALL rewrite_data_files / expire_snapshots 时必须显式补上这个包。
-      -->
-      <dependency>
-        <groupId>org.scala-lang.modules</groupId>
-        <artifactId>scala-collection-compat_${scala.binary.version}</artifactId>
-        <version>${scala.collection.compat.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.iceberg</groupId>
@@ -160,7 +151,7 @@
       </dependency>
 
       <!-- ========== Trino (JDBC 客户端) ========== -->
-      <!-- trino-jdbc 476 仍是 Java 11 字节码，和本 reactor 的 release 11 兼容 -->
+      <!-- trino-jdbc 476 是 Java 11 字节码，可在本 reactor 的 release 17 运行时上直接使用 -->
       <dependency>
         <groupId>io.trino</groupId>
         <artifactId>trino-jdbc</artifactId>

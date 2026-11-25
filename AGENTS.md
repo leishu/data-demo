@@ -7,7 +7,7 @@
 
 Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的湖仓脚手架，外面套一个 Spring Boot 4 服务层（查询接口 + 作业编排）。三条命令就能在本地跑通，不需要装 Hadoop / Docker。
 
-**版本矩阵**：JDK 11（批处理产出 Java 11 字节码）/ 21（`lake-service`）；Spark 3.5.1（Scala 2.12）；Iceberg 1.5.2；Trino 476 JDBC；Spring Boot 4.2.0（WebFlux + Actuator）；日志 log4j2（批）/ logback（服务）；Hadoop 3.3.4（由 Spark 传递）；Lombok 1.18.34（provided）。
+**版本矩阵**：JDK 17（批处理产出 Java 17 字节码）/ 21（`lake-service`）；Spark 4.1.4（Scala 2.13）；Iceberg 1.11.0（`iceberg-spark-runtime-4.1_2.13`，表格式 v2）；Trino 476 JDBC；Spring Boot 4.2.0（WebFlux + Actuator）；日志 log4j2（批）/ logback（服务）；Hadoop 3.4.2（由 Spark 传递）；Lombok 1.18.34（provided）。
 
 ## 2. 目录与模块地图（Maven 多模块）
 
@@ -62,7 +62,7 @@ lakehouse-demo/
 ## 3. 开发命令
 
 ```bash
-# 完整构建 + 单测（整个 reactor 用 JDK 21 构建；spark 模块仍产出 Java 11 字节码）
+# 完整构建 + 单测（整个 reactor 用 JDK 21 构建；spark 模块产出 Java 17 字节码）
 bin/build.sh                  # 自动找 JDK 21；可用 export JAVA21_HOME=<dir> 指定
 
 # 批作业快速验证（依赖 bin/build.sh 已生成的 classpath）
@@ -81,7 +81,7 @@ bin/smoke.sh
 
 ```bash
 mvn -pl platform-common test            # 单测最快（platform-common 的全部单测都在这里）
-mvn -pl spark-batch -am package         # 只动批处理，用 JDK 11 也能
+mvn -pl spark-batch -am package         # 只动批处理，用 JDK 17+ 也能
 mvn -pl lake-service package            # 必须 JDK 21（模块内已挂 enforcer）
 ```
 
@@ -97,8 +97,9 @@ mvn -pl lake-service package            # 必须 JDK 21（模块内已挂 enforc
 
 ## 5. 常见踩坑（已记录在 README 但 AI 每人都会重掉）
 
-- **JDK 11+ 反射限制**：`.mvn/jvm.config` 已配 `--add-opens`，跑测试时由父 pom 的 surefire `argLine` 提供；若用 `spark-submit` 部署，写进 `spark.driver/executor.extraJavaOptions`。
-- **`rewrite_data_files` 报 `NoClassDefFoundError: scala/jdk/CollectionConverters`**：必须挂 `scala-collection-compat`（根 pom 已配版本管理）。
+- **JDK 17+ 反射限制**：`.mvn/jvm.config` 已配 `--add-opens`，跑测试时由父 pom 的 surefire `argLine` 提供；若用 `spark-submit` 部署，写进 `spark.driver/executor.extraJavaOptions`。
+- **Spark 4.1 是 Scala 2.13**：`scala.jdk.CollectionConverters` 已原生存在，不再需要 `scala-collection-compat`。
+- **Spark 4.1 + Iceberg 1.11 的 `?` 参数绑定**：SPARK-59672（Iceberg 扩展 parser 丢参数）靠 `spark.sql.legacy.parameterSubstitution.constantsOnly=true` 兜底，别删这条配置；另外 `spark.sql.ansi.enabled=false` 与 s3a Magic Committer 关闭都是为保持 3.5 行为。Log4j/Slf4j 必须与 Spark 4.1.4 对齐（2.24.3 / 2.0.17）。
 - **s3 依赖默认不下载**：`iceberg-aws-bundle`（约 30MB）和 `hadoop-aws`（约 270MB）只在 `spark-batch/pom.xml` 的 `s3` profile 里声明；若忽然解析失败，先确认 profile 未勾。
 - **`hadoop catalog 不支持 namespace 元数据`**：CREATE DATABASE 不带 COMMENT（Iceberg 的 hadoop catalog 会报 metadata not supported）。
 - **Trino 元数据表名带 `$`**：要双引号（`FROM iceberg.lake."silver_orders$snapshots"`）。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lake-service 启停脚本（Spring Boot 4 需要 JDK 21；其余模块仍用 JDK 11 构建/运行）
+# lake-service 启停脚本（Spring Boot 4 需要 JDK 21；其余模块按 Java 17 目标构建/运行）
 #   bin/lake-service.sh build          打包
 #   bin/lake-service.sh run            前台启动（Ctrl+C 退出）
 #   bin/lake-service.sh start          后台启动，日志 logs/lake-service.out

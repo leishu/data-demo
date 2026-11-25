@@ -110,7 +110,7 @@ lake:
     kubernetes:
       api-url: https://kubernetes.default.svc
       namespace: default
-      image: spark:3.5.1
+      image: spark:4.1.4
       service-account: default
       poll-seconds: 5
       timeout-seconds: 1800

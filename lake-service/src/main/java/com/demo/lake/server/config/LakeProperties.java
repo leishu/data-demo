@@ -91,7 +91,7 @@ public class LakeProperties {
             /** in-cluster 时用 <a href="https://kubernetes.default.svc">...</a>，本地调试可指到代理 */
             private String apiUrl = "https://kubernetes.default.svc";
             private String namespace = "default";
-            private String image = "spark:3.5.1";
+            private String image = "spark:4.1.4";
             private String serviceAccount = "default";
             /** 等待 Job 终态的最长时间（秒）；状态变化由 Watch API 推送，不再按间隔轮询 */
             private int timeoutSeconds = 1800;

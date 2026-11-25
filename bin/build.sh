@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 全量构建：整个 reactor 要用 JDK 21（lake-service 编译目标是 21，其余模块编译目标仍是 11）
+# 全量构建：整个 reactor 要用 JDK 21（lake-service 编译目标是 21，其余模块编译目标是 17）
 #   bin/build.sh                     打包（含测试）+ 预生成 spark-batch / lake-adhoc 运行时 classpath
 #   bin/build.sh -DskipTests         跳过测试
-#   bin/build.sh -pl spark-batch -am 只构建单个模块（这种用法 JDK 11 也能跑）
+#   bin/build.sh -pl spark-batch -am 只构建单个模块（这种用法 JDK 17+ 也能跑）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

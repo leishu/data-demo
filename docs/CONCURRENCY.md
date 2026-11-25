@@ -16,7 +16,7 @@ refresh 后重试即可。不会出现两个写入者都报成功、却只落了
    - 若恰好一个成功，另一个必须是 `CommitFailedException`（而不是别的错误）；
    - 最终行数 = base + 成功写入数。
 
-这个测试在 `mvn verify` 里自动跑，CI 也会执行。它验证的是 Iceberg 1.5.2 + Spark 3.5.1
+这个测试在 `mvn verify` 里自动跑，CI 也会执行。它验证的是 Iceberg 1.11.0 + Spark 4.1.4
 在 Hadoop catalog 下的提交语义。注意 Iceberg 内部有重试（日志里能看到
 `Retrying task after failure`），所以「两个都成功」也是合法结果，测试允许。
 
@@ -27,7 +27,7 @@ refresh 后重试即可。不会出现两个写入者都报成功、却只落了
 
 HMS catalog 把「当前 metadata 文件位置」当作表的版本指针。提交时 Iceberg 读取 HMS 里的表对象，
 比较版本后通过 `alter_table` 原子更新位置；版本不匹配同样抛 `CommitFailedException`。
-所以 HMS + Iceberg 1.5 与本地 Hadoop catalog 的并发语义一致，区别只是「版本指针」存在 HMS 而不是文件系统。
+所以 HMS + Iceberg 1.11 与本地 Hadoop catalog 的并发语义一致，区别只是「版本指针」存在 HMS 而不是文件系统。
 
 需要注意的边界：
 

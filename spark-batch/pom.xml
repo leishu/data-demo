@@ -37,14 +37,8 @@
     </dependency>
     <dependency>
       <groupId>org.apache.iceberg</groupId>
-      <artifactId>iceberg-spark-runtime-3.5_${scala.binary.version}</artifactId>
+      <artifactId>iceberg-spark-runtime-4.1_${scala.binary.version}</artifactId>
       <scope>provided</scope>
-    </dependency>
-    <!-- Iceberg 的 CALL 存储过程依赖 Scala 2.13 的 CollectionConverters API，
-         Spark 2.12 发行版不带对应的兼容包，必须自己引 -->
-    <dependency>
-      <groupId>org.scala-lang.modules</groupId>
-      <artifactId>scala-collection-compat_${scala.binary.version}</artifactId>
     </dependency>
 
     <!-- 只在本地 dev 运行时补齐日志实现 -->

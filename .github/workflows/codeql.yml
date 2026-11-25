@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 全 reactor 用 JDK 21 构建（spark 模块仍产出 Java 11 字节码），与 ci.yml 保持一致
+      # 全 reactor 用 JDK 21 构建（spark 模块产出 Java 17 字节码），与 ci.yml 保持一致
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:

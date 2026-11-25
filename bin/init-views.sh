@@ -23,7 +23,7 @@ elif command -v java >/dev/null 2>&1; then
   JAVA_BIN="$(command -v java)"
 fi
 if [[ -z "${JAVA_BIN}" ]]; then
-  echo "找不到 java（需要 JDK 11+）：设置 JAVA_HOME 或把 java 放进 PATH" >&2
+  echo "找不到 java（需要 JDK 17+）：设置 JAVA_HOME 或把 java 放进 PATH" >&2
   exit 2
 fi
 

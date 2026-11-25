@@ -7,8 +7,8 @@
 3. 日常运维：子命令、裸 docker 速查、数据卷与清理、固定排查顺序；
 4. 说明**怎么加新依赖**（Kafka、ClickHouse、Redis……），不用每次重造环境。
 
-> 设计取舍：**只把基础设施放进容器**。JDK 11 / JDK 21 / Maven / Node 仍然用宿主机的
-> （`~/soft/jdk-21.0.12`、`/usr/lib/jvm/java-11-*`）。Spark 的 driver 就在 IDE 里跑，
+> 设计取舍：**只把基础设施放进容器**。JDK 21 / Maven / Node 仍然用宿主机的
+> （`~/soft/jdk-21.0.12`；批处理模块按 Java 17 目标编译）。Spark 的 driver 就在 IDE 里跑，
 > 把它塞进容器只会让断点、堆栈、`spark-submit` 变难查。
 
 ---

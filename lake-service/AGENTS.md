@@ -1,6 +1,6 @@
 # lake-service/AGENTS.md — 服务模块规范
 
-构建/运行需 JDK 21（父 pom release 11，本模块覆盖成 21；`mvn -pl lake-service` 必须跑 21）。
+构建/运行需 JDK 21（父 pom release 17，本模块覆盖成 21；`mvn -pl lake-service` 必须跑 21）。
 根仓约定不重复（根 [AGENTS.md](../AGENTS.md)）。
 
 ## 1. 模块结构（AI 定位用）

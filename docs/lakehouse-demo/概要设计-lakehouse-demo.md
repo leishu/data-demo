@@ -75,9 +75,9 @@ graph LR
 
 | 组件 | 版本 | 角色 |
 |---|---|---|
-| JDK | 11（批处理）/ 21（服务层） | Spark 3.5 官方支持到 17，服务层用 21 |
-| Spark | 3.5.1 (Scala 2.12) | 批处理 |
-| Iceberg | 1.5.2 | 表格式层，format-version=2，CoW |
+| JDK | 17（批处理）/ 21（服务层） | Spark 4.1 要求 Java 17+，服务层用 21 |
+| Spark | 4.1.4 (Scala 2.13) | 批处理 |
+| Iceberg | 1.11.0 | 表格式层，format-version=2，CoW |
 | Trino | 476 | 即席查询（JDBC） |
 | Spring Boot | 4.2.0 | WebFlux + Actuator（Reactor Netty） |
 | Vue | 3.5 + Vite 7 | 控制台，构建产物进 `static/ui/` |
@@ -111,7 +111,7 @@ graph LR
 | `data/` | **模拟上游落地文件**：`data/raw/orders/dt=*/` 的 Parquet，由 IngestJob 生成，是入湖流的输入。 | ❌ |
 | `logs/` | **运行日志**：`audit.log`、批作业 `batch/`、`lake-service.log`。 | ❌ |
 | `spark-warehouse/` | Spark SQL 默认本地临时仓库（`spark.sql.warehouse.dir`），当前为空。 | ❌ |
-| `.mvn/` | `jvm.config`：JDK 11+ 反射所需的 `--add-opens` 参数。 | ✅ |
+| `.mvn/` | `jvm.config`：JDK 17+ 反射所需的 `--add-opens` 参数。 | ✅ |
 | `.idea/` | IntelliJ IDEA 项目配置。 | ❌ |
 | `.workbuddy/`、`.Trash-0/` | 工具记忆 / 回收站残留，与项目本身无关。 | ❌ |
 

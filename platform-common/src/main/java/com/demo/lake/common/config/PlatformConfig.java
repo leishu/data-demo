@@ -144,6 +144,13 @@ public final class PlatformConfig {
         String prefix = "spark.sql.catalog." + c;
         Map<String, String> m = new LinkedHashMap<>();
 
+        // Spark 4.x 默认开 ANSI（非法 cast / 除零直接抛异常）；保持 3.5 的宽容语义，
+        // 避免既有 SQL 脚本和上游脏数据的行为漂移
+        m.put("spark.sql.ansi.enabled", "false");
+        // Spark 4.1 的 SPARK-59672：Iceberg SQL 扩展注入的 parser 会丢掉 ? 参数上下文，
+        // 导致 spark.sql(sql, args) 报 UNBOUND_SQL_PARAMETER；打开 analyzer 侧的旧式替换兜底。
+        // Iceberg 1.12 才从扩展侧修复，1.11 需要这个配置。
+        m.put("spark.sql.legacy.parameterSubstitution.constantsOnly", "true");
         m.put("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions");
         m.put(prefix, "org.apache.iceberg.spark.SparkCatalog");
         m.put(prefix + ".type", catalogType());
@@ -157,7 +164,7 @@ public final class PlatformConfig {
             m.put(prefix + ".s3.path-style-access", String.valueOf(s3PathStyle()));
             m.put(prefix + ".s3.access-key-id", get("platform.s3.access-key", ""));
             m.put(prefix + ".s3.secret-access-key", get("platform.s3.secret-key", ""));
-            // Iceberg 1.5.x 的 S3FileIO 没有 region 属性，region 走共享的 client.region；
+            // S3FileIO 的 region 走共享的 client.region；
             // 少了它，AWS SDK v2 会抛 "Unable to load region from any of the providers"
             m.put(prefix + ".client.region", get("platform.s3.region", "us-east-1"));
 
@@ -168,6 +175,9 @@ public final class PlatformConfig {
             m.put("spark.hadoop.fs.s3a.secret.key", get("platform.s3.secret-key", ""));
             m.put("spark.hadoop.fs.s3a.aws.credentials.provider",
                     "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider");
+            // Spark 4.1 起 s3a 默认启用 Magic Committer；数据文件走 Iceberg S3FileIO，
+            // 显式关掉以免 s3a 路径上的写入语义相对 3.5 发生变化
+            m.put("spark.hadoop.fs.s3a.committer.magic.enabled", "false");
         }
 
         m.put("spark.sql.session.timeZone", get("platform.spark.timezone", "UTC"));

@@ -1,6 +1,6 @@
 # spark-batch/AGENTS.md — 批处理模块规范
 
-本模块产出 **Java 11 字节码**（`maven.compiler.release=11`），Spark 3.5.1。根仓约定不重复（根 [AGENTS.md](../AGENTS.md)）。
+本模块产出 **Java 17 字节码**（`maven.compiler.release=17`），Spark 4.1.4 / Iceberg 1.11.0（Scala 2.13）。根仓约定不重复（根 [AGENTS.md](../AGENTS.md)）。
 
 ## 1. 模块结构（AI 定位用）
 

@@ -27,16 +27,15 @@ Spark 做批处理、Iceberg 做存储与表格式层、Trino 做即席查询的
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
-| JDK | 11（批处理）/ 21（服务层） | Spark 3.5 官方支持到 17，所以批处理模块产出 Java 11 字节码；`lake-service` 用 21 |
-| Spark | 3.5.1 (Scala 2.12) | 批处理 |
-| Iceberg | 1.5.2 | `iceberg-spark-runtime-3.5_2.12` |
+| JDK | 17（批处理）/ 21（服务层） | Spark 4.1 要求 Java 17+；`lake-service` 用 21 |
+| Spark | 4.1.4 (Scala 2.13) | 批处理；Spark 4.x 已移除 Scala 2.12 支持 |
+| Iceberg | 1.11.0 | `iceberg-spark-runtime-4.1_2.13`，表格式仍用 v2（Trino 476 兼容） |
 | Trino | 476 | 服务端镜像 `trinodb/trino:476` + 官方 `trino-jdbc`（lake-service 查询与 lake-adhoc 即席查询共用） |
 | Spring Boot | 4.2.0 | WebFlux + Actuator，Spring Framework 7 / Reactor Netty / Jakarta EE 11 |
 | 控制台 | Vue 3.5 + vue-router 4 + Vite 7 | 独立工程 `lake-ui/`，构建产物进 `static/ui/` |
 | 日志 | log4j2（批处理）/ logback（服务层） | Spark 发行版绑死 log4j2；Web 服务用 Boot 默认的 logback |
-| Hadoop | 3.3.4 | 由 Spark 传递依赖，无需单独装 |
+| Hadoop | 3.4.2 | 由 Spark 4.1 传递依赖，`hadoop-aws` 按此对齐 |
 | Lombok | 1.18.34 | 编译期生成访问器 / 构造器 / `log`；`provided` 不进产物，fat jar 单独 exclude |
-| scala-collection-compat | 2.11.0 | Iceberg 的 `CALL` 存储过程在 Scala 2.12 下必需 |
 
 ## 目录结构
 
@@ -85,7 +84,7 @@ lakehouse-demo/
 ```bash
 # 1. 编译 + 跑测试（会真实建表、MERGE、加列、清理快照）
 bin/build.sh          # 自动找 ~/soft/jdk-21* / /usr/lib/jvm/java-21*；也可 export JAVA21_HOME 指定
-                      # 整个 reactor 用 JDK 21 构建，但 spark 模块编译目标仍是 Java 11
+                      # 整个 reactor 用 JDK 21 构建，spark 模块编译目标是 Java 17
 
 # 2. 一条命令跑完 init → ingest → transform → maintain → show
 bin/dev-batch.sh --job all
@@ -108,7 +107,7 @@ bin/infra.sh up monitoring     # Prometheus http://localhost:9090 / Grafana http
 ```
 
 > `bin/build.sh` 只收到 `-DskipTests` / `-pl ...` 这类参数时会自动补 `package`，不用手写生命周期目标。
-> 只动批处理时 `mvn -pl spark-batch -am package` 用 JDK 11 也能构建；只有 `lake-service`
+> 只动批处理时 `mvn -pl spark-batch -am package` 用 JDK 17+ 也能构建；只有 `lake-service`
 > 要求 JDK 21（模块内已挂 enforcer，版本不对会直接给出提示而不是 javac 的晦涩报错）。
 
 本地模式用 **Hadoop catalog**：元数据就是 `warehouse/lake.db/*/metadata/*.metadata.json`，
@@ -320,8 +319,8 @@ bin/trino-query.sh --sql-file sql/adhoc/04_time_travel.sql --params snapshot_id=
 
 | 坐标 | 作用 | 体积 |
 | --- | --- | --- |
-| `org.apache.iceberg:iceberg-aws-bundle:1.5.2` | Iceberg 的 `S3FileIO`，读写 metadata / data 文件 | ~30 MB |
-| `org.apache.hadoop:hadoop-aws:3.3.4` | Spark 的 `s3a://` 文件系统，传递引入 `com.amazonaws:aws-java-sdk-bundle:1.12.262` | 1 MB + 268 MB |
+| `org.apache.iceberg:iceberg-aws-bundle:1.11.0` | Iceberg 的 `S3FileIO`，读写 metadata / data 文件 | ~30 MB |
+| `org.apache.hadoop:hadoop-aws:3.4.2` | Spark 的 `s3a://` 文件系统，传递引入 `com.amazonaws:aws-java-sdk-bundle`（版本由 Hadoop 3.4.2 决定） | 1 MB + 268 MB |
 
 坐标本身在中央仓库（和阿里云镜像）都存在，缺的是本地仓库副本。两条命令解决：
 
@@ -335,7 +334,7 @@ mvn -Ps3 -pl spark-batch dependency:go-offline
 
 IDEA 侧同时确认：Maven 面板勾选 `s3` profile、`Settings → Build Tools → Maven → Local repository` 指向 `~/.m2/repository`、没开 Offline work，然后 `Reload All Maven Projects`。
 
-`hadoop-aws` 的版本必须与 Spark 发行版自带的 Hadoop 对齐（Spark 3.5.1 官方包是 3.3.4），不一致会在运行期报 `NoSuchMethodError`；换集群时用 `-Dhadoop.version=` 覆盖。
+`hadoop-aws` 的版本必须与 Spark 发行版自带的 Hadoop 对齐（Spark 4.1.4 官方包是 3.4.2），不一致会在运行期报 `NoSuchMethodError`；换集群时用 `-Dhadoop.version=` 覆盖。
 
 已经有 Spark 集群时，用 `bin/submit-batch.sh` 提交（自动 `--packages` 拉 Iceberg runtime）：
 
@@ -460,11 +459,17 @@ CoW 的代价是写放大，换来的是「Spark 写、Trino 读」零兼容问�
 
 ## 踩过的坑（都在代码里做了兜底）
 
-- **JDK11+ 反射限制**：`.mvn/jvm.config` 已配好 `--add-opens`；用 `spark-submit` 部署时放进
+- **JDK17+ 反射限制**：`.mvn/jvm.config` 已配好 `--add-opens`；用 `spark-submit` 部署时放进
   `--conf spark.driver.extraJavaOptions` / `spark.executor.extraJavaOptions`。
-- **`CALL ... rewrite_data_files` 报 `NoClassDefFoundError: scala/jdk/CollectionConverters`**：
-  Iceberg 的 SQL 扩展编译时用了 Scala 2.13 的 API，Spark 2.12 发行版不带兼容包，
-  需要显式引入 `scala-collection-compat`（pom 里已加，`bin/submit-batch.sh` 的 `--packages` 也带了）。
+- **Scala 2.13 原生带 `scala.jdk.CollectionConverters`**：Spark 4.1 已是 Scala 2.13，
+  Iceberg 的 `CALL ... rewrite_data_files` 无需再显式引 `scala-collection-compat`（已从 pom 移除）。
+- **Spark 4.1 + Iceberg 1.11 的参数绑定**：Iceberg SQL 扩展注入的 parser 会丢掉 `?` 参数上下文
+  （SPARK-59672），`spark.sql(sql, args)` 报 `UNBOUND_SQL_PARAMETER`；`PlatformConfig` 已显式打开
+  `spark.sql.legacy.parameterSubstitution.constantsOnly=true` 走 analyzer 兜底（Iceberg 1.12 才从扩展侧修）。
+- **Spark 4 行为对齐**：`spark.sql.ansi.enabled=false` 保持 3.5 的非 ANSI 语义（否则非法 cast/除零直接抛异常）；
+  s3a 的 Magic Committer 也显式关掉（`spark.hadoop.fs.s3a.committer.magic.enabled=false`），
+  Spark 4.1 起它默认开启。Log4j/Slf4j 版本与 Spark 4.1.4 对齐（2.24.3 / 2.0.17），
+  版本错配会在建 SparkSession 时报 `ServiceLoaderUtil.loadServices` 的 `NoSuchMethodError`。
 - **Hadoop catalog 不支持 namespace 元数据**：`CREATE DATABASE ... COMMENT 'xxx'` 会报
   `metadata is not supported`，所以建库 DDL 故意不带 COMMENT。
 - **Trino 查元数据表**：`silver_orders$snapshots` 里的 `$` 要加双引号：
