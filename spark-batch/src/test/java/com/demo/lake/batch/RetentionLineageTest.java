@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** 真实 Spark：写入血缘落表 + 保留作业 dry-run 不删、execute 删旧分区并留审计 */
@@ -83,6 +84,10 @@ class RetentionLineageTest {
     @Test
     @Order(1)
     void 写入血缘按作业记录表与快照() {
+        // snapshot_id 是 UUID 随机数，不能靠 max 找最新；排序键必须是 committed_at
+        assertTrue(SparkSnapshots.LATEST_SNAPSHOT.contains("ORDER BY committed_at DESC"));
+        assertFalse(SparkSnapshots.LATEST_SNAPSHOT.contains("max("));
+
         LineageWriter.record(spark, cfg, "run-lineage", LakeJobs.TRANSFORM);
         List<Row> rows = spark.sql("SELECT table_name, snapshot_id FROM " + lineage.fqn()
                 + " WHERE run_id = 'run-lineage'").collectAsList();
@@ -90,8 +95,13 @@ class RetentionLineageTest {
         assertEquals(2, rows.size());
         List<String> tables = new java.util.ArrayList<>();
         for (Row row : rows) {
-            tables.add(row.getString(0));
-            assertTrue(row.getString(1) != null && !row.getString(1).isEmpty(), "快照 ID 不应为空");
+            String table = row.getString(0);
+            tables.add(table);
+            String recorded = row.getString(1);
+            assertTrue(recorded != null && !recorded.isEmpty(), "快照 ID 不应为空");
+            TableRef ref = LakeTables.SILVER_ORDERS.equals(table) ? silver : gold;
+            assertEquals(SparkSnapshots.latestId(spark, ref.fqn()), recorded,
+                    table + " 应记录最近一次提交的快照，而不是随机 max");
         }
         assertTrue(tables.containsAll(Arrays.asList(LakeTables.SILVER_ORDERS, LakeTables.GOLD_DAILY_REVENUE)));
         assertEquals(3, GovernanceCatalog.ASSETS.size());

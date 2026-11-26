@@ -37,7 +37,12 @@ final class LineageWriter {
         List<Row> rows = new ArrayList<>();
         long now = System.currentTimeMillis();
         for (String table : tables) {
-            String snapshotId = snapshotId(spark, cfg, table);
+            String snapshotId;
+            try {
+                snapshotId = SparkSnapshots.latestId(spark, TableRef.of(cfg, table).fqn());
+            } catch (RuntimeException e) {
+                snapshotId = null; // 快照读不到就跳过，不影响作业结果
+            }
             if (snapshotId == null) {
                 continue; // 表刚建好还没写入，没有快照可记
             }
@@ -58,17 +63,6 @@ final class LineageWriter {
             System.out.printf("[lineage] 已记录 %d 张表的快照（run_id=%s，job=%s）%n", rows.size(), runId, job);
         } catch (Exception e) {
             System.out.println("[lineage] 写入 " + target.fqn() + " 失败（不影响作业结果）: " + e.getMessage());
-        }
-    }
-
-    private static String snapshotId(SparkSession spark, PlatformConfig cfg, String table) {
-        String fqn = TableRef.of(cfg, table).fqn();
-        try {
-            Row row = spark.sql("SELECT max(snapshot_id) FROM " + fqn + ".snapshots").head();
-            Object value = row.get(0);
-            return value == null ? null : String.valueOf(value);
-        } catch (RuntimeException e) {
-            return null;
         }
     }
 }

@@ -81,6 +81,17 @@ class DqQualityJobTest {
             assertTrue(row.getDouble(2) <= row.getDouble(3),
                     row.getString(0) + " 应通过: observed=" + row.getDouble(2));
         }
+
+        // 证据要指向被检查来源表最近一次提交，不能是随机 max(snapshot_id)
+        List<Row> snapshots = spark.sql("SELECT `check`, snapshot_id FROM " + results.fqn()
+                + " WHERE run_id = 'dq-clean-run'").collectAsList();
+        for (Row row : snapshots) {
+            TableRef source = row.getString(0).startsWith("silver_")
+                    ? TableRef.of(cfg, LakeTables.SILVER_ORDERS)
+                    : TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE);
+            assertEquals(SparkSnapshots.latestId(spark, source.fqn()), row.getString(1),
+                    row.getString(0) + " 的快照应指向最近一次提交");
+        }
     }
 
     @Test

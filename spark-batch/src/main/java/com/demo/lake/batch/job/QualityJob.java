@@ -1,6 +1,7 @@
 package com.demo.lake.batch.job;
 
 import com.demo.lake.batch.LakeJob;
+import com.demo.lake.batch.SparkSnapshots;
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.common.batch.RunIds;
 import com.demo.lake.common.catalog.LakeTables;
@@ -84,9 +85,7 @@ public class QualityJob implements LakeJob {
                 ? TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn()
                 : TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn();
         try {
-            Row row = spark.sql("SELECT max(snapshot_id) FROM " + table + ".snapshots").head();
-            Object value = row.get(0);
-            return value == null ? null : String.valueOf(value);
+            return SparkSnapshots.latestId(spark, table);
         } catch (RuntimeException e) {
             // 证据 informational：快照读不到不该让质量检查本身失败
             return null;
