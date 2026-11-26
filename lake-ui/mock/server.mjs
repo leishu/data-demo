@@ -137,7 +137,7 @@ const JOBS = [
   { name: 'maintain', title: '表维护', desc: 'rewrite_data_files 合并小文件 + expire_snapshots', group: 'pipeline' },
   { name: 'show', title: '数据概览', desc: '打印三层行数与分区分布', group: 'pipeline' },
   { name: 'verify-sql', title: 'SQL 校验', desc: '用 Spark 执行 Trino 脚本，需要 --sql-file 参数', group: 'other', cliOnly: true },
-  { name: 'all', title: '全链路', desc: 'init → ingest → transform → maintain → show', group: 'other', featured: true }
+  { name: 'all', title: '全链路', desc: 'init → ingest → transform → quality → maintain → show', group: 'other', featured: true }
 ].map((j) => ({ cliOnly: false, featured: false, ...j }))
 
 const config = {

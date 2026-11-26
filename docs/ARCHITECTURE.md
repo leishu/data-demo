@@ -21,7 +21,7 @@ Iceberg 是存储/表格式层（format-version=2）；catalog：本地为 hadoo
 
 各接入点：
 
-- 批作业入口：`bin/dev-batch.sh --job all` → `spark-batch/BatchApp` → 各 `job/*Job`（`InitJob` / `IngestJob` / `TransformJob` / `EvolveJob` / `MaintainJob` / `ShowJob` / `VerifySqlJob`）。
+- 批作业入口：`bin/dev-batch.sh --job all` → `spark-batch/BatchApp` → 各 `job/*Job`（`InitJob` / `IngestJob` / `TransformJob` / `EvolveJob` / `QualityJob` / `MaintainJob` / `ShowJob` / `VerifySqlJob` / `RetentionJob`）；`all` 的顺序是 init → ingest → transform → quality → maintain → show（加 `--evolve` 在 transform 后插入 evolve），`verify-sql` 与 `retention` 只在显式 `--job` 时跑。
 - 即席查询：`lake-adhoc`（官方 trino-jdbc 薄封装 + `${var}` 预处理 + 表格输出），`bin/trino-query.sh`。
 - 服务路径：`lake-service`（REST / SSE + 语义层 + 配额 + 审计）。
 

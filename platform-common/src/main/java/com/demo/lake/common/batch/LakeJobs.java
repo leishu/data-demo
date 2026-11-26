@@ -74,7 +74,7 @@ public final class LakeJobs {
                     "按 GovernanceCatalog 的保留期列出/删除业务表的旧分区，默认 dry-run 只列不删；"
                             + "--execute 才真删，前后写 ops.retention_audit 审计事件，不改表结构"),
             JobMeta.other(ALL, "全链路",
-                    "按 init → ingest → transform → maintain → show 顺序跑完整链路"
+                    "按 init → ingest → transform → quality → maintain → show 顺序跑完整链路"
                             + "（加 --evolve 会插入 evolve），全程复用同一个 SparkSession").withFeatured());
 
     /**

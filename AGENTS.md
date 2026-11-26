@@ -66,7 +66,7 @@ lakehouse-demo/
 bin/build.sh                  # 自动找 JDK 21；可用 export JAVA21_HOME=<dir> 指定
 
 # 批作业快速验证（依赖 bin/build.sh 已生成的 classpath）
-bin/dev-batch.sh --job all                 # init → ingest → transform → maintain → show
+bin/dev-batch.sh --job all                 # init → ingest → transform → quality → maintain → show
 bin/dev-batch.sh --job all --evolve        # 额外跑 schema 演进（加 channel 列 + 回填）
 bin/dev-batch.sh --job verify-sql --sql-file sql/adhoc/01_daily_revenue.sql
 

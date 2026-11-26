@@ -25,7 +25,7 @@ AI 助手改代码后需要重跑的命令见 [AGENTS.md「修改前的校验思
 |---|---|
 | 改了 Java 规则/工具 | `mvn -pl <模块> test`；改 `platform-common` 顺带 `bin/dev-batch.sh --job all` 再跑一轮 |
 | 运行报 `NoClassDefFoundError` | 先跑 `bin/build.sh` 确认 classpath 已生成 |
-| 跑批报错/卡 | `bin/dev-batch.sh --job all` 逐 job 归位：`init → ingest → transform → maintain → show` |
+| 跑批报错/卡 | `bin/dev-batch.sh --job all` 逐 job 归位：`init → ingest → transform → quality → maintain → show` |
 | 想看三层表/数据 | `bin/dev-batch.sh --job show`；`bin/trino-query.sh --list` 查表清单 |
 | 语义层/审计异常 | `curl -u operator:operator http://localhost:8088/api/config` |
 | 怀疑查询被拒 | `curl -u viewer:viewer -H 'Content-Type: application/json' -d '{"sql":"update t set x=1"}' http://localhost:8088/api/query` 应报只读拦截；注意 `bin/trino-query.sh` 直连 Trino，不经过 SqlGuard |

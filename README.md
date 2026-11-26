@@ -86,7 +86,7 @@ lakehouse-demo/
 bin/build.sh          # 自动找 ~/soft/jdk-21* / /usr/lib/jvm/java-21*；也可 export JAVA21_HOME 指定
                       # 整个 reactor 用 JDK 21 构建，spark 模块编译目标是 Java 17
 
-# 2. 一条命令跑完 init → ingest → transform → maintain → show
+# 2. 一条命令跑完 init → ingest → transform → quality → maintain → show
 bin/dev-batch.sh --job all
 
 # 3. 想连 schema 演进一起看（加 channel 列 + 回填 + 时间旅行前的快照对比）

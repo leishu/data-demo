@@ -120,14 +120,16 @@ public final class BatchApp {
         }
     }
 
-    private static List<String> resolvePlan(Args args) {
+    /** 包可见是为了让单测能锁住 all 的作业顺序，避免新作业加进来后忘记串进链路 */
+    static List<String> resolvePlan(Args args) {
         String job = args.job();
         if (LakeJobs.ALL.equals(job)) {
             List<String> plan = new ArrayList<>(Arrays.asList(LakeJobs.INIT, LakeJobs.INGEST, LakeJobs.TRANSFORM));
             if (args.flag("evolve")) {
                 plan.add(LakeJobs.EVOLVE);
             }
-            plan.addAll(Arrays.asList(LakeJobs.MAINTAIN, LakeJobs.SHOW));
+            // 数据质量是链路验收：脏数据在这里阻断，不让它悄悄流到巡检结果里
+            plan.addAll(Arrays.asList(LakeJobs.QUALITY, LakeJobs.MAINTAIN, LakeJobs.SHOW));
             return plan;
         }
         if (!JOBS.containsKey(job)) {

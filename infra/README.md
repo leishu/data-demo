@@ -431,6 +431,6 @@ MinIO 替代方案（要长期用、不想依赖归档镜像时）：
   native S3 文件系统对 `s3://` / `s3a://` / `s3n://` 一视同仁、HMS 官方 entrypoint 的
   `-initSchema` 行为、本机到 apt / Docker Hub / 各加速器的连通性。
 - 已实测（Docker 29.10.0 + compose 5.8.0）：`bin/infra.sh up` 三件套全部 healthy；
-  `MVN_PROFILE=s3 bin/dev-batch.sh --job all` 的 init / ingest / transform / maintain / show 全部通过；
+  `MVN_PROFILE=s3 bin/dev-batch.sh --job all` 的 init / ingest / transform / quality / maintain / show 全部通过；
   `bin/trino-query.sh --sql "select count(*) from iceberg.lake.silver_orders"` 返回 14000 行。
   期间踩到的坑已整理进第 7 章排错表。
