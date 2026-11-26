@@ -72,7 +72,7 @@ final class RunRecordWriter {
                     Timestamp.from(startedAt),
                     Timestamp.from(finishedAt),
                     durationMs,
-                    env("BATCH_RUN_LOG"),
+                    env(),
                     truncate(message, MAX_MESSAGE),
                     startedAt.toEpochMilli(),
                     finishedAt.toEpochMilli());
@@ -87,8 +87,8 @@ final class RunRecordWriter {
         }
     }
 
-    static String env(String key) {
-        String v = System.getenv(key);
+    static String env() {
+        String v = System.getenv("BATCH_RUN_LOG");
         return v == null || v.isBlank() ? null : v.trim();
     }
 
