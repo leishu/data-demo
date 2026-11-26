@@ -88,6 +88,8 @@ bin/build.sh          # 自动找 ~/soft/jdk-21* / /usr/lib/jvm/java-21*；也�
 
 # 2. 一条命令跑完 init → ingest → transform → quality → maintain → show
 bin/dev-batch.sh --job all
+#    日志同时留在终端并落到 logs/batch/<runId>.log；ops.batch_runs.log_file 会记下路径，
+#    控制台「日志尾部」可直接回放。想换目录用 LAKE_BATCH_LOG_DIR。
 
 # 3. 想连 schema 演进一起看（加 channel 列 + 回填 + 时间旅行前的快照对比）
 bin/dev-batch.sh --job all --evolve

@@ -19,6 +19,8 @@ AI 助手改代码后需要重跑的命令见 [AGENTS.md「修改前的校验思
 | `install-docker.sh` | 一次性安装 Docker Engine + Compose v2 | `bash bin/install-docker.sh` |
 | `build-ui.sh` | 前端构建（Vite → `lake-service/src/main/resources/static/ui/`，随 jar 打包） | `bin/build-ui.sh`；或 `npm --prefix lake-ui run dev` 开发模式 |
 
+**命令行直跑的日志**：`dev-batch.sh` 会自动编 run_id（尊重 `--run-id`），用 `tee` 把 stdout 同时写到终端和 `logs/batch/<runId>.log`，并通过 `BATCH_RUN_ID` / `BATCH_RUN_LOG` 传给 BatchApp。因此 `ops.batch_runs.log_file` 有值，控制台「日志尾部」可从该文件回放；日志目录可用 `LAKE_BATCH_LOG_DIR` 覆盖。服务触发的作业由执行器接管日志与 run_id，脚本不会重复接管。注意共享表 `lake_batch.batch_log_lines` 仍只由服务执行器写入，CLI 直跑的日志跨实例不可见。
+
 ## AI 助手常用排查
 
 | 现象/改动 | 应对命令 |

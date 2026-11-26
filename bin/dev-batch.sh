@@ -51,6 +51,55 @@ while IFS= read -r opt || [[ -n "${opt}" ]]; do
   [[ -n "${opt}" ]] && JAVA_OPTS+=("${opt}")
 done < .mvn/jvm.config
 
-exec "${JAVA21}/bin/java" "${JAVA_OPTS[@]}" \
+RUN_CMD=("${JAVA21}/bin/java" "${JAVA_OPTS[@]}" \
   -cp "${CLASSES}:${ABS_JAR}:${DEPS}" \
-  com.demo.lake.batch.BatchApp "$@"
+  com.demo.lake.batch.BatchApp "$@")
+
+# 日志归属：lake-service 拉起时已注入 BATCH_RUN_LOG，且 stdout 被执行器重定向到同一文件。
+# 这条路径不能再接管，否则两个写入者打架，run_id 也会和状态库对不上。
+if [[ -n "${BATCH_RUN_LOG:-}" ]]; then
+  [[ -n "${BATCH_RUN_ID:-}" ]] || export BATCH_RUN_ID="$(basename "${BATCH_RUN_LOG%.log}")"
+  exec "${RUN_CMD[@]}"
+fi
+
+# 命令行直跑：自己编 run_id + 日志文件，并通过环境变量交给 BatchApp。
+# RunIds.resolve 认 BATCH_RUN_ID，RunRecordWriter.env() 认 BATCH_RUN_LOG，
+# 于是 ops.batch_runs.log_file 有值；控制台的日志尾部也能从该文件回放（BatchJobService.tail 的文件回落）。
+arg_run_id() {
+  local prev="" a
+  for a in "$@"; do
+    if [[ "${prev}" == "--run-id" ]]; then printf '%s' "${a}"; return 0; fi
+    case "${a}" in
+      --run-id=*) printf '%s' "${a#--run-id=}"; return 0 ;;
+    esac
+    prev="${a}"
+  done
+  return 0
+}
+
+new_run_id() {
+  local suffix
+  suffix="$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | cut -c1-6)"
+  [[ -n "${suffix}" ]] || suffix="$(uuidgen 2>/dev/null | tr -d '-' | cut -c1-6 | tr 'A-Z' 'a-z')"
+  [[ -n "${suffix}" ]] || suffix="$(printf '%06x' $(( (RANDOM * 32768 + RANDOM) % 16777216 )))"
+  printf 'run-%s-%s' "$(date +%Y-%m-%d-%H-%M)" "${suffix}"
+}
+
+RUN_ID="$(arg_run_id "$@")"
+[[ -n "${RUN_ID}" ]] || RUN_ID="${BATCH_RUN_ID:-}"
+[[ -n "${RUN_ID}" ]] || RUN_ID="$(new_run_id)"
+export BATCH_RUN_ID="${RUN_ID}"
+
+LOG_DIR="${LAKE_BATCH_LOG_DIR:-logs/batch}"
+mkdir -p "${LOG_DIR}"
+export BATCH_RUN_LOG="${ROOT}/${LOG_DIR}/${RUN_ID}.log"
+
+# tee 让日志既落文件又留在终端；pipefail 保留，但要临时关掉 errexit 才能拿到 java 的真实退出码。
+set +e
+{
+  printf '[dev-batch] run_id=%s 日志=%s\n' "${RUN_ID}" "${BATCH_RUN_LOG}"
+  "${RUN_CMD[@]}"
+} 2>&1 | tee "${BATCH_RUN_LOG}"
+status=${PIPESTATUS[0]}
+set -e
+exit "${status}"
