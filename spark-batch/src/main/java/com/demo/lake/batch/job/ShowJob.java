@@ -8,8 +8,15 @@ import com.demo.lake.common.catalog.TableRef;
 import com.demo.lake.common.config.PlatformConfig;
 import org.apache.spark.sql.SparkSession;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** 只读巡检：快照、历史、分区、文件布局。Trino 侧也能查同样的元数据表 */
 public class ShowJob implements LakeJob {
+
+    /** 运维元数据表也纳入巡检：行数 = 跑过多少次作业 × 常数，方便判断要不要清理 */
+    private static final List<String> OPS_TABLES = List.of(
+            LakeTables.BATCH_RUNS, LakeTables.DQ_RESULTS, LakeTables.LINEAGE_RUNS, LakeTables.RETENTION_AUDIT);
 
     private static final String GOLD_SNAPSHOTS_SQL =
             "SELECT snapshot_id, parent_id, operation, "
@@ -41,6 +48,9 @@ public class ShowJob implements LakeJob {
             System.out.printf("  %-24s %,d 行%n", t.table(), spark.table(t.fqn()).count());
         }
 
+        System.out.println("[show] ---- ops 元数据表 ----");
+        opsCountLines(spark, cfg).forEach(System.out::println);
+
         System.out.println("[show] ---- gold 最近快照 ----");
         spark.sql(String.format(GOLD_SNAPSHOTS_SQL, gold.metadata("snapshots"))).show(false);
 
@@ -55,5 +65,15 @@ public class ShowJob implements LakeJob {
 
         System.out.println("[show] ---- gold 数据抽样 ----");
         spark.sql(String.format(GOLD_SAMPLE_SQL, gold.fqn())).show(false);
+    }
+
+    /** 包可见供巡检测试断言：四张 ops 表各一行「表名 + 行数」 */
+    static List<String> opsCountLines(SparkSession spark, PlatformConfig cfg) {
+        List<String> lines = new ArrayList<>();
+        for (String table : OPS_TABLES) {
+            TableRef ref = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, table);
+            lines.add(String.format("  %-24s %,d 行", ref.table(), spark.table(ref.fqn()).count()));
+        }
+        return lines;
     }
 }
