@@ -28,13 +28,14 @@ public final class LineageCatalog {
     public static final List<TableEdge> TABLE_EDGES = tableEdges();
     public static final List<ColumnEdge> COLUMN_EDGES = columnEdges();
 
-    /** 每个作业写入的业务表；LineageWriter 按这张表决定要记录哪些表的快照 */
+    /**
+     * 只有真正写数据的作业才登记；LineageWriter 按这张表决定要记录哪些表的快照。
+     * init 建表、maintain 重写文件/清理快照都不改变数据语义，不产生血缘记录。
+     */
     private static final Map<String, List<String>> WRITTEN = Map.of(
-            LakeJobs.INIT, TABLES,
             LakeJobs.INGEST, List.of(LakeTables.BRONZE_ORDERS),
             LakeJobs.TRANSFORM, List.of(LakeTables.SILVER_ORDERS, LakeTables.GOLD_DAILY_REVENUE),
-            LakeJobs.EVOLVE, List.of(LakeTables.SILVER_ORDERS),
-            LakeJobs.MAINTAIN, TABLES);
+            LakeJobs.EVOLVE, List.of(LakeTables.SILVER_ORDERS));
 
     private static List<TableEdge> tableEdges() {
         List<TableEdge> out = new ArrayList<>();

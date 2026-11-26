@@ -14,7 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 每个写表作业跑完后落一行「run_id -> table -> snapshot_id」到 {@code ops.lineage_runs}。
+ * 每个写数据的作业跑完后落一行「run_id -> table -> snapshot_id」到 {@code ops.lineage_runs}；
+ * init / maintain 这类只改结构或文件布局的作业不登记。
  *
  * <p>只靠 Iceberg 元数据表拿快照 ID，不改业务表结构。写入是旁路：拿不到快照或表不存在就跳过，
  * 记账失败也不改变作业结果（与 {@link RunRecordWriter} 同一纪律）。</p>

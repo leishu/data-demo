@@ -194,7 +194,7 @@ open http://localhost:8088/swagger-ui.html # 接口文档（OpenAPI 3 / Swagger 
   SQL 在 `sql/quality/`，结果写 `ops.dq_results`（observed / threshold / 证据 / run_id / snapshot_id）；
   ERROR 项失败即作业 FAILED，WARN 只记录。`bin/dev-batch.sh --job quality --inject-faults` 可注入重复单与负金额，
   治理页 `#/governance` 能看到失败证据并点 run_id 跳回作业日志。
-- **有版本级血缘与保留治理**。每个写表作业结束把 `run_id → table → snapshot_id` 写进 `ops.lineage_runs`，
+- **有版本级血缘与保留治理**。每个写数据的作业结束把 `run_id → table → snapshot_id` 写进 `ops.lineage_runs`（建表/维护不记），
   不改业务表结构；表级/列级血缘声明就写在 `sql/transform/*.sql` 头部的 `@lineage` 注释里，
   `LineageCatalogTest` 防止改了 SQL 忘改声明。`bin/dev-batch.sh --job retention` 默认 dry-run 列出待删分区，
   加 `--execute` 才真删；前后都写 `ops.retention_audit`，治理页可查。

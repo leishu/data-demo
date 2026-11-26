@@ -1,4 +1,4 @@
--- Spark SQL / Iceberg —— ops：写入级血缘，每次作业写表后记一行 run_id -> table -> snapshot_id。
+-- Spark SQL / Iceberg —— ops：写入级血缘，每次数据写入作业后记一行 run_id -> table -> snapshot_id。
 -- 靠 Iceberg 快照映射拿到版本级血缘，不改动任何业务表结构。
 -- snapshot_id 取写入后该表元数据里 committed_at 最新的一条（Iceberg 1.11 的 snapshot_id 是 UUID 随机数，不能用 max）；
 -- 表刚建好还没写数据时跳过。

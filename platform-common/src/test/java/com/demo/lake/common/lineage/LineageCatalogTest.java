@@ -91,11 +91,13 @@ class LineageCatalogTest {
 
     @Test
     void 写入表映射覆盖有数据变更的作业() {
-        assertEquals(3, LineageCatalog.writtenTables(LakeJobs.INIT).size());
+        assertTrue(LineageCatalog.writtenTables(LakeJobs.INIT).isEmpty(), "建表不算数据写入");
         assertEquals(List.of(LakeTables.BRONZE_ORDERS), LineageCatalog.writtenTables(LakeJobs.INGEST));
         assertEquals(Arrays.asList(LakeTables.SILVER_ORDERS, LakeTables.GOLD_DAILY_REVENUE),
                 LineageCatalog.writtenTables(LakeJobs.TRANSFORM));
         assertTrue(LineageCatalog.writtenTables(LakeJobs.SHOW).isEmpty());
+        // maintain 只重写文件，不产生数据写入血缘
+        assertTrue(LineageCatalog.writtenTables(LakeJobs.MAINTAIN).isEmpty());
     }
 
     @Test

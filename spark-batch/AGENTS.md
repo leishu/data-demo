@@ -12,7 +12,7 @@ spark-batch/
     ├── BatchApp.java                        # 入口：解析 --job/--days/... → 创建 SparkSession → 分发 job → 记账
     ├── SparkSessionFactory.java             # SparkSession 组装（PlatformConfig.sparkConf）
     ├── RunRecordWriter.java                 # 落 ops.batch_runs 终态（run_id / job / status / 耗时 / 日志路径）
-    ├── LineageWriter.java                   # 每个写表作业后落 ops.lineage_runs（run_id/table/snapshot_id）
+    ├── LineageWriter.java                   # 写数据作业后落 ops.lineage_runs（run_id/table/snapshot_id）
     ├── SparkSnapshots.java                  # 按 committed_at 取 Iceberg 最新快照 ID（snapshot_id 是随机数）
     ├── LakeJob.java                         # 接口：name() + run(SparkSession, PlatformConfig, Args)
     └── job/
