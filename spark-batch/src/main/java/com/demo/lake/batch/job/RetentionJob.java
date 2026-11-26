@@ -123,8 +123,8 @@ public class RetentionJob implements LakeJob {
         try {
             spark.createDataFrame(rows, schema).writeTo(target.fqn()).append();
         } catch (Exception e) {
-            // 审计写失败必须让人看到：这是合规证据，不是可有可无的进度日志
-            System.out.println("[retention] 写 " + target.fqn() + " 失败: " + e.getMessage());
+            // 审计是合规证据，写不进去就让作业失败；静默放过会让「dry-run 评估过」变成无凭无据
+            throw new IllegalStateException("写入保留审计事件失败: " + target.fqn(), e);
         }
     }
 }
