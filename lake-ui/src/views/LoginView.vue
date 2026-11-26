@@ -10,6 +10,7 @@ const busy = ref(false)
 
 const DEMO_ACCOUNTS = [
   { user: 'viewer', pass: 'viewer', role: '只读查询' },
+  { user: 'analyst', pass: 'analyst', role: '查询 + merchant_id 明文' },
   { user: 'operator', pass: 'operator', role: '查询 + 批作业' },
   { user: 'auditor', pass: 'auditor', role: '审计原文 / 保全' }
 ]
@@ -108,7 +109,7 @@ async function submit() {
               v-model="username"
               size="large"
               autocomplete="username"
-              placeholder="viewer / operator / auditor"
+              placeholder="viewer / analyst / operator / auditor"
             />
           </el-form-item>
           <el-form-item label="密码">

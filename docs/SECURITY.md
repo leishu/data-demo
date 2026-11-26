@@ -125,9 +125,13 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.security.yml 
 - `bronze_orders` / `silver_orders` 对 analyst / viewer 只有 `GRANT_SELECT`（查视图需要），**没有 SELECT**，
   直连 `SELECT *` 会被引擎拒绝；`gold_daily_revenue` 是聚合结果，原样给 analyst。
 - `*_masked` 给 analyst（merchant_id 明文），`*_restricted` 给 viewer（merchant_id 也哈希）。
-  服务侧 `/api/query/tables/{table}/sample` 按角色自动选目标：`QUERY` → restricted，
+  服务侧 `/api/tables/{table}/sample` 按角色自动选目标：`QUERY` → restricted，
   `QUERY,ANALYST` → masked，`AUDITOR` → 基础表明文；没带身份时走最严档。
-  服务 Trino 账号（`lake_service`）只需视图 SELECT + 基础表 GRANT_SELECT，不需要 DDL 权限。
+  采样端点同时接受 `QUERY` / `AUDITOR`，其余 `/api/query`、`/api/tables` 仍只要 `QUERY`。
+  服务 Trino 账号（`lake_service`）默认只需视图 SELECT + 基础表 GRANT_SELECT，不需要 DDL 权限；
+  但 AUDITOR 档采样走的是基础表，**默认 rules.json 只给 GRANT_SELECT 会被 Trino 拒绝**。
+  需要在服务里演示 AUDITOR 明文采样时，须显式给 `lake_service` 基础表 SELECT——
+  这也意味着 `/api/query` 能用该账号读到明文，属于策略取舍，生产默认不开。
 - `masked_reader` 是演示列掩码的角色：它能直连基础表，但四个敏感列全部返回掩码值。
 - 视图由 lake-service 启动时创建，也可手动 `bin/init-views.sh --user etl`；安全 profile 下
   服务账号没有 OWNERSHIP，需由 etl / admin 先把视图建好。
@@ -153,9 +157,9 @@ trino --server https://trino.example.com --user auditor \
   --execute 'select user_id from iceberg.lake.silver_orders limit 1'
 
 # 服务侧采样对比：viewer / analyst / auditor 的 merchant_id 依次是哈希 / 明文 / 明文
-curl -u viewer:viewer   'http://localhost:8088/api/query/tables/silver_orders/sample?limit=1'
-curl -u analyst:analyst 'http://localhost:8088/api/query/tables/silver_orders/sample?limit=1'
-curl -u auditor:auditor 'http://localhost:8088/api/query/tables/silver_orders/sample?limit=1'
+curl -u viewer:viewer   'http://localhost:8088/api/tables/silver_orders/sample?limit=1'
+curl -u analyst:analyst 'http://localhost:8088/api/tables/silver_orders/sample?limit=1'
+curl -u auditor:auditor 'http://localhost:8088/api/tables/silver_orders/sample?limit=1'
 ```
 
 ## 5. 验证清单

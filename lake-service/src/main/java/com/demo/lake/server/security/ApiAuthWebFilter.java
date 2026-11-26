@@ -139,8 +139,14 @@ public class ApiAuthWebFilter implements WebFilter {
      *
      * <p>审计事件列表同时接受 QUERY 与 AUDITOR：列表只有身份/动作/结果 + SQL 指纹，
      * 不含原文；若只放 QUERY，auditor 能读原文却看不到列表，只能靠别人贴 event_id。</p>
+     *
+     * <p>表采样同理：按角色切脱敏视图，AUDITOR 档要读基础表明文，所以单独放行。
+     * 其余查询/表清单仍只给 QUERY。</p>
      */
     static List<String> requiredRoles(String path, HttpMethod method) {
+        if (path.startsWith("/api/tables") && path.endsWith("/sample")) {
+            return List.of("QUERY", "AUDITOR");
+        }
         if (path.startsWith("/api/query") || path.startsWith("/api/tables")
                 || path.startsWith("/api/semantics") || path.startsWith("/api/governance")
                 || path.equals("/api/config")) {

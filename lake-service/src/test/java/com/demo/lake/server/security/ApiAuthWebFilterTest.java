@@ -45,6 +45,10 @@ class ApiAuthWebFilterTest {
         assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/query/stream", HttpMethod.POST));
         assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/config", HttpMethod.GET));
         assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/governance/assets", HttpMethod.GET));
+        // 采样按角色切脱敏视图：auditor 读基础表明文，必须能进这个端点
+        assertEquals(List.of("QUERY", "AUDITOR"),
+                ApiAuthWebFilter.requiredRoles("/api/tables/silver_orders/sample", HttpMethod.GET));
+        assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/tables", HttpMethod.GET));
         assertEquals(List.of("QUERY"), ApiAuthWebFilter.requiredRoles("/api/batch/runs", HttpMethod.GET));
         assertEquals(List.of("BATCH"), ApiAuthWebFilter.requiredRoles("/api/batch/init", HttpMethod.POST));
         assertEquals(List.of("BATCH"), ApiAuthWebFilter.requiredRoles("/actuator/metrics", HttpMethod.GET));
