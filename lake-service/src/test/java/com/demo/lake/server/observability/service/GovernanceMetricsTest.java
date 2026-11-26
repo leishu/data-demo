@@ -32,7 +32,7 @@ class GovernanceMetricsTest {
     private static DqResultService dqWith(List<DqResultView> rows) {
         return new DqResultService(null, null, null) {
             @Override
-            public Mono<List<DqResultView>> recent(int limit) {
+            public Mono<List<DqResultView>> recentStrict(int limit) {
                 return Mono.just(rows);
             }
         };
@@ -79,7 +79,7 @@ class GovernanceMetricsTest {
             }
 
             @Override
-            public Mono<List<DqResultView>> recent(int limit) {
+            public Mono<List<DqResultView>> recentStrict(int limit) {
                 return Mono.just(rows);
             }
         }
@@ -98,5 +98,39 @@ class GovernanceMetricsTest {
         metrics.collect();
         assertEquals(0.0, registry.get(GovernanceMetrics.DQ_FAILED)
                 .tag("check", "silver_unique").tag("severity", "ERROR").gauge().value());
+    }
+
+    @Test
+    void 质量结果读失败时保留上一轮告警() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        DqResultView failed = new DqResultView("run-1", "1", "silver_unique", "ERROR",
+                12.0, 0.0, "重复订单号", 1L, false);
+
+        class FlakyDq extends DqResultService {
+            private boolean down;
+
+            FlakyDq() {
+                super(null, null, null);
+            }
+
+            @Override
+            public Mono<List<DqResultView>> recentStrict(int limit) {
+                return down ? Mono.error(new RuntimeException("Trino 不可用"))
+                        : Mono.just(List.of(failed));
+            }
+        }
+        FlakyDq dq = new FlakyDq();
+        GovernanceMetrics metrics = new GovernanceMetrics(registry, icebergWith(Map.of()),
+                dq, new LakeProperties());
+
+        metrics.collect();
+        assertEquals(1.0, registry.get(GovernanceMetrics.DQ_FAILED)
+                .tag("check", "silver_unique").tag("severity", "ERROR").gauge().value());
+
+        dq.down = true;
+        metrics.collect();
+        assertEquals(1.0, registry.get(GovernanceMetrics.DQ_FAILED)
+                .tag("check", "silver_unique").tag("severity", "ERROR").gauge().value(),
+                "读失败不能当成恢复，否则告警会被静默清掉");
     }
 }

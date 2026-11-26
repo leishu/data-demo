@@ -24,7 +24,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * 把「新鲜度 SLA 超时」和「质量检查失败」写成 Prometheus 可判定的 gauge。
  *
  * <p>数据不另起一套采集：新鲜度用 {@link IcebergTableMetrics#snapshot()}（已经在定时查 $snapshots），
- * 质量用 {@link DqResultService#recent(int)}（治理页同一份结果）。这里只做换算与打点，
+ * 质量用 {@link DqResultService#recentStrict(int)}（治理页同一份结果，但读失败会抛异常）。
+ * 这里只做换算与打点，
  * 阈值由 Prometheus 规则比较 hours 与 sla.hours，不在服务里硬编码「告警还是不告警」。</p>
  *
  * <p>没有快照时 hours 补 -1（不是「现在」，也不是 0），规则里的 {@code >= 0} 会跳过 UNKNOWN，
@@ -114,18 +115,19 @@ public class GovernanceMetrics {
     }
 
     private void collectQuality() {
-        // 先清零：上一次失败、这次恢复的检查必须回到 0，否则告警永远不会消
-        dqFailed.values().forEach(v -> v.set(0));
         List<DqResultView> rows;
         try {
-            rows = dq.recent(MAX_DQ_RESULTS).block(Duration.ofSeconds(10));
+            rows = dq.recentStrict(MAX_DQ_RESULTS).block(Duration.ofSeconds(10));
         } catch (RuntimeException e) {
-            log.debug("采集质量检查指标失败: {}", e.getMessage());
+            // 读失败不能清零：否则 Trino 抖一下，真实的质量失败告警就自己消了
+            log.debug("采集质量检查指标失败，保留上次 gauge: {}", e.getMessage());
             return;
         }
         if (rows == null) {
             return;
         }
+        // 读到数据后才清零：上一次失败、这次恢复的检查要回到 0，否则告警永远不会消
+        dqFailed.values().forEach(v -> v.set(0));
         // 同一检查可能有多轮运行，治理页按时间倒序返回，这里只认最新一条
         Map<String, DqResultView> latest = new LinkedHashMap<>();
         for (DqResultView row : rows) {

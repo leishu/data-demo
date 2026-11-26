@@ -37,17 +37,28 @@ public class DqResultService {
     private final Scheduler blocking;
 
     public Mono<List<DqResultView>> recent(int limit) {
-        return Mono.fromCallable(() -> load(Math.clamp(limit, 1, MAX_LIMIT))).subscribeOn(blocking);
+        return Mono.fromCallable(() -> {
+            try {
+                return loadStrict(Math.clamp(limit, 1, MAX_LIMIT));
+            } catch (RuntimeException e) {
+                // 治理页是旁路：表还没建或 Trino 不可用时返回空列表，别让页面打不开
+                log.warn("读质量检查结果失败: {}", e.getMessage());
+                return List.<DqResultView>of();
+            }
+        }).subscribeOn(blocking);
     }
 
-    private List<DqResultView> load(int n) {
-        try {
-            QueryResult result = queries.executeQuiet(String.format(SELECT, table(), n), null);
-            return result.rows().stream().map(DqResultService::toView).toList();
-        } catch (RuntimeException e) {
-            log.warn("读质量检查结果失败: {}", e.getMessage());
-            return List.of();
-        }
+    /**
+     * 严格版本：读失败要抛给调用方，让指标采集能区分「全部通过」和「根本没读到」。
+     * GovernanceMetrics 用它避免把瞬时故障当成告警恢复。
+     */
+    public Mono<List<DqResultView>> recentStrict(int limit) {
+        return Mono.fromCallable(() -> loadStrict(Math.clamp(limit, 1, MAX_LIMIT))).subscribeOn(blocking);
+    }
+
+    private List<DqResultView> loadStrict(int n) {
+        QueryResult result = queries.executeQuiet(String.format(SELECT, table(), n), null);
+        return result.rows().stream().map(DqResultService::toView).toList();
     }
 
     private String table() {
