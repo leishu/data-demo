@@ -74,14 +74,14 @@
     <dependency>
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
-      <version>42.7.11</version>
+      <version>42.7.15</version>
       <!-- 配额的 LISTEN 连接要直接引用 PGConnection/PGNotification，故用 compile 而非 runtime -->
     </dependency>
     <!-- H2 只在测试里当 Postgres 的轻量替身，验 RunStateStore 的 SQL 行为 -->
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
-      <version>2.4.240</version>
+      <version>2.5.252</version>
       <scope>test</scope>
     </dependency>
 
@@ -105,7 +105,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-enforcer-plugin</artifactId>
-        <version>3.4.1</version>
+        <version>3.7.0</version>
         <executions>
           <execution>
             <id>require-jdk-21</id>
