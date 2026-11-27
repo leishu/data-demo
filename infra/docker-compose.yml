@@ -69,6 +69,8 @@ services:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: password
       MINIO_DEFAULT_BUCKETS: lake
+      # Bitnami 镜像默认 MINIO_BROWSER=off，显式打开 :9001 的 Web 控制台
+      MINIO_BROWSER: "on"
       # Go 运行时软内存上限：推高 GC 频率，把空闲 RSS 从 ~290M 压到 ~250M。
       # 是软限制，超了不会 OOM，只会更勤快地回收。
       GOMEMLIMIT: 256MiB
