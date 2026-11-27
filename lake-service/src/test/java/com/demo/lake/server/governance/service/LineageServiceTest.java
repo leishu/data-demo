@@ -72,7 +72,7 @@ class LineageServiceTest {
         }
 
         FakeQueries(QueryResult result, boolean fail) {
-            super(null, new LakeProperties(), PlatformConfig.load(), Schedulers.immediate());
+            super(null, new LakeProperties(), PlatformConfig.load(), Schedulers.immediate(), null);
             this.result = result;
             this.fail = fail;
         }

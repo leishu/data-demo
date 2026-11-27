@@ -20,7 +20,7 @@ lake-service/src/main/java/com/demo/lake/server/
 │   ├── SqlGuard.java                    # 只读守卫：默认白名单 select/with/show/describe/explain，看穿 EXPLAIN ANALYZE
 │   ├── QueryFailedException.java ...    # InvalidQueryException / TrinoUnavailableException / QueryQuotaExceededException 等
 │   ├── model/                           # Column / QueryResult / TableInfo / QueryEvent
-│   └── service/                         # QueryService（执行 + 审计记账）/ QueryQuotaService（配额并发）
+│   └── service/                         # QueryService（执行 + 配额编排）/ QueryQuotaService（包内可见，配额并发实现）
 ├── batch/
 │   ├── model/                           # BatchRun / JobView / RunsView / BatchEvent
 │   ├── service/                         # JobDispatcher / JobExecutor（Local / Kubernetes）/ JobCompletionService
@@ -70,5 +70,5 @@ lake-service/src/main/resources/sql/state/   # H2/Postgres 双兼容 DDL：schem
 
 - Trino 没起：查询返回 503 并给出“先起 Trino”提示，健康检查如实报 DOWN。
 - `SqlGuard` 改语义：`EXPLAIN ANALYZE` 真执行内层语句；`setReadOnly` 只是驱动标记。
-- 配额/状态改动看 Postgres：`QueryQuotaService`、`JobDispatcher`、`BatchHistoryService` 的并发/超时规则放在 `lake_batch.*` 表里。
+- 配额/状态改动看 Postgres：`QuotaHelper`、`JobDispatcher`、`BatchHistoryService` 的并发/超时规则放在 `lake_batch.*` 表里。
 - `bin/smoke.sh` 失败最常见的是 401/429/公开接口不公开（security 关开状态不一致）。

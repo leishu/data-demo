@@ -11,7 +11,6 @@ import com.demo.lake.server.observability.store.AuditTextStore;
 import com.demo.lake.server.observability.service.LakeMetrics;
 import com.demo.lake.server.query.InvalidSemanticQueryException;
 import com.demo.lake.server.query.model.QueryResult;
-import com.demo.lake.server.query.service.QueryQuotaService;
 import com.demo.lake.server.query.service.QueryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -48,10 +47,9 @@ public class SemanticController {
 
     private final PlatformConfig cfg;
     private final LakeProperties props;
-    private final QueryService queries;
-    private final QueryQuotaService quotas;
-    private final AuditService audit;
-    private final AuditTextStore auditText;
+    private final QueryService queryServ;
+    private final AuditService auditServ;
+    private final AuditTextStore auditTextStore;
     private final LakeMetrics metrics;
 
     public record Filter(
@@ -105,18 +103,18 @@ public class SemanticController {
         String actor = principal == null || principal.getName() == null ? "anonymous" : principal.getName();
         String ip = http == null || http.getRemoteAddress() == null
                 ? null : http.getRemoteAddress().getAddress().getHostAddress();
-        return Mono.usingWhen(quotas.acquire(actor), permit -> queries.query(sql, request.limit()), quotas::release)
+        return queryServ.queryWithQuota(actor, sql, request.limit())
                 .doOnSuccess(result -> {
                     metrics.queryExecuted(true, result.elapsedMs(), result.rows().size());
-                    String eventId = audit.record("semantic.query", actor, Map.of(
+                    String eventId = auditServ.record("semantic.query", actor, Map.of(
                             "metric", String.valueOf(request.metric()),
                             "sql_fp", AuditService.fingerprint(sql),
                             "rows", String.valueOf(result.rows().size())));
-                    auditText.save(eventId, actor, ip, sql);
+                    auditTextStore.save(eventId, actor, ip, sql);
                 })
                 .doOnError(e -> {
                     metrics.queryExecuted(false, 0, 0);
-                    audit.record("semantic.query", actor, Map.of(
+                    auditServ.record("semantic.query", actor, Map.of(
                             "metric", String.valueOf(request.metric()), "outcome", "error"));
                 });
     }

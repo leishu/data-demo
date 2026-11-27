@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SemanticControllerTest {
 
     private SemanticController controller() {
-        return new SemanticController(PlatformConfig.load(), new LakeProperties(), null, null, null, null, null);
+        return new SemanticController(PlatformConfig.load(), new LakeProperties(), null, null, null, null);
     }
 
     @Test

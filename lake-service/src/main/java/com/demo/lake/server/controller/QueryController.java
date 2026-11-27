@@ -12,7 +12,6 @@ import com.demo.lake.server.observability.service.LakeMetrics;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.model.TableInfo;
-import com.demo.lake.server.query.service.QueryQuotaService;
 import com.demo.lake.server.query.service.QueryService;
 import com.demo.lake.server.security.ApiPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
@@ -48,7 +47,6 @@ import java.util.Map;
 public class QueryController {
 
     private final QueryService queryService;
-    private final QueryQuotaService quotas;
     private final AuditService audit;
     private final AuditTextStore auditText;
     private final LakeMetrics metrics;
@@ -75,9 +73,7 @@ public class QueryController {
         // 配额只罩用户发起的查询：内部读运行历史走 QueryService，不占名额
         String actor = client(principal);
         String ip = clientIp(http);
-        return Mono.usingWhen(quotas.acquire(actor),
-                        permit -> queryService.query(request.sql(), request.maxRows()),
-                        quotas::release)
+        return queryService.queryWithQuota(actor, request.sql(), request.maxRows())
                 .doOnSuccess(result -> {
                     metrics.queryExecuted(true, result.elapsedMs(), result.rows().size());
                     auditQuery(actor, ip, request.sql(), "success", result.rows().size());
@@ -122,9 +118,7 @@ public class QueryController {
                                                          @Parameter(hidden = true) ServerHttpRequest http) {
         String actor = client(principal);
         String ip = clientIp(http);
-        return Flux.usingWhen(quotas.acquire(actor),
-                        permit -> queryService.streamQuery(request.sql(), request.maxRows()),
-                        quotas::release)
+        return queryService.streamQueryWithQuota(actor, request.sql(), request.maxRows())
                 .map(ev -> ServerSentEvent.builder(ev).event(ev.type()).build())
                 .onErrorResume(e -> {
                     // 流已经开始了就发不了状态码，只能自己翻成一条 error 事件
@@ -148,9 +142,7 @@ public class QueryController {
     @Operation(summary = "表清单", description = "读 information_schema，返回当前库的表及字段（字段 comment 即 DDL 里的中文名）")
     @GetMapping("/tables")
     public Mono<List<TableInfo>> tables(@Parameter(hidden = true) Principal principal) {
-        return Mono.usingWhen(quotas.acquire(client(principal)),
-                permit -> queryService.listTables(),
-                quotas::release);
+        return queryService.listTablesWithQuota(client(principal));
     }
 
     @Operation(summary = "表采样", description = "按 limit 采样一张表；敏感表按角色走脱敏视图，返回结构与 /api/query 相同")
@@ -160,9 +152,7 @@ public class QueryController {
             @Parameter(description = "采样行数，默认 10") @RequestParam(defaultValue = "10") int limit,
             @Parameter(hidden = true) Principal principal) {
         MaskingCatalog.Access access = accessOf(principal);
-        return Mono.usingWhen(quotas.acquire(client(principal)),
-                permit -> queryService.sample(table, limit, access),
-                quotas::release);
+        return queryService.sampleWithQuota(client(principal), table, limit, access);
     }
 
     /** 服务角色 → 脱敏档位：AUDITOR 看明文，ANALYST 看 merchant_id 明文，其余一律最严 */

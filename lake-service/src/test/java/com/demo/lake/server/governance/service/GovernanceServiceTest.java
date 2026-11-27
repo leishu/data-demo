@@ -115,7 +115,7 @@ class GovernanceServiceTest {
         private final List<TableInfo> tables;
 
         FakeQueries(List<TableInfo> tables) {
-            super(null, new LakeProperties(), PlatformConfig.load(), Schedulers.immediate());
+            super(null, new LakeProperties(), PlatformConfig.load(), Schedulers.immediate(), null);
             this.tables = tables;
         }
 

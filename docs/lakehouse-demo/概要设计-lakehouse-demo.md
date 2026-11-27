@@ -278,19 +278,19 @@ sequenceDiagram
     participant W as WebAccessLogFilter
     participant A as ApiAuthWebFilter
     participant Ctl as Controller
-    participant Q as QueryQuotaService
     participant S as QueryService (虚拟线程)
+    participant Q as QueryQuotaService
     participant T as Trino
 
     C->>W: HTTP 请求
     W->>A: 计时开始
     A->>A: Basic 认证 → ApiPrincipal
     A->>Ctl: 挂载 principal 后放行
-    Ctl->>Q: acquire(actor) 滑动窗口+信号量
+    Ctl->>S: queryWithQuota(actor, sql, maxRows)
+    S->>Q: acquire(actor) 滑动窗口 + 并发租约
     alt 配额不足
-        Q-->>C: 429 + hint
+        Q-->>Ctl: QueryQuotaExceededException → 429 + hint
     else 拿到名额
-        Q->>S: query(sql,maxRows)
         S->>S: SqlGuard 只读校验
         S->>T: JDBC 执行(setQueryTimeout)
         T-->>S: ResultSet
@@ -299,7 +299,7 @@ sequenceDiagram
         Ctl->>Ctl: metrics + 审计(指纹+保险箱)
         Ctl-->>C: JSON / SSE meta→rows→done
     end
-    Note over Q: usingWhen 保证名额归还
+    Note over S,Q: usingWhen 保证名额归还
     W->>W: doFinally 记录整段耗时(SSE 为全流时长)
 ```
 
@@ -336,7 +336,7 @@ sequenceDiagram
 
 ### 3.4 lake-service · 查询链路
 
-- **职责**：把 SQL 查询、语义指标查询包装成 HTTP（JSON + SSE），负责鉴权、配额、只读校验、审计与指标。
+- **职责**：把 SQL 查询、语义指标查询包装成 HTTP（JSON + SSE），负责鉴权、只读校验、审计与指标；配额编排收在 `QueryService` 的 `*WithQuota` 方法内，Controller 不再直接依赖 `QuotaHelper`。
 - **对外接口**：`POST /api/query`、`POST /api/query/stream`、`GET/POST /api/semantics*`、`GET /api/tables*`、`GET /api/config`、`GET /api/audit*`。〔FACT｜README.md:119-135〕
 - **依赖**：`platform-common`（配置 + 指标）；Trino（JDBC）、Postgres（审计保险箱）。
 - **关键约束**：SQL 默认只读（`SqlGuard` 白名单），配额满返回 429，Trino 挂返回 503，健康检查如实报 DOWN。〔FACT｜query/SqlGuard.java:19-20〕

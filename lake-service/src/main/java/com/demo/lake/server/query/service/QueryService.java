@@ -41,6 +41,9 @@ import java.util.regex.Pattern;
  *
  * <p>JDBC 是阻塞 API，所以对外返回 Mono/Flux，并 {@code subscribeOn(blocking)} 到虚拟线程上执行。
  * Hikari 与 ResultSet 并没有变成响应式：那需要 r2dbc 驱动，Trino 没有，硬包一层只是把阻塞藏起来。</p>
+ *
+ * <p>HTTP 入口的用户查询走 {@code *WithQuota} 方法（先占配额再执行）；内部调用
+ * （批作业历史、资产目录装配）走无配额方法，不占用户额度。</p>
  */
 @Service
 @Slf4j
@@ -67,9 +70,24 @@ public class QueryService {
     private final LakeProperties props;
     private final PlatformConfig cfg;
     private final Scheduler blocking;
+    private final QuotaHelper quotas;
 
-    /** 一次性返回完整结果（JSON 接口，也是控制台之外调用方最省事的形态） */
-    public Mono<QueryResult> query(String sql, Integer maxRows) {
+    /**
+     * 用户发起的查询：先占配额再执行，HTTP 入口统一走这条。
+     *
+     * <p>配额只罩用户请求；{@code BatchHistoryService} / {@code GovernanceService} 这类内部调用
+     * 直接用 {@link #executeQuiet} / {@link #listTables}，不占用户额度。</p>
+     */
+    public Mono<QueryResult> queryWithQuota(String client, String sql, Integer maxRows) {
+        return Mono.usingWhen(quotas.acquire(client), permit -> query(sql, maxRows), quotas::release);
+    }
+
+    /**
+     * 一次性返回完整结果（JSON 接口，也是控制台之外调用方最省事的形态）。
+     *
+     * <p>包内可见：用户入口走 {@link #queryWithQuota}，避免绕过配额。</p>
+     */
+    Mono<QueryResult> query(String sql, Integer maxRows) {
         return Mono.fromCallable(() -> execute(sql, maxRows)).subscribeOn(blocking);
     }
 
@@ -88,15 +106,15 @@ public class QueryService {
     /**
      * 同步执行的实现，只允许在 blocking 调度器线程里调用。
      *
-     * <p>public 是为了给 {@code BatchHistoryService} 这类内部调用方复用：错误翻译与
-     * {@code SqlGuard} 都在这里，重写一遍 JDBC 只会把同一个坑再踩一次。</p>
+     * <p>包内可见：内部调用方（{@code BatchHistoryService} 等）走 {@link #executeQuiet}；
+     * 错误翻译与 {@code SqlGuard} 都在这里，重写一遍 JDBC 只会把同一个坑再踩一次。</p>
      */
-    public QueryResult execute(String sql, Integer maxRows) {
+    QueryResult execute(String sql, Integer maxRows) {
         return executeInternal(sql, maxRows, false, new Object[0]);
     }
 
     /** 带绑定参数的版本：Trino JDBC 会把 {@code ?} 转成 PREPARE/EXECUTE USING 在服务端绑定。 */
-    public QueryResult execute(String sql, Integer maxRows, Object... params) {
+    QueryResult execute(String sql, Integer maxRows, Object... params) {
         return executeInternal(sql, maxRows, false, params);
     }
 
@@ -182,7 +200,7 @@ public class QueryService {
      * <p>用 {@code Flux.create} 而不是 {@code generate}：这里是一条「边读 ResultSet 边发」的循环，
      * 天然有多个元素；行数被 maxRows 卡住，所以即使下游慢、sink 缓冲也是有界的。</p>
      */
-    public Flux<QueryEvent> streamQuery(String sql, Integer maxRows) {
+    Flux<QueryEvent> streamQuery(String sql, Integer maxRows) {
         return Flux.<QueryEvent>create(sink -> {
             long start = System.nanoTime();
             String safeSql;
@@ -240,6 +258,11 @@ public class QueryService {
         }, FluxSink.OverflowStrategy.BUFFER).subscribeOn(blocking);
     }
 
+    /** SSE 版本的用户查询：与 {@link #queryWithQuota} 共用同一套配额。 */
+    public Flux<QueryEvent> streamQueryWithQuota(String client, String sql, Integer maxRows) {
+        return Flux.usingWhen(quotas.acquire(client), permit -> streamQuery(sql, maxRows), quotas::release);
+    }
+
     /**
      * 表清单 + 字段清单，全部走 Trino 自己的 information_schema，不额外维护一份表结构。
      *
@@ -263,18 +286,30 @@ public class QueryService {
         }).subscribeOn(blocking);
     }
 
-    /** 默认采样走最严档：普通 QUERY 角色拿不到 merchant_id 明文 */
-    public Mono<QueryResult> sample(String table, int limit) {
+    /** 用户发起的表清单请求：占配额；内部资产目录装配走 {@link #listTables()}。 */
+    public Mono<List<TableInfo>> listTablesWithQuota(String client) {
+        return Mono.usingWhen(quotas.acquire(client), permit -> listTables(), quotas::release);
+    }
+
+    /** 默认采样走最严档：普通 QUERY 角色拿不到 merchant_id 明文；用户入口走 {@link #sampleWithQuota}。 */
+    Mono<QueryResult> sample(String table, int limit) {
         return sample(table, limit, MaskingCatalog.Access.RESTRICTED);
     }
 
     /** 按调用方角色选目标：分析角色读 *_masked，审计角色读基础表，其余读 *_restricted。 */
-    public Mono<QueryResult> sample(String table, int limit, MaskingCatalog.Access access) {
+    Mono<QueryResult> sample(String table, int limit, MaskingCatalog.Access access) {
         return Mono.fromCallable(() -> {
             int n = Math.max(1, Math.min(limit, props.getQuery().getMaxRows()));
             String sql = sampleSql(catalog(), database(), table, n, access);
             return execute(sql, n);
         }).subscribeOn(blocking);
+    }
+
+    /** 用户发起的采样请求：占配额，并按角色选脱敏视图。 */
+    public Mono<QueryResult> sampleWithQuota(String client, String table, int limit,
+                                             MaskingCatalog.Access access) {
+        return Mono.usingWhen(quotas.acquire(client),
+                permit -> sample(table, limit, access), quotas::release);
     }
 
     /** 包内可见，单测用：验证角色到视图名的映射，不用起 Trino */

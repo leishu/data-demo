@@ -1,9 +1,9 @@
-package com.demo.lake.server.query;
+package com.demo.lake.server.query.service;
 
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.config.LakeProperties;
+import com.demo.lake.server.query.TrinoUnavailableException;
 import com.demo.lake.server.query.model.QueryResult;
-import com.demo.lake.server.query.service.QueryService;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
@@ -22,6 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  */
 class QueryServiceTest {
 
+    /** 本测试只验证执行路径，配额不参与；QueryQuotaService 传 null 即可。 */
+    private static QueryService service(JdbcTemplate jdbc) {
+        return new QueryService(jdbc, new LakeProperties(), PlatformConfig.load(),
+                Schedulers.immediate(), null);
+    }
+
     private QueryService serviceAgainstDeadPort() {
         HikariConfig hc = new HikariConfig();
         hc.setPoolName("dead-trino");
@@ -31,7 +37,7 @@ class QueryServiceTest {
         hc.setConnectionTimeout(800);
         hc.setInitializationFailTimeout(-1);
         HikariDataSource ds = new HikariDataSource(hc);
-        return new QueryService(new JdbcTemplate(ds), new LakeProperties(), PlatformConfig.load(), Schedulers.immediate());
+        return service(new JdbcTemplate(ds));
     }
 
     @Test
@@ -57,8 +63,7 @@ class QueryServiceTest {
         HikariConfig hc = new HikariConfig();
         hc.setJdbcUrl("jdbc:h2:mem:trino-params;DB_CLOSE_DELAY=-1");
         HikariDataSource ds = new HikariDataSource(hc);
-        QueryService service = new QueryService(new JdbcTemplate(ds), new LakeProperties(),
-                PlatformConfig.load(), Schedulers.immediate());
+        QueryService service = service(new JdbcTemplate(ds));
 
         QueryResult bound = service.execute("SELECT ? AS v", null, "O'Reilly");
         assertEquals("O'Reilly", bound.rows().getFirst().getFirst());

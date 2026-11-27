@@ -49,12 +49,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * （连接重连、实例重启），所以仍保留应用层 deadline 兜底；LISTEN 不可用（H2 / 连接断开）时
  * 自动退化为低频轮询。唤醒是「一次通知放一个等待者」，避免所有等待者同时打状态库造成惊群。</p>
  *
- * <p>配额在 Controller 层获取/释放，所以内部调用（{@code BatchHistoryService} 读运行历史）
- * 不占用户配额；{@code usingWhen} 保证正常完成、出错、客户端取消都会归还名额。</p>
+ * <p>配额由 {@link QueryService} 的 {@code *WithQuota} 方法获取/释放，Controller 不再直接接触本类；
+ * 内部调用（{@code BatchHistoryService} 读运行历史、{@code GovernanceService} 读资产目录）
+ * 走 {@link QueryService} 的无配额方法，不占用户额度；{@code usingWhen} 保证正常完成、出错、
+ * 客户端取消都会归还名额。</p>
+ *
+ * <p>本类是 {@link QueryService} 的实现细节，包内可见，不对外暴露。</p>
  */
 @Service
 @Slf4j
-public class QueryQuotaService {
+class QuotaHelper {
 
     private static final long WINDOW_MS = 60_000;
     /** 租约在查询超时之外再留的余量，覆盖结果集读取与调度延迟 */
@@ -97,9 +101,9 @@ public class QueryQuotaService {
     private volatile Thread listenThread;
     private final AtomicBoolean listenerRunning = new AtomicBoolean();
 
-    public QueryQuotaService(LakeProperties props, Scheduler blocking, LakeMetrics metrics,
-                             @Qualifier("stateJdbc") JdbcTemplate jdbc,
-                             @Qualifier("stateTx") TransactionTemplate tx) {
+    QuotaHelper(LakeProperties props, Scheduler blocking, LakeMetrics metrics,
+                @Qualifier("stateJdbc") JdbcTemplate jdbc,
+                @Qualifier("stateTx") TransactionTemplate tx) {
         this.props = props;
         this.blocking = blocking;
         this.metrics = metrics;
@@ -108,7 +112,7 @@ public class QueryQuotaService {
     }
 
     @PostConstruct
-    public void init() {
+    void init() {
         try {
             jdbc.execute(StateDbDdl.schemaBatch());
             jdbc.execute(StateDbDdl.queryLeases());
@@ -148,7 +152,7 @@ public class QueryQuotaService {
     }
 
     @PreDestroy
-    public void destroy() {
+    void destroy() {
         listenerRunning.set(false);
         Thread t = listenThread;
         if (t != null) {
@@ -248,7 +252,7 @@ public class QueryQuotaService {
     }
 
     /** 拿到名额才能执行查询；限流或超时都抛 {@link QueryQuotaExceededException} → 429 */
-    public Mono<Permit> acquire(String client) {
+    Mono<Permit> acquire(String client) {
         String key = client == null || client.isBlank() ? "anonymous" : client;
         int maxRate = Math.max(1, props.getQuery().getMaxQueriesPerMinute());
         int maxConcurrent = Math.max(1, props.getQuery().getMaxConcurrentQueries());
@@ -298,7 +302,7 @@ public class QueryQuotaService {
                 "并发查询已满（上限 " + maxConcurrent + "），请稍后重试");
     }
 
-    public Mono<Void> release(Permit permit) {
+    Mono<Void> release(Permit permit) {
         return Mono.<Void>fromRunnable(permit::close).subscribeOn(blocking);
     }
 
@@ -362,12 +366,12 @@ public class QueryQuotaService {
     }
 
     /** 一次查询的名额，close 多次只会归还一次 */
-    public static final class Permit implements AutoCloseable {
-        private final QueryQuotaService owner;
+    static final class Permit implements AutoCloseable {
+        private final QuotaHelper owner;
         private final String permitId;
         private final AtomicBoolean closed = new AtomicBoolean();
 
-        private Permit(QueryQuotaService owner, String permitId) {
+        private Permit(QuotaHelper owner, String permitId) {
             this.owner = owner;
             this.permitId = permitId;
         }
