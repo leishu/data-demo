@@ -83,7 +83,7 @@ graph LR
 | Trino | 476 | 即席查询（官方 JDBC） |
 | Spring Boot | 4.2.0 | WebFlux + Actuator（Reactor Netty）、spring-jdbc |
 | Vue | 3.5 + Vite 7 | 控制台，构建产物进 `static/ui/` |
-| 存储 | 本地 Hadoop catalog / MinIO(S3) | 由 `platform.warehouse` 决定 |
+| 存储 | Hive Metastore（元数据）+ MinIO/S3（数据文件） | 由 `platform.catalog.type=hive` + `platform.warehouse=s3a://...` 决定 |
 | 运行态库 | Postgres | `lake_batch.*` 与 `lake_audit.query_text` |
 | 监控 | Micrometer 1.18.0 + Prometheus 2.54.1 + Grafana 11.6.0 | `/actuator/prometheus` + 可选 `monitoring` profile |
 | 外部调度 | Airflow 2+ / DolphinScheduler / crontab | 经 REST 触发，不直连 Spark |
@@ -112,7 +112,7 @@ graph LR
 | `infra/` | **基础设施编排**：Docker Compose（Postgres + MinIO + HMS + Trino）、全栈 override、监控 profile、安全模板、存储生命周期规则。 | ✅ |
 | `docs/` | **项目文档**：本 HLD（`docs/lakehouse-demo/`）与 `ARCHITECTURE.md` / `CODING_STANDARDS.md` / `GLOSSARY.md` / `NAMING.md` / `OBSERVABILITY.md` / `SECURITY.md` / `CONCURRENCY.md` / `STORAGE.md`。 | ✅ |
 | `config/` | **静态门禁配置**：Checkstyle 命名规则（`naming.xml` / `naming-suppressions.xml`），绑定 `mvn validate`。 | ✅ |
-| `warehouse/` | **Iceberg 本地存储根**：Hadoop catalog 模式下 `warehouse/<database>.db/<table>/metadata|data/`；集群模式走 `s3a://lake/warehouse`。 | ❌ |
+| `warehouse/` | **Iceberg 本地存储根**：Hadoop catalog 模式下 `warehouse/<database>.db/<table>/metadata\|data/`；集群模式走 `s3a://lake/warehouse`。 | ❌ |
 | `data/` | **模拟上游落地文件**：`data/raw/orders/dt=*/` 的 Parquet，由 IngestJob 生成。 | ❌ |
 | `logs/` | **运行日志**：`audit.log`、批作业 `batch/`、`lake-service.log`。 | ❌ |
 | `spark-warehouse/` | Spark SQL 默认本地临时仓库，当前为空。 | ❌ |
