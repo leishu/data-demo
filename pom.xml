@@ -41,7 +41,7 @@
          版本错配会在启动 SparkSession 时报 ServiceLoaderUtil.loadServices NoSuchMethodError -->
     <log4j.version>2.24.3</log4j.version>
     <slf4j.version>2.0.17</slf4j.version>
-    <junit.version>5.10.2</junit.version>
+    <junit.version>6.1.3</junit.version>
 
     <!--
       lake-service 使用 JDK 21 + Spring Boot 4（Spring Framework 7 / Reactor Netty / Jakarta EE 11），
