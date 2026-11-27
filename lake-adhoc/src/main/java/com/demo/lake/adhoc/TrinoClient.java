@@ -31,14 +31,14 @@ public final class TrinoClient implements AutoCloseable {
 
     public static TrinoClient connect(String url, String user, String source, int timeoutSeconds)
             throws SQLException {
-        Properties props = new Properties();
-        props.setProperty("user", user);
+        Properties properties = new Properties();
+        properties.setProperty("user", user);
         // 会话时区固定 UTC：湖表里的 timestamp 是 UTC 墙钟，用机器时区解释会整体偏移
-        props.setProperty("timezone", "UTC");
+        properties.setProperty("timezone", "UTC");
         if (source != null && !source.isBlank()) {
-            props.setProperty("source", source);
+            properties.setProperty("source", source);
         }
-        Connection conn = DriverManager.getConnection(url, props);
+        Connection conn = DriverManager.getConnection(url, properties);
         conn.setReadOnly(true);
         return new TrinoClient(conn, timeoutSeconds);
     }
@@ -78,13 +78,14 @@ public final class TrinoClient implements AutoCloseable {
                 long elapsedMs = (System.nanoTime() - start) / 1_000_000;
                 String stats = null;
                 if (rs instanceof TrinoResultSet) {
-                    QueryStats s = ((TrinoResultSet) rs).getStats();
-                    if (s != null) {
+                    QueryStats queryStats = ((TrinoResultSet) rs).getStats();
+                    if (queryStats != null) {
                         stats = String.format(
                                 "queryId=%s state=%s elapsed=%dms cpu=%dms splits=%d/%d rows=%d bytes=%d peakMem=%dB",
-                                s.getQueryId(), s.getState(), s.getElapsedTimeMillis(), s.getCpuTimeMillis(),
-                                s.getCompletedSplits(), s.getTotalSplits(), s.getProcessedRows(),
-                                s.getProcessedBytes(), s.getPeakMemoryBytes());
+                                queryStats.getQueryId(), queryStats.getState(), queryStats.getElapsedTimeMillis(),
+                                queryStats.getCpuTimeMillis(), queryStats.getCompletedSplits(),
+                                queryStats.getTotalSplits(), queryStats.getProcessedRows(),
+                                queryStats.getProcessedBytes(), queryStats.getPeakMemoryBytes());
                     }
                 }
                 return new QueryResult(headers, rows, truncated, elapsedMs, stats);

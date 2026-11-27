@@ -56,16 +56,16 @@ public final class LakeTables {
     public static final String RETENTION_AUDIT = "retention_audit";
 
     /** 建库 2 条 + 建表 4 条，顺序即执行顺序。 */
-    public static List<String> all(PlatformConfig cfg) {
+    public static List<String> all(PlatformConfig platformConfig) {
         List<String> out = new ArrayList<>();
-        out.addAll(ddl(cfg, SqlResources.DDL_DATABASES, false));
-        out.addAll(ddl(cfg, SqlResources.DDL_BRONZE, true));
-        out.addAll(ddl(cfg, SqlResources.DDL_SILVER, true));
-        out.addAll(ddl(cfg, SqlResources.DDL_GOLD, false));
-        out.addAll(ddl(cfg, SqlResources.DDL_BATCH_RUNS, false));
-        out.addAll(ddl(cfg, SqlResources.DDL_DQ_RESULTS, false));
-        out.addAll(ddl(cfg, SqlResources.DDL_LINEAGE_RUNS, false));
-        out.addAll(ddl(cfg, SqlResources.DDL_RETENTION_AUDIT, false));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_DATABASES, false));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_BRONZE, true));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_SILVER, true));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_GOLD, false));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_BATCH_RUNS, false));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_DQ_RESULTS, false));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_LINEAGE_RUNS, false));
+        out.addAll(ddl(platformConfig, SqlResources.DDL_RETENTION_AUDIT, false));
         return out;
     }
 
@@ -73,28 +73,28 @@ public final class LakeTables {
      * 读取模板文件，绑定变量，生成 DDL 语句列表。
      * rowLevelWrites：这张表是否有行级写入（MERGE / UPDATE / DELETE）
      */
-    private static List<String> ddl(PlatformConfig cfg, String resource, boolean rowLevelWrites) {
+    private static List<String> ddl(PlatformConfig platformConfig, String resource, boolean rowLevelWrites) {
         List<String> out = new ArrayList<>();
-        for (String stmt : SqlScript.split(SqlTemplate.renderResource(resource, vars(cfg, rowLevelWrites)))) {
+        for (String stmt : SqlScript.split(SqlTemplate.renderResource(resource, vars(platformConfig, rowLevelWrites)))) {
             out.add(SqlScript.stripComments(stmt).trim());
         }
         return out;
     }
 
-    private static Map<String, String> vars(PlatformConfig cfg, boolean rowLevelWrites) {
-        Map<String, String> vars = new LinkedHashMap<>(baseVars(cfg));
-        vars.put("table_properties", tableProperties(cfg, rowLevelWrites));
+    private static Map<String, String> vars(PlatformConfig platformConfig, boolean rowLevelWrites) {
+        Map<String, String> vars = new LinkedHashMap<>(baseVars(platformConfig));
+        vars.put("table_properties", tableProperties(platformConfig, rowLevelWrites));
         return vars;
     }
 
     /** 各模板共用的基础变量；迁移模板也会用到。 */
-    public static Map<String, String> baseVars(PlatformConfig cfg) {
+    public static Map<String, String> baseVars(PlatformConfig platformConfig) {
         Map<String, String> vars = new LinkedHashMap<>();
-        vars.put("catalog", cfg.catalogName());
-        vars.put("database", cfg.database());
+        vars.put("catalog", platformConfig.catalogName());
+        vars.put("database", platformConfig.database());
         vars.put("ops_schema", OPS_SCHEMA);
-        vars.put("format_version", String.valueOf(cfg.formatVersion()));
-        vars.put("write_mode", cfg.writeMode());
+        vars.put("format_version", String.valueOf(platformConfig.formatVersion()));
+        vars.put("write_mode", platformConfig.writeMode());
         return vars;
     }
 
@@ -102,8 +102,8 @@ public final class LakeTables {
      * 表属性片段也外置成 SQL 文件：有行级写入的表多 3 个 merge/update/delete mode，
      * 其他表只保留通用属性。片段首尾无分号，直接嵌进 {@code TBLPROPERTIES (...)}。
      */
-    public static String tableProperties(PlatformConfig cfg, boolean rowLevelWrites) {
+    public static String tableProperties(PlatformConfig platformConfig, boolean rowLevelWrites) {
         String resource = rowLevelWrites ? SqlResources.PROPS_ROW_LEVEL : SqlResources.PROPS_PLAIN;
-        return SqlTemplate.renderResource(resource, baseVars(cfg)).trim();
+        return SqlTemplate.renderResource(resource, baseVars(platformConfig)).trim();
     }
 }

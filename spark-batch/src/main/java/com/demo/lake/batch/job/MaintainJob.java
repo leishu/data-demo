@@ -50,9 +50,9 @@ public class MaintainJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
-        String catalog = cfg.catalogName();
-        String db = cfg.database();
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
+        String catalog = platformConfig.catalogName();
+        String db = platformConfig.database();
         int retainLast = args.getInt("retain-last", 5);
         int orphanRetentionHours = args.getInt("orphan-retention-hours", 168);
 
@@ -60,7 +60,7 @@ public class MaintainJob implements LakeJob {
                 LakeTables.GOLD_DAILY_REVENUE}) {
             String qualified = catalog + "." + db + "." + table;
             System.out.println("[maintain] ===== " + table + " =====");
-            printFileStats(spark, TableRef.of(cfg, table));
+            printFileStats(spark, TableRef.of(platformConfig, table));
 
             // 1) 合并小文件：min-input-files 调小，让本地小数据集也能看到效果
             //    注意：如果每个分区只有 1 个文件，没有"小文件问题"可治，返回 0 是正常的
@@ -89,11 +89,11 @@ public class MaintainJob implements LakeJob {
             spark.sql(String.format(REMOVE_ORPHAN_FILES, catalog, qualified, orphanBefore))
                     .show(false);
 
-            printFileStats(spark, TableRef.of(cfg, table));
+            printFileStats(spark, TableRef.of(platformConfig, table));
         }
     }
 
-    private void printFileStats(SparkSession spark, TableRef t) {
-        spark.sql(String.format(FILE_STATS, t.metadata("files")), new Object[]{t.table()}).show(false);
+    private void printFileStats(SparkSession spark, TableRef table) {
+        spark.sql(String.format(FILE_STATS, table.metadata("files")), new Object[]{table.table()}).show(false);
     }
 }

@@ -45,7 +45,7 @@ public class GovernanceMetrics {
     private final MeterRegistry registry;
     private final IcebergTableMetrics iceberg;
     private final DqResultService dq;
-    private final LakeProperties props;
+    private final LakeProperties properties;
 
     // gauge 值持有者要一直留着，下次只改值；Micrometer 不提供「按标签更新已注册 gauge」的接口
     private final Map<Tags, AtomicLong> freshness = new ConcurrentHashMap<>();
@@ -55,21 +55,21 @@ public class GovernanceMetrics {
     private Thread worker;
 
     public GovernanceMetrics(MeterRegistry registry, IcebergTableMetrics iceberg, DqResultService dq,
-                             LakeProperties props) {
+                             LakeProperties properties) {
         this.registry = registry;
         this.iceberg = iceberg;
         this.dq = dq;
-        this.props = props;
+        this.properties = properties;
     }
 
     @PostConstruct
     void start() {
-        if (!props.getMetrics().getGovernance().isEnabled()) {
+        if (!properties.getMetrics().getGovernance().isEnabled()) {
             return;
         }
         running.set(true);
         worker = Thread.ofVirtual().name("governance-metrics").start(this::loop);
-        log.info("治理告警指标已启动: interval={}s", props.getMetrics().getGovernance().getIntervalSeconds());
+        log.info("治理告警指标已启动: interval={}s", properties.getMetrics().getGovernance().getIntervalSeconds());
     }
 
     @PreDestroy
@@ -81,7 +81,7 @@ public class GovernanceMetrics {
     }
 
     private void loop() {
-        long interval = Math.max(10, props.getMetrics().getGovernance().getIntervalSeconds()) * 1000L;
+        long interval = Math.max(10, properties.getMetrics().getGovernance().getIntervalSeconds()) * 1000L;
         while (running.get()) {
             collect();
             try {

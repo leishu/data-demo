@@ -25,12 +25,12 @@ final class LineageWriter {
     private LineageWriter() {
     }
 
-    static void record(SparkSession spark, PlatformConfig cfg, String runId, String job) {
+    static void record(SparkSession spark, PlatformConfig platformConfig, String runId, String job) {
         List<String> tables = LineageCatalog.writtenTables(job);
         if (tables.isEmpty()) {
             return;
         }
-        TableRef target = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.LINEAGE_RUNS);
+        TableRef target = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.LINEAGE_RUNS);
         if (!spark.catalog().tableExists(target.fqn())) {
             return; // 老仓库还没跑过新 init：血缘表不存在，不阻塞作业
         }
@@ -40,7 +40,7 @@ final class LineageWriter {
         for (String table : tables) {
             String snapshotId;
             try {
-                snapshotId = SparkSnapshots.latestId(spark, TableRef.of(cfg, table).fqn());
+                snapshotId = SparkSnapshots.latestId(spark, TableRef.of(platformConfig, table).fqn());
             } catch (RuntimeException e) {
                 snapshotId = null; // 快照读不到就跳过，不影响作业结果
             }

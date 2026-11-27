@@ -2,7 +2,7 @@ package com.demo.lake.server.query.service;
 
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.service.LakeMetrics;
-import com.demo.lake.server.query.QueryQuotaExceededException;
+import com.demo.lake.server.query.service.QueryQuotaExceededException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.Test;
@@ -26,23 +26,23 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /** 配额：单账号限流与全局并发名额（状态放 H2，验证的是真实的跨实例 SQL 行为） */
-class QuotaHelperTest {
+class QueryQuotaServiceTest {
 
     private JdbcDataSource ds;
 
-    private QuotaHelper service(int concurrent, int perMinute, int timeoutMs) {
+    private QueryQuotaService service(int concurrent, int perMinute, int timeoutMs) {
         return service(concurrent, perMinute, timeoutMs, 300);
     }
 
-    private QuotaHelper service(int concurrent, int perMinute, int timeoutMs, int pollMs) {
-        LakeProperties props = new LakeProperties();
-        props.getQuery().setMaxConcurrentQueries(concurrent);
-        props.getQuery().setMaxQueriesPerMinute(perMinute);
-        props.getQuery().setAcquireTimeoutMs(timeoutMs);
-        props.getQuery().setQuotaFallbackPollMs(pollMs);
+    private QueryQuotaService service(int concurrent, int perMinute, int timeoutMs, int pollMs) {
+        LakeProperties properties = new LakeProperties();
+        properties.getQuery().setMaxConcurrentQueries(concurrent);
+        properties.getQuery().setMaxQueriesPerMinute(perMinute);
+        properties.getQuery().setAcquireTimeoutMs(timeoutMs);
+        properties.getQuery().setQuotaFallbackPollMs(pollMs);
         ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:quota-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
-        QuotaHelper quotas = new QuotaHelper(props, Schedulers.immediate(),
+        QueryQuotaService quotas = new QueryQuotaService(properties, Schedulers.immediate(),
                 new LakeMetrics(new SimpleMeterRegistry()),
                 new JdbcTemplate(ds), new TransactionTemplate(new DataSourceTransactionManager(ds)));
         quotas.init();
@@ -51,7 +51,7 @@ class QuotaHelperTest {
 
     @Test
     void 单账号每分钟超限而其它账号不受影响() {
-        QuotaHelper quotas = service(4, 2, 10);
+        QueryQuotaService quotas = service(4, 2, 10);
         quotas.acquire("viewer").block();
         quotas.acquire("viewer").block();
         assertThrows(QueryQuotaExceededException.class, () -> quotas.acquire("viewer").block());
@@ -60,8 +60,8 @@ class QuotaHelperTest {
 
     @Test
     void 并发名额耗尽时超时并归还后可复用() {
-        QuotaHelper quotas = service(1, 10, 30);
-        QuotaHelper.Permit held = quotas.acquire("a").block();
+        QueryQuotaService quotas = service(1, 10, 30);
+        QueryQuotaService.Permit held = quotas.acquire("a").block();
         assertThrows(QueryQuotaExceededException.class, () -> quotas.acquire("b").block());
         held.close();
         // close 幂等：再关一次不能多归还名额，否则并发上限形同虚设
@@ -72,7 +72,7 @@ class QuotaHelperTest {
 
     @Test
     void 实例崩溃留下的租约到期后自动回收() throws Exception {
-        QuotaHelper quotas = service(1, 10, 30);
+        QueryQuotaService quotas = service(1, 10, 30);
         // 模拟实例被 kill：拿到名额后不调用 close，租约留在库里
         quotas.acquire("crashed").block();
         assertThrows(QueryQuotaExceededException.class, () -> quotas.acquire("waiter").block());
@@ -86,7 +86,7 @@ class QuotaHelperTest {
 
     @Test
     void 一次通知只唤醒一个等待者() {
-        QuotaHelper quotas = service(1, 10, 1000);
+        QueryQuotaService quotas = service(1, 10, 1000);
         List<Integer> woke = Collections.synchronizedList(new ArrayList<>());
         quotas.registerWaiter().subscribe(v -> woke.add(1));
         quotas.registerWaiter().subscribe(v -> woke.add(2));
@@ -102,12 +102,12 @@ class QuotaHelperTest {
     @Test
     void 通知唤醒可替代轮询且不需要等满超时() {
         // 兜底轮询间隔设得比 deadline 还长：没有通知就一定会超时
-        QuotaHelper quotas = service(1, 10, 2000, 10_000);
-        QuotaHelper.Permit held = quotas.acquire("a").block();
+        QueryQuotaService quotas = service(1, 10, 2000, 10_000);
+        QueryQuotaService.Permit held = quotas.acquire("a").block();
         // H2 本来走轮询；这里强制切到 LISTEN 唤醒方式，验证主路径的「通知替代轮询」
         quotas.setListening();
 
-        AtomicReference<QuotaHelper.Permit> got = new AtomicReference<>();
+        AtomicReference<QueryQuotaService.Permit> got = new AtomicReference<>();
         AtomicReference<Throwable> err = new AtomicReference<>();
         // Schedulers.immediate()：tryOnce + 登记等待者在 subscribe 调用内同步完成
         quotas.acquire("b").doOnSuccess(got::set).subscribe(v -> {}, err::set);

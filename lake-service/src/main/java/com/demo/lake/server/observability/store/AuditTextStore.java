@@ -51,50 +51,50 @@ public class AuditTextStore {
     private static final String SET_LEGAL_HOLD = "UPDATE " + TABLE + " SET legal_hold=? WHERE event_id=?";
     private static final String PURGE_TEXT = "DELETE FROM " + TABLE + " WHERE expires_at<? AND NOT legal_hold";
 
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final JdbcTemplate jdbc;
     private final MeterRegistry registry;
     /** 按 key_id 存的密钥环：轮换后旧编号仍然能解出老原文 */
     private final Map<String, SecretKeySpec> keys = new HashMap<>();
     private Counter decryptErrors;
 
-    public AuditTextStore(LakeProperties props, @Qualifier("stateJdbc") JdbcTemplate jdbc,
+    public AuditTextStore(LakeProperties properties, @Qualifier("stateJdbc") JdbcTemplate jdbc,
                           MeterRegistry registry) {
-        this.props = props;
+        this.properties = properties;
         this.jdbc = jdbc;
         this.registry = registry;
     }
 
     @PostConstruct
     public void init() {
-        if (!props.getAudit().isSqlCaptureEnabled()) {
+        if (!properties.getAudit().isSqlCaptureEnabled()) {
             log.info("查询原文保险箱未开启（lake.audit.sql-capture-enabled=false）");
             return;
         }
-        Map<String, String> configured = props.getAudit().getKeys();
+        Map<String, String> configured = properties.getAudit().getKeys();
         if (configured == null || configured.isEmpty()) {
-            String encoded = props.getAudit().getKey();
+            String encoded = properties.getAudit().getKey();
             if (encoded == null || encoded.isBlank()) {
                 throw new IllegalStateException("开启了查询原文保险箱但没配 LAKE_AUDIT_KEY，拒绝以明文启动");
             }
-            configured = Map.of(props.getAudit().getKeyId(), encoded);
+            configured = Map.of(properties.getAudit().getKeyId(), encoded);
         }
         for (Map.Entry<String, String> entry : configured.entrySet()) {
             keys.put(entry.getKey(), decodeKey(entry.getValue()));
         }
         // LAKE_AUDIT_KEY 永远是「当前」密钥，优先于同编号的历史配置
-        String current = props.getAudit().getKey();
+        String current = properties.getAudit().getKey();
         if (current != null && !current.isBlank()) {
-            keys.put(props.getAudit().getKeyId(), decodeKey(current));
+            keys.put(properties.getAudit().getKeyId(), decodeKey(current));
         }
-        if (!keys.containsKey(props.getAudit().getKeyId())) {
-            throw new IllegalStateException("审计密钥环里没有当前 key_id=" + props.getAudit().getKeyId()
-                    + "，请先补齐 LAKE_AUDIT_KEY 或 lake.audit.keys." + props.getAudit().getKeyId());
+        if (!keys.containsKey(properties.getAudit().getKeyId())) {
+            throw new IllegalStateException("审计密钥环里没有当前 key_id=" + properties.getAudit().getKeyId()
+                    + "，请先补齐 LAKE_AUDIT_KEY 或 lake.audit.keys." + properties.getAudit().getKeyId());
         }
         decryptErrors = registry.counter("lake.audit.vault.decrypt.error");
         jdbc.execute(StateDbDdl.schemaAudit());
         jdbc.execute(StateDbDdl.queryText());
-        log.info("查询原文保险箱就绪: {} (retention={}d)", TABLE, props.getAudit().getRetentionDays());
+        log.info("查询原文保险箱就绪: {} (retention={}d)", TABLE, properties.getAudit().getRetentionDays());
     }
 
     /** 审计事件落库后调用，eventId 用来把原文和普通审计事件关联起来 */
@@ -103,17 +103,17 @@ public class AuditTextStore {
             return;
         }
         try {
-            boolean redacted = props.getAudit().isRedact();
+            boolean redacted = properties.getAudit().isRedact();
             String text = redacted ? SqlRedactor.redact(sql) : sql;
             byte[] nonce = new byte[NONCE_BYTES];
             RANDOM.nextBytes(nonce);
             byte[] payload = seal((text == null ? "" : text).getBytes(StandardCharsets.UTF_8), eventId, nonce,
-                    keys.get(props.getAudit().getKeyId()));
+                    keys.get(properties.getAudit().getKeyId()));
             long now = System.currentTimeMillis();
-            long expires = now + Math.max(1, props.getAudit().getRetentionDays()) * 86_400_000L;
+            long expires = now + Math.max(1, properties.getAudit().getRetentionDays()) * 86_400_000L;
             jdbc.update(INSERT_TEXT,
                     new Object[]{eventId, actor == null ? "-" : actor, clientIp, now, expires,
-                            false, props.getAudit().getKeyId(), redacted, nonce, payload},
+                            false, properties.getAudit().getKeyId(), redacted, nonce, payload},
                     new int[]{Types.VARCHAR, Types.VARCHAR, Types.VARCHAR, Types.BIGINT, Types.BIGINT,
                             Types.BOOLEAN, Types.VARCHAR, Types.BOOLEAN, Types.BINARY, Types.BINARY});
         } catch (Exception e) {
@@ -191,7 +191,7 @@ public class AuditTextStore {
     }
 
     public boolean enabled() {
-        return props.getAudit().isSqlCaptureEnabled();
+        return properties.getAudit().isSqlCaptureEnabled();
     }
 
     private static SecretKeySpec decodeKey(String encoded) {

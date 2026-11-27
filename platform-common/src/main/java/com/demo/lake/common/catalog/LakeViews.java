@@ -26,10 +26,10 @@ public final class LakeViews {
             SqlResources.VIEW_SILVER_MASKED,
             SqlResources.VIEW_SILVER_RESTRICTED);
 
-    public static List<String> all(PlatformConfig cfg) {
+    public static List<String> all(PlatformConfig platformConfig) {
         List<String> out = new ArrayList<>();
         for (String resource : TEMPLATES) {
-            String rendered = SqlTemplate.renderResource(resource, LakeTables.baseVars(cfg));
+            String rendered = SqlTemplate.renderResource(resource, LakeTables.baseVars(platformConfig));
             for (String stmt : SqlScript.split(rendered)) {
                 String sql = SqlScript.stripComments(stmt).trim();
                 if (!sql.isEmpty()) {

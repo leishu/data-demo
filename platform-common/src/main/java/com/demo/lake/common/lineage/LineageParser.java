@@ -26,9 +26,9 @@ public final class LineageParser {
     public static List<TableEdge> tables(String resource) {
         List<TableEdge> out = new ArrayList<>();
         for (String line : SqlScript.readResource(resource).split("\\R")) {
-            Matcher m = TABLE.matcher(line.trim());
-            if (m.matches()) {
-                out.add(new TableEdge(m.group(1), m.group(2), transformOf(resource)));
+            Matcher matcher = TABLE.matcher(line.trim());
+            if (matcher.matches()) {
+                out.add(new TableEdge(matcher.group(1), matcher.group(2), transformOf(resource)));
             }
         }
         return List.copyOf(out);
@@ -37,9 +37,9 @@ public final class LineageParser {
     public static List<ColumnEdge> columns(String resource) {
         List<ColumnEdge> out = new ArrayList<>();
         for (String line : SqlScript.readResource(resource).split("\\R")) {
-            Matcher m = COLUMN.matcher(line.trim());
-            if (m.matches()) {
-                out.add(new ColumnEdge(m.group(1), m.group(2), m.group(3), m.group(4)));
+            Matcher matcher = COLUMN.matcher(line.trim());
+            if (matcher.matches()) {
+                out.add(new ColumnEdge(matcher.group(1), matcher.group(2), matcher.group(3), matcher.group(4)));
             }
         }
         return List.copyOf(out);

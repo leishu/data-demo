@@ -30,7 +30,7 @@ public class VerifySqlJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
         String file = args.get("sql-file", "sql/adhoc/01_daily_revenue.sql");
         Path path = Paths.get(file);
         if (!Files.isReadable(path)) {

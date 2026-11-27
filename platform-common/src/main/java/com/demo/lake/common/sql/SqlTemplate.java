@@ -23,13 +23,13 @@ public final class SqlTemplate {
         if (vars.isEmpty()) {
             return template;
         }
-        Matcher m = VAR.matcher(template);
+        Matcher matcher = VAR.matcher(template);
         StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String value = vars.get(m.group(1));
-            m.appendReplacement(sb, Matcher.quoteReplacement(value == null ? m.group(0) : value));
+        while (matcher.find()) {
+            String value = vars.get(matcher.group(1));
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(value == null ? matcher.group(0) : value));
         }
-        m.appendTail(sb);
+        matcher.appendTail(sb);
         return sb.toString();
     }
 

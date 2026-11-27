@@ -1,5 +1,7 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.server.batch.store.RunningRunRegistry;
+import com.demo.lake.server.batch.model.BatchIdentity;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.batch.LakeJobs;
 import com.demo.lake.server.batch.model.BatchRun;
@@ -36,12 +38,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BatchJobServiceTest {
 
     private LakeProperties props(String template) {
-        LakeProperties p = new LakeProperties();
-        p.getBatch().setCommandTemplate(template);
-        p.getBatch().setLogDir("target/test-logs");
-        p.getBatch().setWorkDir(".");
-        p.getBatch().setTimeoutSeconds(20);
-        return p;
+        LakeProperties properties = new LakeProperties();
+        properties.getBatch().setCommandTemplate(template);
+        properties.getBatch().setLogDir("target/test-logs");
+        properties.getBatch().setWorkDir(".");
+        properties.getBatch().setTimeoutSeconds(20);
+        return properties;
     }
 
     /** 单测不连 Trino：历史一律当读不到 */
@@ -67,16 +69,16 @@ class BatchJobServiceTest {
 
     private RunningRunRegistry liveRuns;
 
-    private BatchJobService newService(LakeProperties p) {
+    private BatchJobService newService(LakeProperties properties) {
         store = new InMemoryRunStateStore();
         logs = new InMemoryLogStore();
         identity = new BatchIdentity();
         liveRuns = new RunningRunRegistry();
         BatchHistoryService history = noHistory();
-        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
+        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(properties, logs)),
                 new JobCompletionService(store, liveRuns, history, audit(), metrics()),
-                identity, liveRuns, metrics(), p, Schedulers.immediate());
-        return new BatchJobService(p, history, store, logs, identity, liveRuns, audit(), texts(), metrics(), Schedulers.immediate());
+                identity, liveRuns, metrics(), properties, Schedulers.immediate());
+        return new BatchJobService(properties, history, store, logs, identity, liveRuns, audit(), texts(), metrics(), Schedulers.immediate());
     }
 
     /** 测试里手动触发一次调度扫描（生产由 @PostConstruct 的定时器驱动） */
@@ -123,9 +125,9 @@ class BatchJobServiceTest {
 
     @Test
     void 并发闸门让后来的作业排队() throws Exception {
-        LakeProperties p = props("/bin/sh -c \"sleep 1; exit 0\"");
-        p.getBatch().setMaxConcurrentJobs(1);
-        BatchJobService service = newService(p);
+        LakeProperties properties = props("/bin/sh -c \"sleep 1; exit 0\"");
+        properties.getBatch().setMaxConcurrentJobs(1);
+        BatchJobService service = newService(properties);
         BatchRun first = service.submit(LakeJobs.INIT, null);
         BatchRun second = service.submit(LakeJobs.SHOW, null);
         dispatch();
@@ -141,9 +143,9 @@ class BatchJobServiceTest {
     @Test
     void 幂等键重复提交返回同一条记录() {
         BatchJobService service = newService(props("/bin/sh -c \"exit 0\""));
-        BatchRun a = service.submit(LakeJobs.INIT, "batch-2026-01");
-        BatchRun b = service.submit(LakeJobs.INIT, "batch-2026-01");
-        assertEquals(a.id(), b.id());
+        BatchRun firstRun = service.submit(LakeJobs.INIT, "batch-2026-01");
+        BatchRun secondRun = service.submit(LakeJobs.INIT, "batch-2026-01");
+        assertEquals(firstRun.id(), secondRun.id());
         assertEquals(1, store.recent(10).size());
         assertThrows(ResponseStatusException.class,
                 () -> service.submit(LakeJobs.INIT, "bad key with spaces"));
@@ -159,10 +161,10 @@ class BatchJobServiceTest {
 
     @Test
     void 关闭时拒绝所有作业() {
-        LakeProperties p = props("/bin/echo {job}");
-        p.getBatch().setEnabled(false);
+        LakeProperties properties = props("/bin/echo {job}");
+        properties.getBatch().setEnabled(false);
         ResponseStatusException e = assertThrows(ResponseStatusException.class,
-                () -> newService(p).submit(LakeJobs.SHOW, null));
+                () -> newService(properties).submit(LakeJobs.SHOW, null));
         assertEquals(403, e.getStatusCode().value());
     }
 
@@ -183,15 +185,15 @@ class BatchJobServiceTest {
                 return "run-1".equals(id) ? persisted : null;
             }
         };
-        LakeProperties p = props("/bin/sh -c \"echo done; exit 0\"");
+        LakeProperties properties = props("/bin/sh -c \"echo done; exit 0\"");
         store = new InMemoryRunStateStore();
         logs = new InMemoryLogStore();
         identity = new BatchIdentity();
         liveRuns = new RunningRunRegistry();
-        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(p, logs)),
+        dispatcher = new JobDispatcher(store, Map.of("local", new LocalProcessJobExecutor(properties, logs)),
                 new JobCompletionService(store, liveRuns, history, audit(), metrics()),
-                identity, liveRuns, metrics(), p, Schedulers.immediate());
-        BatchJobService service = new BatchJobService(p, history, store, logs, identity, liveRuns, audit(), texts(), metrics(), Schedulers.immediate());
+                identity, liveRuns, metrics(), properties, Schedulers.immediate());
+        BatchJobService service = new BatchJobService(properties, history, store, logs, identity, liveRuns, audit(), texts(), metrics(), Schedulers.immediate());
         BatchRun submitted = service.submit(LakeJobs.INIT, null);
         dispatch();
         BatchRun done = await(service, submitted.id());

@@ -31,20 +31,20 @@ import java.util.concurrent.Executors;
 public class LakeConfiguration {
 
     @Bean
-    public PlatformConfig platformConfig(LakeProperties props) {
+    public PlatformConfig platformConfig(LakeProperties properties) {
         Path conf = null;
-        String configured = props.getConfFile();
+        String configured = properties.getConfFile();
         if (configured != null && !configured.isBlank()) {
-            Path p = Paths.get(configured);
-            if (Files.isReadable(p)) {
-                conf = p;
+            Path path = Paths.get(configured);
+            if (Files.isReadable(path)) {
+                conf = path;
             } else {
                 log.warn("配置文件 {} 不存在，改用 classpath 默认值 + 环境变量 LAKE_*", configured);
             }
         }
-        PlatformConfig cfg = PlatformConfig.load(conf);
-        log.info("平台配置 -> {}", cfg.describe());
-        return cfg;
+        PlatformConfig platformConfig = PlatformConfig.load(conf);
+        log.info("平台配置 -> {}", platformConfig.describe());
+        return platformConfig;
     }
 
     /**
@@ -68,22 +68,22 @@ public class LakeConfiguration {
      * 服务要能在 Trino 没起来时先提供 /actuator/health 和明确的错误信息，而不是起不来。
      */
     @Bean(name = "trinoDataSource", destroyMethod = "close")
-    public HikariDataSource trinoDataSource(PlatformConfig cfg, LakeProperties props) {
+    public HikariDataSource trinoDataSource(PlatformConfig platformConfig, LakeProperties properties) {
         HikariConfig hikari = new HikariConfig();
         hikari.setPoolName("trino");
-        hikari.setJdbcUrl(cfg.trinoJdbcUrl());
-        hikari.setUsername(cfg.trinoUser());
+        hikari.setJdbcUrl(platformConfig.trinoJdbcUrl());
+        hikari.setUsername(platformConfig.trinoUser());
         hikari.setDriverClassName("io.trino.jdbc.TrinoDriver");
         hikari.setReadOnly(true);
-        hikari.setMaximumPoolSize(props.getQuery().getPoolSize());
-        hikari.setConnectionTimeout(props.getQuery().getConnectionTimeoutMs());
+        hikari.setMaximumPoolSize(properties.getQuery().getPoolSize());
+        hikari.setConnectionTimeout(properties.getQuery().getConnectionTimeoutMs());
         hikari.setInitializationFailTimeout(-1);
         // source 是 Trino 驱动认的连接属性，会在 coordinator 的查询列表里标识来源
-        hikari.addDataSourceProperty("source", cfg.trinoSource() + "-service");
+        hikari.addDataSourceProperty("source", platformConfig.trinoSource() + "-service");
         // 会话时区固定 UTC：Spark 把时间戳按 UTC 墙钟写进湖表，若会话用机器时区（如 Asia/Shanghai），
         // to_unixtime 等换算会整体偏移 8 小时，历史记录还会和内存里的 Instant 错序
         hikari.addDataSourceProperty("timezone", "UTC");
-        log.info("Trino 连接池 -> {} (pool={})", cfg.trinoJdbcUrl(), props.getQuery().getPoolSize());
+        log.info("Trino 连接池 -> {} (pool={})", platformConfig.trinoJdbcUrl(), properties.getQuery().getPoolSize());
         return new HikariDataSource(hikari);
     }
 
@@ -92,8 +92,8 @@ public class LakeConfiguration {
      * 初始化失败不阻止启动：没起 infra 时服务仍能提供只读查询，批作业接口返回明确的 503。
      */
     @Bean(name = "stateDataSource", destroyMethod = "close")
-    public HikariDataSource stateDataSource(LakeProperties props) {
-        LakeProperties.Batch.State state = props.getBatch().getState();
+    public HikariDataSource stateDataSource(LakeProperties properties) {
+        LakeProperties.Batch.State state = properties.getBatch().getState();
         HikariConfig hikari = new HikariConfig();
         hikari.setPoolName("batch-state");
         hikari.setJdbcUrl(state.getUrl());

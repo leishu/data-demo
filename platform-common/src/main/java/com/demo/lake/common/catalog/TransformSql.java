@@ -22,8 +22,8 @@ public final class TransformSql {
      * ODS -&gt; DWD：按 order_id 取最新事件做 upsert。
      * 只扫最近 days 天的分区，靠 Iceberg 的分区裁剪控制扫描量。
      */
-    public static String mergeBronzeIntoSilver(PlatformConfig cfg, int days) {
-        Map<String, String> vars = vars(cfg);
+    public static String mergeBronzeIntoSilver(PlatformConfig platformConfig, int days) {
+        Map<String, String> vars = vars(platformConfig);
         vars.put("days", String.valueOf(days));
         return one(SqlResources.TRANSFORM_MERGE, vars);
     }
@@ -36,15 +36,15 @@ public final class TransformSql {
      * <p>注意：buyer_cnt 是 (dt, 商户, 品类) 粒度下的去重用户数，跨行相加得到的是“人次”，
      * 不是全站去重买家数。</p>
      */
-    public static String rebuildGold(PlatformConfig cfg) {
-        return one(SqlResources.TRANSFORM_GOLD, vars(cfg));
+    public static String rebuildGold(PlatformConfig platformConfig) {
+        return one(SqlResources.TRANSFORM_GOLD, vars(platformConfig));
     }
 
-    private static Map<String, String> vars(PlatformConfig cfg) {
-        Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(cfg));
-        vars.put("bronze_table", TableRef.of(cfg, LakeTables.BRONZE_ORDERS).fqn());
-        vars.put("silver_table", TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn());
-        vars.put("gold_table", TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn());
+    private static Map<String, String> vars(PlatformConfig platformConfig) {
+        Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(platformConfig));
+        vars.put("bronze_table", TableRef.of(platformConfig, LakeTables.BRONZE_ORDERS).fqn());
+        vars.put("silver_table", TableRef.of(platformConfig, LakeTables.SILVER_ORDERS).fqn());
+        vars.put("gold_table", TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE).fqn());
         return vars;
     }
 

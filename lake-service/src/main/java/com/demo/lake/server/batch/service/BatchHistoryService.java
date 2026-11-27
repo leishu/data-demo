@@ -5,7 +5,7 @@ import com.demo.lake.common.catalog.LakeTables;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.model.RunsView;
-import com.demo.lake.server.query.TrinoUnavailableException;
+import com.demo.lake.server.query.service.TrinoUnavailableException;
 import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.service.QueryService;
 import lombok.RequiredArgsConstructor;
@@ -64,8 +64,8 @@ public class BatchHistoryService {
             WHERE table_schema = ? AND table_name = ?
             """;
 
-    private final QueryService queries;
-    private final PlatformConfig cfg;
+    private final QueryService queryService;
+    private final PlatformConfig platformConfig;
 
     /** 虚拟线程上用 ReentrantLock 而不是 synchronized：锁内是阻塞 JDBC，synchronized 会 pin 住 carrier */
     private final ReentrantLock cacheLock = new ReentrantLock();
@@ -83,20 +83,20 @@ public class BatchHistoryService {
 
     /** 最近 limit 条历史；任何失败都降级成空列表 + 状态说明 */
     public Result recent(int limit) {
-        int n = Math.clamp(limit, 1, MAX_LIMIT);
-        Result hit = fresh(n);
+        int cappedLimit = Math.clamp(limit, 1, MAX_LIMIT);
+        Result hit = fresh(cappedLimit);
         if (hit != null) {
             return hit;
         }
         // 多页面同时到：只让第一个回源，其余等它填完缓存直接复用
         cacheLock.lock();
         try {
-            hit = fresh(n);
+            hit = fresh(cappedLimit);
             if (hit != null) {
                 return hit;
             }
-            Result loaded = load(n);
-            cached = new Snapshot(System.nanoTime(), n, loaded);
+            Result loaded = load(cappedLimit);
+            cached = new Snapshot(System.nanoTime(), cappedLimit, loaded);
             return loaded;
         } finally {
             cacheLock.unlock();
@@ -111,14 +111,14 @@ public class BatchHistoryService {
         return System.nanoTime() - snapshot.atNanos() < CACHE_TTL_NANOS ? snapshot.result() : null;
     }
 
-    private Result load(int n) {
+    private Result load(int cappedLimit) {
         String table = table();
         try {
             if (!present()) {
                 return new Result(List.of(), new RunsView.History(RunsView.History.Status.NOT_INITIALIZED,
                         "运行历史表 " + table + " 还没建（先跑一次 init），当前只显示本进程的记录", table));
             }
-            return new Result(List.copyOf(select(String.format(SELECT_RECENT, table(), n))),
+            return new Result(List.copyOf(select(String.format(SELECT_RECENT, table(), cappedLimit))),
                     new RunsView.History(RunsView.History.Status.OK, null, table));
         } catch (TrinoUnavailableException e) {
             invalidateProbe();
@@ -160,7 +160,7 @@ public class BatchHistoryService {
     private List<BatchRun> select(String sql, Object... params) {
         // 时间的权威列就是 epoch 毫秒：BatchApp 直接写入，InitJob 为老表回填。
         // 不再对 timestamp 做时区换算——绝对时刻编进 schema，而不是靠连接属性/约定。
-        QueryResult result = queries.executeQuiet(sql, null, params);
+        QueryResult result = queryService.executeQuiet(sql, null, params);
         List<BatchRun> runs = new ArrayList<>(result.rows().size());
         for (List<String> row : result.rows()) {
             runs.add(toRun(row));
@@ -171,12 +171,12 @@ public class BatchHistoryService {
     /** 表在不在：问 Trino 自己的系统表，不额外维护一份表清单 */
     private boolean present() {
         long now = System.nanoTime();
-        long at = probedAtNanos;
-        if (at != 0 && now - at < PROBE_TTL_NANOS) {
+        long probedAt = probedAtNanos;
+        if (probedAt != 0 && now - probedAt < PROBE_TTL_NANOS) {
             return present;
         }
         String sql = String.format(TABLE_EXISTS, catalog());
-        QueryResult result = queries.executeQuiet(sql, null, LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
+        QueryResult result = queryService.executeQuiet(sql, null, LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
         boolean found = !result.rows().isEmpty() && !"0".equals(result.rows().getFirst().getFirst());
         present = found;
         probedAtNanos = now;
@@ -193,7 +193,7 @@ public class BatchHistoryService {
     }
 
     private String catalog() {
-        String catalog = cfg.catalogName();
+        String catalog = platformConfig.catalogName();
         if (catalog == null || !IDENTIFIER.matcher(catalog).matches()) {
             throw new IllegalStateException("非法 catalog 名: " + catalog);
         }

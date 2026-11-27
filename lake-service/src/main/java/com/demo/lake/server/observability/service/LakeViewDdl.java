@@ -25,18 +25,18 @@ import org.springframework.stereotype.Component;
 public class LakeViewDdl {
 
     private final JdbcTemplate jdbc;
-    private final PlatformConfig cfg;
+    private final PlatformConfig platformConfig;
 
     // 容器里有两个 JdbcTemplate（stateJdbc / trinoJdbc）：视图 DDL 必须走 Trino 那个，
     // 所以不能用 Lombok 生成的构造器，这里显式标 @Qualifier。
-    public LakeViewDdl(@Qualifier("trinoJdbc") JdbcTemplate jdbc, PlatformConfig cfg) {
+    public LakeViewDdl(@Qualifier("trinoJdbc") JdbcTemplate jdbc, PlatformConfig platformConfig) {
         this.jdbc = jdbc;
-        this.cfg = cfg;
+        this.platformConfig = platformConfig;
     }
 
     @PostConstruct
     void createViews() {
-        for (String sql : LakeViews.all(cfg)) {
+        for (String sql : LakeViews.all(platformConfig)) {
             try {
                 jdbc.execute(sql);
                 log.info("脱敏视图已就绪: {}", SqlScript.oneLine(sql, 120));

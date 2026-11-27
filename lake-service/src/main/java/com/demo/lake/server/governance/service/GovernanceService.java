@@ -31,12 +31,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class GovernanceService {
 
-    private final QueryService queries;
+    private final QueryService queryService;
     private final IcebergTableMetrics iceberg;
 
     /** nowMs 由调用方传入，便于单测固定时钟；返回 Mono 是因为表清单要走 Trino 的阻塞 IO */
     public Mono<List<GovernanceAsset>> assets(long nowMs) {
-        return queries.listTables().map(tables -> {
+        return queryService.listTables().map(tables -> {
             Map<String, TableInfo> byName = tables.stream().collect(Collectors.toMap(
                     TableInfo::table, Function.identity(), (a, b) -> a, LinkedHashMap::new));
             Map<String, TableSnapshot> stats = iceberg.snapshot();
@@ -89,11 +89,11 @@ public class GovernanceService {
                 Freshness.unknown(committed, nowMs));
     }
 
-    private static AssetMetrics metrics(TableSnapshot s) {
-        if (s == null) {
+    private static AssetMetrics metrics(TableSnapshot snapshot) {
+        if (snapshot == null) {
             return AssetMetrics.EMPTY;
         }
-        return new AssetMetrics(s.files(), s.avgFileSizeBytes(), s.totalSizeBytes(),
-                s.snapshots(), s.lastCommittedMs() == 0 ? null : s.lastCommittedMs());
+        return new AssetMetrics(snapshot.files(), snapshot.avgFileSizeBytes(), snapshot.totalSizeBytes(),
+                snapshot.snapshots(), snapshot.lastCommittedMs() == 0 ? null : snapshot.lastCommittedMs());
     }
 }

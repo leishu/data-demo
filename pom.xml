@@ -57,6 +57,10 @@
     <maven.compiler.plugin.version>3.11.0</maven.compiler.plugin.version>
     <maven.surefire.plugin.version>3.2.5</maven.surefire.plugin.version>
     <exec.plugin.version>3.1.1</exec.plugin.version>
+    <!-- 命名门禁：规则表在 config/checkstyle/naming.xml，说明在 docs/NAMING.md -->
+    <maven.checkstyle.plugin.version>3.6.0</maven.checkstyle.plugin.version>
+    <checkstyle.version>10.12.4</checkstyle.version>
+    <archunit.version>1.3.0</archunit.version>
   </properties>
 
   <dependencyManagement>
@@ -219,6 +223,13 @@
         <version>${junit.version}</version>
         <scope>test</scope>
       </dependency>
+      <!-- 架构规则：@Service → *Service、@RestController → *Controller、禁用含糊后缀 -->
+      <dependency>
+        <groupId>com.tngtech.archunit</groupId>
+        <artifactId>archunit-junit5</artifactId>
+        <version>${archunit.version}</version>
+        <scope>test</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -282,6 +293,42 @@
         </plugin>
       </plugins>
     </pluginManagement>
+
+    <!--
+      命名门禁只检查命名（大小写、缩写黑名单、连续大写），不碰格式：
+      规则表 config/checkstyle/naming.xml，角色后缀表 docs/NAMING.md，
+      存量豁免 config/checkstyle/naming-suppressions.xml（改到豁免文件时要顺手删掉对应条目）。
+      validate 阶段执行，任何新代码里的坏名字都会让构建失败。
+    -->
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-checkstyle-plugin</artifactId>
+        <version>${maven.checkstyle.plugin.version}</version>
+        <configuration>
+          <configLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/naming.xml</configLocation>
+          <propertyExpansion>config_loc=${maven.multiModuleProjectDirectory}/config/checkstyle</propertyExpansion>
+          <includeTestSourceDirectory>true</includeTestSourceDirectory>
+          <consoleOutput>true</consoleOutput>
+          <failOnViolation>true</failOnViolation>
+        </configuration>
+        <executions>
+          <execution>
+            <id>check-naming</id>
+            <phase>validate</phase>
+            <goals><goal>check</goal></goals>
+          </execution>
+        </executions>
+        <dependencies>
+          <!-- 插件默认带 checkstyle 9.3，解析不了 Java 21 的 switch pattern，显式抬到 10.x -->
+          <dependency>
+            <groupId>com.puppycrawl.tools</groupId>
+            <artifactId>checkstyle</artifactId>
+            <version>${checkstyle.version}</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+    </plugins>
   </build>
 
   <!--

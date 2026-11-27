@@ -46,8 +46,8 @@ public class IcebergTableMetrics {
     private static final String LAST_COMMIT_SQL = "SELECT max(to_unixtime(committed_at)) FROM %s";
 
     private final MeterRegistry registry;
-    private final PlatformConfig cfg;
-    private final LakeProperties props;
+    private final PlatformConfig platformConfig;
+    private final LakeProperties properties;
     private final JdbcTemplate jdbc;
     private final AtomicBoolean running = new AtomicBoolean();
     private final Map<String, TableGauges> gauges = new ConcurrentHashMap<>();
@@ -55,17 +55,17 @@ public class IcebergTableMetrics {
     private final Map<String, TableSnapshot> latest = new ConcurrentHashMap<>();
     private Thread worker;
 
-    public IcebergTableMetrics(MeterRegistry registry, PlatformConfig cfg, LakeProperties props,
+    public IcebergTableMetrics(MeterRegistry registry, PlatformConfig platformConfig, LakeProperties properties,
                                @Qualifier("trinoJdbc") JdbcTemplate jdbc) {
         this.registry = registry;
-        this.cfg = cfg;
-        this.props = props;
+        this.platformConfig = platformConfig;
+        this.properties = properties;
         this.jdbc = jdbc;
     }
 
     @PostConstruct
     void start() {
-        LakeProperties.Metrics.Iceberg conf = props.getMetrics().getIceberg();
+        LakeProperties.Metrics.Iceberg conf = properties.getMetrics().getIceberg();
         if (!conf.isEnabled()) {
             return;
         }
@@ -93,7 +93,7 @@ public class IcebergTableMetrics {
     }
 
     private void loop() {
-        long interval = Math.max(10, props.getMetrics().getIceberg().getIntervalSeconds()) * 1000L;
+        long interval = Math.max(10, properties.getMetrics().getIceberg().getIntervalSeconds()) * 1000L;
         while (running.get()) {
             for (String table : gauges.keySet()) {
                 collect(table);
@@ -108,8 +108,8 @@ public class IcebergTableMetrics {
     }
 
     private void collect(String table) {
-        String catalog = cfg.catalogName();
-        String schema = cfg.database();
+        String catalog = platformConfig.catalogName();
+        String schema = platformConfig.database();
         try {
             long files = 0, total = 0, snapshots = 0, lastCommittedMs = 0;
             double avg = 0;
@@ -146,9 +146,9 @@ public class IcebergTableMetrics {
 
     void update(String table, long files, double avgSizeBytes, long totalSizeBytes,
                 long snapshots, long lastCommittedMs) {
-        TableGauges g = gauges.get(table);
-        if (g != null) {
-            g.set(files, avgSizeBytes, totalSizeBytes, snapshots, lastCommittedMs);
+        TableGauges tableGauges = gauges.get(table);
+        if (tableGauges != null) {
+            tableGauges.set(files, avgSizeBytes, totalSizeBytes, snapshots, lastCommittedMs);
         }
         latest.put(table, new TableSnapshot(files, avgSizeBytes, totalSizeBytes, snapshots, lastCommittedMs));
     }

@@ -15,10 +15,10 @@ import java.util.Map;
 @UtilityClass
 public final class QualitySql {
 
-    public static String render(QualityCheck check, PlatformConfig cfg) {
-        Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(cfg));
-        vars.put("silver_table", TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn());
-        vars.put("gold_table", TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn());
+    public static String render(QualityCheck check, PlatformConfig platformConfig) {
+        Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(platformConfig));
+        vars.put("silver_table", TableRef.of(platformConfig, LakeTables.SILVER_ORDERS).fqn());
+        vars.put("gold_table", TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE).fqn());
         List<String> statements = SqlScript.split(SqlTemplate.renderResource(check.resource(), vars));
         if (statements.size() != 1) {
             throw new IllegalStateException("质量检查模板应只有一条语句: " + check.resource());

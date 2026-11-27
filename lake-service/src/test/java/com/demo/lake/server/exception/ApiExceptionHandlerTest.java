@@ -24,11 +24,11 @@ class ApiExceptionHandlerTest {
         NoResourceFoundException e =
                 new NoResourceFoundException(URI.create("file:/tmp/static/"), "ui/assets/not-exist.js");
 
-        ResponseEntity<ApiError> res = handler.onError(e);
+        ResponseEntity<ApiError> response = handler.onError(e);
 
-        assertEquals(404, res.getStatusCode().value());
-        assertEquals(404, res.getBody().status());
-        assertTrue(res.getBody().message().contains("ui/assets/not-exist.js"),
-                "错误体里要带出路径，便于定位是哪个资源没构建：" + res.getBody().message());
+        assertEquals(404, response.getStatusCode().value());
+        assertEquals(404, response.getBody().status());
+        assertTrue(response.getBody().message().contains("ui/assets/not-exist.js"),
+                "错误体里要带出路径，便于定位是哪个资源没构建：" + response.getBody().message());
     }
 }

@@ -38,18 +38,18 @@ public class ShowJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
-        TableRef bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
-        TableRef silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);
-        TableRef gold = TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE);
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
+        TableRef bronze = TableRef.of(platformConfig, LakeTables.BRONZE_ORDERS);
+        TableRef silver = TableRef.of(platformConfig, LakeTables.SILVER_ORDERS);
+        TableRef gold = TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE);
 
         System.out.println("[show] ---- 表行数 ----");
-        for (TableRef t : new TableRef[]{bronze, silver, gold}) {
-            System.out.printf("  %-24s %,d 行%n", t.table(), spark.table(t.fqn()).count());
+        for (TableRef table : new TableRef[]{bronze, silver, gold}) {
+            System.out.printf("  %-24s %,d 行%n", table.table(), spark.table(table.fqn()).count());
         }
 
         System.out.println("[show] ---- ops 元数据表 ----");
-        opsCountLines(spark, cfg).forEach(System.out::println);
+        opsCountLines(spark, platformConfig).forEach(System.out::println);
 
         System.out.println("[show] ---- gold 最近快照 ----");
         spark.sql(String.format(GOLD_SNAPSHOTS_SQL, gold.metadata("snapshots"))).show(false);
@@ -68,10 +68,10 @@ public class ShowJob implements LakeJob {
     }
 
     /** 包可见供巡检测试断言：四张 ops 表各一行「表名 + 行数」 */
-    static List<String> opsCountLines(SparkSession spark, PlatformConfig cfg) {
+    static List<String> opsCountLines(SparkSession spark, PlatformConfig platformConfig) {
         List<String> lines = new ArrayList<>();
         for (String table : OPS_TABLES) {
-            TableRef ref = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, table);
+            TableRef ref = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, table);
             lines.add(String.format("  %-24s %,d 行", ref.table(), spark.table(ref.fqn()).count()));
         }
         return lines;

@@ -1,4 +1,4 @@
-package com.demo.lake.server.batch.service;
+package com.demo.lake.server.batch.store;
 
 import org.springframework.stereotype.Component;
 

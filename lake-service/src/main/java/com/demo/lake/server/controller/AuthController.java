@@ -32,7 +32,7 @@ import java.util.Map;
 @Tag(name = "认证", description = "控制台登录态：校验演示账号，返回当前身份（无服务端会话）")
 public class AuthController {
 
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final AuditService audit;
 
     /** mode 回显给前端，便于提示 external 模式不需要在本页登录 */
@@ -49,7 +49,7 @@ public class AuthController {
     @Operation(summary = "当前登录态", description = "公开端点：带 Basic 头就返回对应身份；没带或口令失效返回 authenticated=false，不返回 401")
     @GetMapping("/session")
     public SessionView session(@RequestHeader Map<String, String> requestHeaders) {
-        LakeProperties.Security conf = props.getSecurity();
+        LakeProperties.Security conf = properties.getSecurity();
         String mode = mode(conf);
         if (!conf.isEnabled()) {
             return new SessionView(mode, false, true, "anonymous", allRoles());
@@ -87,8 +87,8 @@ public class AuthController {
 
     @Operation(summary = "登录", description = "校验演示账号；成功后前端把凭据放进后续请求的 Basic 头")
     @PostMapping("/login")
-    public LoginView login(@RequestBody LoginRequest body) {
-        LakeProperties.Security conf = props.getSecurity();
+    public LoginView login(@RequestBody LoginRequest request) {
+        LakeProperties.Security conf = properties.getSecurity();
         String mode = mode(conf);
         if (!conf.isEnabled()) {
             return new LoginView("anonymous", allRoles(), mode);
@@ -98,8 +98,8 @@ public class AuthController {
                     "认证由网关接管，请经网关访问，本页无需登录");
         }
 
-        String username = body == null ? null : body.username();
-        String password = body == null ? null : body.password();
+        String username = request == null ? null : request.username();
+        String password = request == null ? null : request.password();
         LakeProperties.Security.Account account = findAccount(
                 new ApiAuthWebFilter.Credentials(username == null ? "" : username, password == null ? "" : password));
         if (account == null) {
@@ -124,7 +124,7 @@ public class AuthController {
     }
 
     private LakeProperties.Security.Account findAccount(ApiAuthWebFilter.Credentials creds) {
-        List<LakeProperties.Security.Account> accounts = props.getSecurity().getAccounts();
+        List<LakeProperties.Security.Account> accounts = properties.getSecurity().getAccounts();
         if (accounts == null) {
             return null;
         }

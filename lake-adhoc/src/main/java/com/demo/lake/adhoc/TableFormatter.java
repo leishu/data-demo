@@ -38,27 +38,27 @@ public final class TableFormatter {
         if (value == null) {
             return "NULL";
         }
-        String v = value.replace("\n", " ");
-        if (v.codePointCount(0, v.length()) > MAX_CELL) {
-            v = v.substring(0, v.offsetByCodePoints(0, MAX_CELL - 1)) + "…";
+        String text = value.replace("\n", " ");
+        if (text.codePointCount(0, text.length()) > MAX_CELL) {
+            text = text.substring(0, text.offsetByCodePoints(0, MAX_CELL - 1)) + "…";
         }
-        return v;
+        return text;
     }
 
     private static int displayWidth(String value) {
-        String v = cell(value);
+        String text = cell(value);
         int width = 0;
-        for (int i = 0; i < v.length(); ) {
-            int cp = v.codePointAt(i);
-            width += codePointWidth(cp);
-            i += Character.charCount(cp);
+        for (int i = 0; i < text.length(); ) {
+            int codePoint = text.codePointAt(i);
+            width += codePointWidth(codePoint);
+            i += Character.charCount(codePoint);
         }
         return width;
     }
 
     /** 组合符号不占列；CJK / 全角 / emoji 在等宽终端里占两列，否则含中文的表头会错位 */
-    private static int codePointWidth(int cp) {
-        switch (Character.getType(cp)) {
+    private static int codePointWidth(int codePoint) {
+        switch (Character.getType(codePoint)) {
             case Character.NON_SPACING_MARK:
             case Character.ENCLOSING_MARK:
             case Character.COMBINING_SPACING_MARK:
@@ -66,30 +66,30 @@ public final class TableFormatter {
             default:
                 break;
         }
-        if (cp == 0x200B || cp == 0x200D || cp == 0xFE0F) {
+        if (codePoint == 0x200B || codePoint == 0x200D || codePoint == 0xFE0F) {
             return 0;
         }
-        return isWide(cp) ? 2 : 1;
+        return isWide(codePoint) ? 2 : 1;
     }
 
-    private static boolean isWide(int cp) {
-        return (cp >= 0x1100 && cp <= 0x115F)            // 韩文字母
-                || cp == 0x2329 || cp == 0x232A
-                || (cp >= 0x2E80 && cp <= 0xA4CF && cp != 0x303F) // CJK 部首、假名、汉字等
-                || cp >= 0xAC00 && cp <= 0xD7A3            // 韩文音节
-                || cp >= 0xF900 && cp <= 0xFAFF            // CJK 兼容汉字
-                || cp >= 0xFE10 && cp <= 0xFE19            // 竖排标点
-                || cp >= 0xFE30 && cp <= 0xFE6F            // CJK 兼容形式
-                || cp >= 0xFF00 && cp <= 0xFF60            // 全角字符
-                || cp >= 0xFFE0 && cp <= 0xFFE6
-                || cp >= 0x1F300 && cp <= 0x1FAFF          // emoji
-                || cp >= 0x20000 && cp <= 0x3FFFD;         // CJK 扩展区
+    private static boolean isWide(int codePoint) {
+        return (codePoint >= 0x1100 && codePoint <= 0x115F)            // 韩文字母
+                || codePoint == 0x2329 || codePoint == 0x232A
+                || (codePoint >= 0x2E80 && codePoint <= 0xA4CF && codePoint != 0x303F) // CJK 部首、假名、汉字等
+                || codePoint >= 0xAC00 && codePoint <= 0xD7A3            // 韩文音节
+                || codePoint >= 0xF900 && codePoint <= 0xFAFF            // CJK 兼容汉字
+                || codePoint >= 0xFE10 && codePoint <= 0xFE19            // 竖排标点
+                || codePoint >= 0xFE30 && codePoint <= 0xFE6F            // CJK 兼容形式
+                || codePoint >= 0xFF00 && codePoint <= 0xFF60            // 全角字符
+                || codePoint >= 0xFFE0 && codePoint <= 0xFFE6
+                || codePoint >= 0x1F300 && codePoint <= 0x1FAFF          // emoji
+                || codePoint >= 0x20000 && codePoint <= 0x3FFFD;         // CJK 扩展区
     }
 
     private static void appendLine(StringBuilder sb, int[] widths) {
         sb.append('+');
-        for (int w : widths) {
-            sb.append("-".repeat(w + 2)).append('+');
+        for (int width : widths) {
+            sb.append("-".repeat(width + 2)).append('+');
         }
         sb.append('\n');
     }
@@ -97,9 +97,9 @@ public final class TableFormatter {
     private static void appendRow(StringBuilder sb, List<String> values, int[] widths) {
         sb.append('|');
         for (int i = 0; i < widths.length; i++) {
-            String v = cell(values.get(i));
-            int pad = widths[i] - displayWidth(v);
-            sb.append(' ').append(v).append(" ".repeat(pad)).append(" |");
+            String text = cell(values.get(i));
+            int pad = widths[i] - displayWidth(text);
+            sb.append(' ').append(text).append(" ".repeat(pad)).append(" |");
         }
         sb.append('\n');
     }

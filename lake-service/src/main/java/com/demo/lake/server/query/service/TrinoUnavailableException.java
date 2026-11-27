@@ -1,4 +1,4 @@
-package com.demo.lake.server.query;
+package com.demo.lake.server.query.service;
 
 import lombok.experimental.StandardException;
 

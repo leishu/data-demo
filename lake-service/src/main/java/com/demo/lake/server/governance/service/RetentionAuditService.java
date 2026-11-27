@@ -27,17 +27,17 @@ public class RetentionAuditService {
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final int MAX_LIMIT = 100;
 
-    private final QueryService queries;
-    private final PlatformConfig cfg;
+    private final QueryService queryService;
+    private final PlatformConfig platformConfig;
     private final Scheduler blocking;
 
     public Mono<List<RetentionAuditView>> recent(int limit) {
         return Mono.fromCallable(() -> load(Math.clamp(limit, 1, MAX_LIMIT))).subscribeOn(blocking);
     }
 
-    private List<RetentionAuditView> load(int n) {
+    private List<RetentionAuditView> load(int cappedLimit) {
         try {
-            QueryResult result = queries.executeQuiet(String.format(SELECT, table(), n), null);
+            QueryResult result = queryService.executeQuiet(String.format(SELECT, table(), cappedLimit), null);
             List<RetentionAuditView> out = new java.util.ArrayList<>();
             for (List<String> row : result.rows()) {
                 out.add(new RetentionAuditView(
@@ -52,7 +52,7 @@ public class RetentionAuditService {
     }
 
     private String table() {
-        String catalog = cfg.catalogName();
+        String catalog = platformConfig.catalogName();
         if (catalog == null || !IDENTIFIER.matcher(catalog).matches()) {
             throw new IllegalStateException("非法 catalog 名: " + catalog);
         }

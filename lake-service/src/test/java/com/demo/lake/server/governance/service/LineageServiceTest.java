@@ -25,8 +25,8 @@ class LineageServiceTest {
     private static final QueryResult ROWS = new QueryResult(List.of(), List.of(
             List.of("run-1", "transform", "123", "1700000000000")), 1, false, 0, null);
 
-    private LineageService service(FakeQueries queries) {
-        return new LineageService(queries, PlatformConfig.load(), Schedulers.immediate());
+    private LineageService service(FakeQueries fakeQueries) {
+        return new LineageService(fakeQueries, PlatformConfig.load(), Schedulers.immediate());
     }
 
     @Test
@@ -48,11 +48,11 @@ class LineageServiceTest {
 
     @Test
     void 未知表名走400而不是击穿SQL() {
-        FakeQueries queries = new FakeQueries(ROWS);
+        FakeQueries fakeQueries = new FakeQueries(ROWS);
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
-                () -> service(queries).forTable("gold_daily_revenue; drop table x", 10).block());
+                () -> service(fakeQueries).forTable("gold_daily_revenue; drop table x", 10).block());
         assertEquals(HttpStatus.BAD_REQUEST.value(), error.getStatusCode().value());
-        assertNull(queries.lastSql, "非法表名不应触发查询");
+        assertNull(fakeQueries.lastSql, "非法表名不应触发查询");
     }
 
     @Test

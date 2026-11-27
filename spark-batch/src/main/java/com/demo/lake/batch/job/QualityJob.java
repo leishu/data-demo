@@ -38,27 +38,27 @@ public class QualityJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
-        TableRef results = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.DQ_RESULTS);
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
+        TableRef results = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.DQ_RESULTS);
         if (!spark.catalog().tableExists(results.fqn())) {
             throw new IllegalStateException("质量结果表不存在，先跑一次 init: " + results.fqn());
         }
         String runId = RunIds.resolve(args);
         if (args.flag("inject-faults")) {
-            injectFaults(spark, cfg);
+            injectFaults(spark, platformConfig);
         }
 
         List<Row> rows = new ArrayList<>();
         int failedErrors = 0;
         int failedWarns = 0;
         for (QualityCheck check : QualityChecks.ALL) {
-            Row observed = spark.sql(QualitySql.render(check, cfg)).head();
+            Row observed = spark.sql(QualitySql.render(check, platformConfig)).head();
             // Spark 把 0.0 / 1.0 这类字面量解析成 DECIMAL，按 Number 读兼容 DOUBLE / DECIMAL
             double value = ((Number) observed.get(0)).doubleValue();
             double threshold = ((Number) observed.get(1)).doubleValue();
             String detail = observed.get(2) == null ? "" : String.valueOf(observed.get(2));
             boolean failed = value > threshold;
-            rows.add(RowFactory.create(runId, snapshotId(spark, cfg, check), check.name(),
+            rows.add(RowFactory.create(runId, snapshotId(spark, platformConfig, check), check.name(),
                     check.severity().name(), value, threshold, detail, System.currentTimeMillis()));
             System.out.printf("[quality] %-20s %-6s observed=%.4f threshold=%.4f -> %s (%s)%n",
                     check.name(), check.severity(), value, threshold,
@@ -80,10 +80,10 @@ public class QualityJob implements LakeJob {
     }
 
     /** 快照 ID 取被检查来源表的最近一次提交，让结果能定位到具体数据版本 */
-    private static String snapshotId(SparkSession spark, PlatformConfig cfg, QualityCheck check) {
+    private static String snapshotId(SparkSession spark, PlatformConfig platformConfig, QualityCheck check) {
         String table = "silver".equals(check.source())
-                ? TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn()
-                : TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn();
+                ? TableRef.of(platformConfig, LakeTables.SILVER_ORDERS).fqn()
+                : TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE).fqn();
         try {
             return SparkSnapshots.latestId(spark, table);
         } catch (RuntimeException e) {
@@ -115,8 +115,8 @@ public class QualityJob implements LakeJob {
      * 演示用的脏数据：两条同 order_id 的重复单 + 一条负金额单。
      * 显式列列表，gold/silver 之后加列也不会因为列数不匹配而挂。
      */
-    private void injectFaults(SparkSession spark, PlatformConfig cfg) {
-        String silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn();
+    private void injectFaults(SparkSession spark, PlatformConfig platformConfig) {
+        String silver = TableRef.of(platformConfig, LakeTables.SILVER_ORDERS).fqn();
         String columns = "(order_id, user_id, merchant_id, category, amount, currency, status, "
                 + "is_refund, dt, event_time, updated_at)";
         String badRows = "('DQ-DUP','U1','M1','3C', CAST(10.00 AS DECIMAL(12,2)), 'CNY','PAID',false, "

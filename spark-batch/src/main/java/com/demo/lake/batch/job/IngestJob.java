@@ -81,11 +81,11 @@ public class IngestJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) throws Exception {
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) throws Exception {
         int days = args.getInt("days", 7);
         int perDay = args.getInt("orders-per-day", 2000);
         String runId = RunIds.resolve(args);
-        Path rawRoot = Paths.get(cfg.get("platform.raw.dir", "data/raw"), "orders").toAbsolutePath();
+        Path rawRoot = Paths.get(platformConfig.get("platform.raw.dir", "data/raw"), "orders").toAbsolutePath();
         Files.createDirectories(rawRoot);
 
         System.out.println("[ingest] 落地目录: " + rawRoot);
@@ -105,8 +105,8 @@ public class IngestJob implements LakeJob {
         }
 
         System.out.println("[ingest] 读取本次落地文件并写入 Iceberg（按 event_time 重新分区）");
-        TableRef bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
-        prepareBronze(spark, cfg, bronze);
+        TableRef bronze = TableRef.of(platformConfig, LakeTables.BRONZE_ORDERS);
+        prepareBronze(spark, platformConfig, bronze);
         Dataset<Row> raw = spark.read().option("mergeSchema", "true")
                 .parquet(generated.toArray(new String[0]));
         raw.withColumn("run_id", functions.lit(runId)).createOrReplaceTempView("raw_orders");
@@ -122,13 +122,13 @@ public class IngestJob implements LakeJob {
      * 老仓库升级：run_id 是后加的列，旧表先 ADD COLUMNS 补上（纯元数据变更），
      * 再加列前写入的历史行没有 run_id，按「旧数据删除」清掉，保证表里每行都能追到批次。
      */
-    private void prepareBronze(SparkSession spark, PlatformConfig cfg, TableRef bronze) {
+    private void prepareBronze(SparkSession spark, PlatformConfig platformConfig, TableRef bronze) {
         if (!spark.catalog().tableExists(bronze.fqn())) {
             return; // 表还没建：init 会按最新 DDL 建好，这里不越权
         }
         if (!Arrays.asList(spark.table(bronze.fqn()).columns()).contains("run_id")) {
             System.out.println("[ingest] 旧表结构缺少 run_id，ADD COLUMNS 补列（仅元数据变更）");
-            spark.sql(Migrations.addBronzeRunId(cfg));
+            spark.sql(Migrations.addBronzeRunId(platformConfig));
         }
         long legacy = spark.table(bronze.fqn()).filter("run_id IS NULL").count();
         if (legacy > 0) {

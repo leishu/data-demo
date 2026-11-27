@@ -1,5 +1,7 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.server.batch.store.RunningRunRegistry;
+import com.demo.lake.server.batch.model.BatchIdentity;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.store.RunStateStore;
@@ -36,13 +38,13 @@ public class JobDispatcher {
     private final BatchIdentity identity;
     private final RunningRunRegistry liveRuns;
     private final LakeMetrics metrics;
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final Scheduler blocking;
     private final Disposable.Composite timer = Disposables.composite();
 
     @PostConstruct
     void start() {
-        long interval = Math.max(200, props.getBatch().getDispatchIntervalMs());
+        long interval = Math.max(200, properties.getBatch().getDispatchIntervalMs());
         timer.add(Flux.interval(Duration.ofMillis(interval))
                 .flatMap(tick -> Mono.fromCallable(() -> {
                     dispatch();
@@ -53,12 +55,12 @@ public class JobDispatcher {
                 }).subscribeOn(blocking))
                 .subscribe());
         log.info("批作业调度器已启动: executor={} maxConcurrent={} interval={}ms",
-                props.getBatch().getExecutor(), props.getBatch().getMaxConcurrentJobs(), interval);
+                properties.getBatch().getExecutor(), properties.getBatch().getMaxConcurrentJobs(), interval);
     }
 
     void dispatch() {
         metrics.setQueueDepth(state.queuedCount());
-        int max = Math.max(1, props.getBatch().getMaxConcurrentJobs());
+        int max = Math.max(1, properties.getBatch().getMaxConcurrentJobs());
         while (true) {
             // 名额检查与认领由状态库的全局行锁包住：多实例共享同一个并发上限
             BatchRun claimed = state.claimNextIfSlotAvailable(identity.id(), max);
@@ -66,10 +68,10 @@ public class JobDispatcher {
                 return;
             }
             liveRuns.add(claimed.id());
-            JobExecutor executor = executors.get(props.getBatch().getExecutor());
+            JobExecutor executor = executors.get(properties.getBatch().getExecutor());
             if (executor == null) {
                 completion.completed(claimed, BatchRunStatus.FAILED, 1, 0,
-                        "未知执行器: " + props.getBatch().getExecutor());
+                        "未知执行器: " + properties.getBatch().getExecutor());
                 continue;
             }
             metrics.queueWait(claimed.job(), System.currentTimeMillis() - claimed.startedAt().toEpochMilli());

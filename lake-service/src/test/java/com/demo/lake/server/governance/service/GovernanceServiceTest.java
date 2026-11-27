@@ -32,8 +32,8 @@ class GovernanceServiceTest {
     private IcebergTableMetrics iceberg(Map<String, TableSnapshot> snapshots) {
         System.setProperty("platform.catalog.type", "hadoop");
         System.setProperty("platform.database", "lake_governance_test");
-        PlatformConfig cfg = PlatformConfig.load();
-        return new IcebergTableMetrics(new SimpleMeterRegistry(), cfg, new LakeProperties(),
+        PlatformConfig platformConfig = PlatformConfig.load();
+        return new IcebergTableMetrics(new SimpleMeterRegistry(), platformConfig, new LakeProperties(),
                 new JdbcTemplate(new JdbcDataSource())) {
             @Override
             public Map<String, TableSnapshot> snapshot() {

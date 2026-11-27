@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** 检查项注册表 + SQL 模板守卫：漏登记、占位符写错、表名漂移都在这里挂掉 */
 class QualityChecksTest {
 
-    private static PlatformConfig cfg() {
+    private static PlatformConfig platformConfig() {
         return PlatformConfig.load();
     }
 
@@ -47,16 +47,16 @@ class QualityChecksTest {
 
     @Test
     void 每个模板渲染成单条无残留占位符的SQL() {
-        PlatformConfig cfg = cfg();
+        PlatformConfig platformConfig = platformConfig();
         for (QualityCheck check : QualityChecks.ALL) {
-            String sql = QualitySql.render(check, cfg);
+            String sql = QualitySql.render(check, platformConfig);
             assertFalse(sql.isBlank(), check.name());
             assertFalse(SqlTemplate.hasUnresolved(sql), check.name() + " 残留占位符");
             assertFalse(sql.contains(";"), check.name() + " 应只有一条语句");
             if ("silver".equals(check.source())) {
-                assertTrue(sql.contains(TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn()), check.name());
+                assertTrue(sql.contains(TableRef.of(platformConfig, LakeTables.SILVER_ORDERS).fqn()), check.name());
             } else {
-                assertTrue(sql.contains(TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn()), check.name());
+                assertTrue(sql.contains(TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE).fqn()), check.name());
             }
         }
     }

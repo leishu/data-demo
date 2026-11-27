@@ -336,7 +336,7 @@ sequenceDiagram
 
 ### 3.4 lake-service · 查询链路
 
-- **职责**：把 SQL 查询、语义指标查询包装成 HTTP（JSON + SSE），负责鉴权、只读校验、审计与指标；配额编排收在 `QueryService` 的 `*WithQuota` 方法内，Controller 不再直接依赖 `QuotaHelper`。
+- **职责**：把 SQL 查询、语义指标查询包装成 HTTP（JSON + SSE），负责鉴权、只读校验、审计与指标；配额编排收在 `QueryService` 的 `*WithQuota` 方法内，Controller 不再直接依赖 `QueryQuotaService`。
 - **对外接口**：`POST /api/query`、`POST /api/query/stream`、`GET/POST /api/semantics*`、`GET /api/tables*`、`GET /api/config`、`GET /api/audit*`。〔FACT｜README.md:119-135〕
 - **依赖**：`platform-common`（配置 + 指标）；Trino（JDBC）、Postgres（审计保险箱）。
 - **关键约束**：SQL 默认只读（`SqlGuard` 白名单），配额满返回 429，Trino 挂返回 503，健康检查如实报 DOWN。〔FACT｜query/SqlGuard.java:19-20〕

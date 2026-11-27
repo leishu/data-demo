@@ -32,8 +32,8 @@ public class DqResultService {
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final int MAX_LIMIT = 100;
 
-    private final QueryService queries;
-    private final PlatformConfig cfg;
+    private final QueryService queryService;
+    private final PlatformConfig platformConfig;
     private final Scheduler blocking;
 
     public Mono<List<DqResultView>> recent(int limit) {
@@ -56,13 +56,13 @@ public class DqResultService {
         return Mono.fromCallable(() -> loadStrict(Math.clamp(limit, 1, MAX_LIMIT))).subscribeOn(blocking);
     }
 
-    private List<DqResultView> loadStrict(int n) {
-        QueryResult result = queries.executeQuiet(String.format(SELECT, table(), n), null);
+    private List<DqResultView> loadStrict(int cappedLimit) {
+        QueryResult result = queryService.executeQuiet(String.format(SELECT, table(), cappedLimit), null);
         return result.rows().stream().map(DqResultService::toView).toList();
     }
 
     private String table() {
-        String catalog = cfg.catalogName();
+        String catalog = platformConfig.catalogName();
         if (catalog == null || !IDENTIFIER.matcher(catalog).matches()) {
             throw new IllegalStateException("非法 catalog 名: " + catalog);
         }

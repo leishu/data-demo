@@ -28,7 +28,7 @@ class RunRecordEpochTest {
     static Path tempDir;
 
     private static SparkSession spark;
-    private static PlatformConfig cfg;
+    private static PlatformConfig platformConfig;
     private static TableRef runs;
 
     @BeforeAll
@@ -37,12 +37,12 @@ class RunRecordEpochTest {
         System.setProperty("platform.catalog.type", "hadoop");
         System.setProperty("platform.database", "lake_epoch_test");
         System.setProperty("platform.spark.shuffle.partitions", "2");
-        cfg = PlatformConfig.load();
-        spark = SparkSessionFactory.create(cfg, "run-record-epoch-test");
-        runs = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
+        platformConfig = PlatformConfig.load();
+        spark = SparkSessionFactory.create(platformConfig, "run-record-epoch-test");
+        runs = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
 
         // 故意先建「老结构」的表：没有 epoch 列，模拟升级前的仓库
-        spark.sql("CREATE DATABASE IF NOT EXISTS " + cfg.catalogName() + "." + LakeTables.OPS_SCHEMA);
+        spark.sql("CREATE DATABASE IF NOT EXISTS " + platformConfig.catalogName() + "." + LakeTables.OPS_SCHEMA);
         spark.sql("CREATE TABLE IF NOT EXISTS " + runs.fqn() + " (\n"
                 + " run_id STRING, job STRING, command STRING, status STRING, exit_code INT,\n"
                 + " started_at TIMESTAMP, finished_at TIMESTAMP, duration_ms BIGINT,\n"
@@ -52,7 +52,7 @@ class RunRecordEpochTest {
                 + "('legacy', 'init', '', 'SUCCEEDED', 0,"
                 + " timestamp'2026-01-02 03:04:05', timestamp'2026-01-02 03:04:10', 5000, '', '')");
         // 先完成升级，保证两个测试都面对新结构；回填结果在测试里断言
-        new InitJob().run(spark, cfg, Args.parse(new String[]{"--job", "init"}));
+        new InitJob().run(spark, platformConfig, Args.parse(new String[]{"--job", "init"}));
     }
 
     @AfterAll
@@ -73,7 +73,7 @@ class RunRecordEpochTest {
     @Test
     void 新运行记录直接写权威epoch列() {
         Instant start = Instant.parse("2026-02-03T04:05:06.789Z");
-        RunRecordWriter.record(spark, cfg, Args.parse(new String[]{"--job", "init"}),
+        RunRecordWriter.record(spark, platformConfig, Args.parse(new String[]{"--job", "init"}),
                 "epoch-run", "--job init", BatchRunStatus.SUCCEEDED, 0, start, "ok");
 
         Row row = spark.sql("select started_ms from " + runs.fqn()

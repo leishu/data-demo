@@ -14,13 +14,13 @@ class PlatformConfigTest {
 
     @Test
     void defaultsAreHadoopCatalogWithLocalWarehouse() {
-        PlatformConfig cfg = PlatformConfig.load();
+        PlatformConfig platformConfig = PlatformConfig.load();
 
-        assertEquals("iceberg", cfg.catalogName());
-        assertEquals("hadoop", cfg.catalogType());
-        assertFalse(cfg.isHiveCatalog());
-        assertTrue(cfg.warehouse().startsWith("file://"), "相对路径应被解析成 file:// 绝对路径");
-        assertEquals(2, cfg.formatVersion());
+        assertEquals("iceberg", platformConfig.catalogName());
+        assertEquals("hadoop", platformConfig.catalogType());
+        assertFalse(platformConfig.isHiveCatalog());
+        assertTrue(platformConfig.warehouse().startsWith("file://"), "相对路径应被解析成 file:// 绝对路径");
+        assertEquals(2, platformConfig.formatVersion());
     }
 
     @Test
@@ -29,11 +29,11 @@ class PlatformConfigTest {
         System.setProperty("platform.hive.uri", "thrift://hms.demo:9083");
         System.setProperty("platform.warehouse", "s3a://lake/warehouse");
         try {
-            PlatformConfig cfg = PlatformConfig.load();
-            assertTrue(cfg.isHiveCatalog());
-            assertTrue(cfg.isObjectStorage());
+            PlatformConfig platformConfig = PlatformConfig.load();
+            assertTrue(platformConfig.isHiveCatalog());
+            assertTrue(platformConfig.isObjectStorage());
 
-            Map<String, String> conf = cfg.sparkConf();
+            Map<String, String> conf = platformConfig.sparkConf();
             assertEquals("org.apache.iceberg.spark.SparkCatalog", conf.get("spark.sql.catalog.iceberg"));
             assertEquals("hive", conf.get("spark.sql.catalog.iceberg.type"));
             assertEquals("thrift://hms.demo:9083", conf.get("spark.sql.catalog.iceberg.uri"));
@@ -51,8 +51,8 @@ class PlatformConfigTest {
     void trinoUrlFollowsCatalogAndDatabase() {
         System.setProperty("platform.database", "lake_test");
         try {
-            PlatformConfig cfg = PlatformConfig.load();
-            assertEquals("jdbc:trino://localhost:8080/iceberg/lake_test", cfg.trinoJdbcUrl());
+            PlatformConfig platformConfig = PlatformConfig.load();
+            assertEquals("jdbc:trino://localhost:8080/iceberg/lake_test", platformConfig.trinoJdbcUrl());
         } finally {
             System.clearProperty("platform.database");
         }
@@ -73,8 +73,8 @@ class PlatformConfigTest {
         String abs = Paths.get("/tmp/lake-warehouse").toUri().toString();
         System.setProperty("platform.warehouse", abs);
         try {
-            PlatformConfig cfg = PlatformConfig.load();
-            assertEquals(abs.endsWith("/") ? abs : abs + "/", cfg.warehouse());
+            PlatformConfig platformConfig = PlatformConfig.load();
+            assertEquals(abs.endsWith("/") ? abs : abs + "/", platformConfig.warehouse());
         } finally {
             System.clearProperty("platform.warehouse");
         }

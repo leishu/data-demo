@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<!--
+  只做命名校验，不做格式校验：格式规则容易和存量代码打架，命名规则是这次要收口的部分。
+  规则说明见 docs/NAMING.md；豁免清单见 naming-suppressions.xml。
+
+  运行：mvn -B -ntp validate（绑定在 validate 阶段，失败即停；verify 也会带上）
+  单模块：mvn -B -ntp -pl platform-common validate
+  不要直接调 checkstyle:check：那样 ${config_loc} 不会注入，SuppressFilter 会解析失败。
+-->
+<module name="Checker">
+  <property name="severity" value="error"/>
+  <property name="fileExtensions" value="java"/>
+
+  <module name="SuppressionFilter">
+    <property name="file" value="${config_loc}/naming-suppressions.xml"/>
+    <property name="optional" value="true"/>
+  </module>
+
+  <module name="TreeWalker">
+    <module name="PackageName"/>
+    <module name="TypeName"/>
+    <module name="MethodName"/>
+    <module name="ConstantName"/>
+
+    <!--
+      字段/局部变量/参数共用同一套规则：
+      1) 黑名单挡住 AI 最容易复制出来的缩写（cfg/props/queries/...）；
+      2) 单字母只放行 i/j/e（下标循环与 catch），n/v/at/cp 这类一律要求有意义的全名。
+    -->
+    <module name="MemberName">
+      <property name="format"
+                value="^(?!cfg$|props$|queries$|svc$|serv$|mgr$|repo$|tmp$|res$|req$|resp$|val$|obj$|str$|num$|out$|rv$|cp$|at$)(i|j|e|[a-z][a-zA-Z0-9]+)$"/>
+    </module>
+    <module name="StaticVariableName">
+      <property name="format"
+                value="^(?!cfg$|props$|queries$|svc$|serv$|mgr$|repo$|tmp$|res$|req$|resp$|val$|obj$|str$|num$|out$|rv$|cp$|at$)(i|j|e|[a-z][a-zA-Z0-9]+)$"/>
+    </module>
+    <module name="LocalVariableName">
+      <property name="format"
+                value="^(?!cfg$|props$|queries$|svc$|serv$|mgr$|repo$|tmp$|res$|req$|resp$|val$|obj$|str$|num$|rv$|cp$|at$)(i|j|e|[a-z][a-zA-Z0-9]+)$"/>
+    </module>
+    <module name="ParameterName">
+      <property name="format"
+                value="^(?!cfg$|props$|queries$|svc$|serv$|mgr$|repo$|tmp$|res$|req$|resp$|val$|obj$|str$|num$|rv$|cp$|at$)(i|j|e|[a-z][a-zA-Z0-9]+)$"/>
+    </module>
+
+    <!-- 连续大写缩写：ID/SQL/DDL/API/HTTP/URL/JDBC 是项目已收编的缩写，其余要求按单词驼峰 -->
+    <module name="AbbreviationAsWordInName">
+      <property name="allowedAbbreviationLength" value="0"/>
+      <property name="ignoreStatic" value="true"/>
+      <property name="allowedAbbreviations" value="ID,SQL,DDL,API,HTTP,URL,JDBC"/>
+    </module>
+  </module>
+</module>

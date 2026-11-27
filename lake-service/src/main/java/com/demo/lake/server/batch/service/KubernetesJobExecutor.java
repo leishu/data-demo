@@ -62,14 +62,14 @@ public class KubernetesJobExecutor implements JobExecutor {
     /** 只在建连失败 / 日志接口竞态时退避；正常流结束靠服务端 timeoutSeconds 自然收口 */
     private static final long RETRY_MILLIS = 300;
 
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final LogStore logStore;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private final Map<String, LogStream> logStreams = new ConcurrentHashMap<>();
 
     @Override
     public String start(BatchRun run, JobOutcomeListener listener) {
-        LakeProperties.Batch.Kubernetes conf = props.getBatch().getKubernetes();
+        LakeProperties.Batch.Kubernetes conf = properties.getBatch().getKubernetes();
         String name = "lake-" + run.id().replaceAll("[^a-z0-9-]", "").toLowerCase();
         String base = trimSlash(conf.getApiUrl()) + "/apis/batch/v1/namespaces/" + conf.getNamespace() + "/jobs";
 
@@ -305,18 +305,18 @@ public class KubernetesJobExecutor implements JobExecutor {
             if (root == null || !root.isObject()) {
                 return null;
             }
-            String rv = root.path("metadata").path("resourceVersion").asString("");
+            String resourceVersion = root.path("metadata").path("resourceVersion").asString("");
             List<WatchEvent> pods = new ArrayList<>();
             JsonNode items = root.path("items");
             if (items.isArray()) {
                 for (JsonNode item : items) {
                     String itemRv = item.path("metadata").path("resourceVersion").asString("");
-                    pods.add(new WatchEvent("ADDED", itemRv.isEmpty() ? rv : itemRv,
+                    pods.add(new WatchEvent("ADDED", itemRv.isEmpty() ? resourceVersion : itemRv,
                             item.path("metadata").path("name").asString(""),
                             item.path("status").path("phase").asString(""), false, false));
                 }
             }
-            return new PodList(rv, pods);
+            return new PodList(resourceVersion, pods);
         } catch (Exception e) {
             log.debug("列 K8s Pod 失败: {}", e.getMessage());
             return null;
@@ -429,7 +429,7 @@ public class KubernetesJobExecutor implements JobExecutor {
         if (stream != null) {
             stream.stopAndJoin();
         }
-        LakeProperties.Batch.Kubernetes conf = props.getBatch().getKubernetes();
+        LakeProperties.Batch.Kubernetes conf = properties.getBatch().getKubernetes();
         String url = trimSlash(conf.getApiUrl()) + "/apis/batch/v1/namespaces/" + conf.getNamespace() + "/jobs/" + handle;
         try {
             http.send(HttpRequest.newBuilder(URI.create(url))
@@ -453,20 +453,20 @@ public class KubernetesJobExecutor implements JobExecutor {
         try {
             JsonNode node = JSON.readTree(line);
             String type = node.path("type").asString("");
-            JsonNode obj = node.get("object");
-            if (obj == null || obj.isNull()) {
+            JsonNode object = node.get("object");
+            if (object == null || object.isNull()) {
                 return new WatchEvent(type, "", "", "", false, false);
             }
-            String resourceVersion = obj.path("metadata").path("resourceVersion").asString("");
-            String name = obj.path("metadata").path("name").asString("");
-            String phase = obj.path("status").path("phase").asString("");
-            long succeeded = obj.path("status").path("succeeded").asLong(0);
-            long failed = obj.path("status").path("failed").asLong(0);
-            JsonNode conditions = obj.path("status").path("conditions");
+            String resourceVersion = object.path("metadata").path("resourceVersion").asString("");
+            String name = object.path("metadata").path("name").asString("");
+            String phase = object.path("status").path("phase").asString("");
+            long succeeded = object.path("status").path("succeeded").asLong(0);
+            long failed = object.path("status").path("failed").asLong(0);
+            JsonNode conditions = object.path("status").path("conditions");
             if (conditions.isArray()) {
-                for (JsonNode c : conditions) {
-                    if ("Failed".equals(c.path("type").asString())
-                            && "True".equalsIgnoreCase(c.path("status").asString())) {
+                for (JsonNode condition : conditions) {
+                    if ("Failed".equals(condition.path("type").asString())
+                            && "True".equalsIgnoreCase(condition.path("status").asString())) {
                         failed = Math.max(failed, 1);
                         break;
                     }
@@ -558,18 +558,18 @@ public class KubernetesJobExecutor implements JobExecutor {
         }
         StringBuilder sb = new StringBuilder(value.length() + 2).append('"');
         for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
+            char ch = value.charAt(i);
+            switch (ch) {
                 case '"' -> sb.append("\\\"");
                 case '\\' -> sb.append("\\\\");
                 case '\n' -> sb.append("\\n");
                 case '\r' -> sb.append("\\r");
                 case '\t' -> sb.append("\\t");
                 default -> {
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
+                    if (ch < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) ch));
                     } else {
-                        sb.append(c);
+                        sb.append(ch);
                     }
                 }
             }

@@ -18,7 +18,7 @@ import java.util.stream.Stream;
 /**
  * 即席查询入口：一次 JVM 内完成「SQL 预处理（SqlParams）→ 官方 trino-jdbc 执行 → 表格输出」。
  *
- * <p>协议层完全交给官方 trino-jdbc，项目只保留 ${var} 参数化这一层业务约定，
+ * <path>协议层完全交给官方 trino-jdbc，项目只保留 ${var} 参数化这一层业务约定，
  * 不重复实现客户端。配置（catalog/database/trino 地址）来自 platform-common 的 PlatformConfig。
  */
 public final class TrinoQuery {
@@ -88,14 +88,14 @@ public final class TrinoQuery {
             return;
         }
 
-        PlatformConfig cfg = PlatformConfig.load(args.has("conf") ? Paths.get(args.get("conf")) : null);
-        String url = resolveUrl(args, cfg);
-        String user = args.get("user", cfg.trinoUser());
+        PlatformConfig platformConfig = PlatformConfig.load(args.has("conf") ? Paths.get(args.get("conf")) : null);
+        String url = resolveUrl(args, platformConfig);
+        String user = args.get("user", platformConfig.trinoUser());
 
         System.out.println("Trino: " + url + " (user=" + user + ", script=" + title
                 + ", statements=" + statements.size() + ")");
 
-        try (TrinoClient client = TrinoClient.connect(url, user, cfg.trinoSource(), timeout)) {
+        try (TrinoClient client = TrinoClient.connect(url, user, platformConfig.trinoSource(), timeout)) {
             for (int i = 0; i < statements.size(); i++) {
                 String sql = statements.get(i);
                 System.out.println("\n--- [" + (i + 1) + "/" + statements.size() + "] "
@@ -124,7 +124,7 @@ public final class TrinoQuery {
     }
 
     /** URL 优先级：--url（完整 JDBC）> --server（http://host:port）> PlatformConfig.trinoJdbcUrl() */
-    private static String resolveUrl(Args args, PlatformConfig cfg) {
+    private static String resolveUrl(Args args, PlatformConfig platformConfig) {
         String explicit = args.get("url");
         if (explicit != null && !explicit.isBlank()) {
             return explicit;
@@ -132,9 +132,9 @@ public final class TrinoQuery {
         String server = args.get("server");
         if (server != null && !server.isBlank()) {
             String base = server.replaceFirst("^https?://", "").replaceAll("/$", "");
-            return "jdbc:trino://" + base + "/" + cfg.catalogName() + "/" + cfg.database();
+            return "jdbc:trino://" + base + "/" + platformConfig.catalogName() + "/" + platformConfig.database();
         }
-        return cfg.trinoJdbcUrl();
+        return platformConfig.trinoJdbcUrl();
     }
 
     private static void listScripts() {
@@ -144,20 +144,20 @@ public final class TrinoQuery {
         }
         System.out.println("可用脚本（" + SCRIPT_DIR + "）：");
         try (Stream<Path> stream = Files.list(SCRIPT_DIR)) {
-            List<Path> files = stream.filter(p -> p.toString().endsWith(".sql"))
-                    .sorted(Comparator.comparing(p -> p.getFileName().toString()))
+            List<Path> files = stream.filter(path -> path.toString().endsWith(".sql"))
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
                     .collect(Collectors.toList());
-            for (Path p : files) {
-                System.out.printf("  %-28s %s%n", p.getFileName(), firstComment(p));
+            for (Path path : files) {
+                System.out.printf("  %-28s %s%n", path.getFileName(), firstComment(path));
             }
         } catch (Exception e) {
             System.err.println("列目录失败: " + e.getMessage());
         }
     }
 
-    private static String firstComment(Path p) {
+    private static String firstComment(Path path) {
         try {
-            return Files.readAllLines(p).stream()
+            return Files.readAllLines(path).stream()
                     .filter(l -> l.trim().startsWith("--"))
                     .map(l -> l.replaceFirst("^\\s*--\\s?", ""))
                     .findFirst().orElse("");

@@ -40,7 +40,7 @@ public class BatchController {
     private final BatchWatcher watcher;
     private final Scheduler blocking;
 
-    public record RunDetail(
+    public record RunDetailView(
             @Schema(description = "运行记录（状态、时间、耗时、日志路径等）") BatchRun run,
             @Schema(description = "日志尾部若干行") List<String> tail) {
     }
@@ -75,11 +75,11 @@ public class BatchController {
 
     @Operation(summary = "运行详情", description = "运行状态 + 日志尾部若干行")
     @GetMapping("/runs/{id}")
-    public Mono<RunDetail> detail(
+    public Mono<RunDetailView> detail(
             @Parameter(description = "runId") @PathVariable String id,
             @Parameter(description = "日志尾部行数，默认 40") @RequestParam(defaultValue = "40") int tail) {
         // 日志尾部要读文件，同样别在事件循环上做
-        return Mono.fromCallable(() -> new RunDetail(jobService.get(id), jobService.tail(id, tail)))
+        return Mono.fromCallable(() -> new RunDetailView(jobService.get(id), jobService.tail(id, tail)))
                 .subscribeOn(blocking);
     }
 

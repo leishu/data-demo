@@ -39,11 +39,11 @@ class IcebergConcurrentWriteTest {
         System.setProperty("platform.catalog.type", "hadoop");
         System.setProperty("platform.database", "lake_concurrency_test");
         System.setProperty("platform.spark.shuffle.partitions", "2");
-        PlatformConfig cfg = PlatformConfig.load();
+        PlatformConfig platformConfig = PlatformConfig.load();
 
-        spark = SparkSessionFactory.create(cfg, "iceberg-concurrent-write-test");
-        spark.sql("CREATE DATABASE IF NOT EXISTS " + cfg.catalogName() + "." + cfg.database());
-        table = TableRef.of(cfg, "concurrent_target").fqn();
+        spark = SparkSessionFactory.create(platformConfig, "iceberg-concurrent-write-test");
+        spark.sql("CREATE DATABASE IF NOT EXISTS " + platformConfig.catalogName() + "." + platformConfig.database());
+        table = TableRef.of(platformConfig, "concurrent_target").fqn();
         spark.sql("CREATE TABLE " + table + " (id INT, note STRING) USING iceberg");
         spark.sql("INSERT INTO " + table + " VALUES (0, 'base')");
     }
@@ -67,9 +67,9 @@ class IcebergConcurrentWriteTest {
 
             int succeeded = 0;
             Throwable firstError = null;
-            for (Future<Void> f : new Future[]{f1, f2}) {
+            for (Future<Void> future : new Future[]{f1, f2}) {
                 try {
-                    f.get(180, TimeUnit.SECONDS);
+                    future.get(180, TimeUnit.SECONDS);
                     succeeded++;
                 } catch (ExecutionException e) {
                     if (firstError == null) {
@@ -103,8 +103,8 @@ class IcebergConcurrentWriteTest {
     }
 
     private static boolean hasCause(Throwable error, Class<? extends Throwable> type) {
-        for (Throwable t = error; t != null; t = t.getCause()) {
-            if (type.isInstance(t)) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (type.isInstance(cause)) {
                 return true;
             }
         }

@@ -33,7 +33,7 @@ class RetentionLineageTest {
     static Path tempDir;
 
     private static SparkSession spark;
-    private static PlatformConfig cfg;
+    private static PlatformConfig platformConfig;
     private static TableRef bronze;
     private static TableRef silver;
     private static TableRef gold;
@@ -46,15 +46,15 @@ class RetentionLineageTest {
         System.setProperty("platform.catalog.type", "hadoop");
         System.setProperty("platform.database", "lake_retention_test");
         System.setProperty("platform.spark.shuffle.partitions", "2");
-        cfg = PlatformConfig.load();
-        spark = SparkSessionFactory.create(cfg, "retention-lineage-test");
-        bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
-        silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);
-        gold = TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE);
-        lineage = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.LINEAGE_RUNS);
-        audit = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.RETENTION_AUDIT);
+        platformConfig = PlatformConfig.load();
+        spark = SparkSessionFactory.create(platformConfig, "retention-lineage-test");
+        bronze = TableRef.of(platformConfig, LakeTables.BRONZE_ORDERS);
+        silver = TableRef.of(platformConfig, LakeTables.SILVER_ORDERS);
+        gold = TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE);
+        lineage = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.LINEAGE_RUNS);
+        audit = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.RETENTION_AUDIT);
 
-        LakeTables.all(cfg).forEach(ddl -> spark.sql(ddl));
+        LakeTables.all(platformConfig).forEach(ddl -> spark.sql(ddl));
         String old = "CAST(date_sub(current_date(), 10) AS TIMESTAMP)";
         String recent = "CAST(date_sub(current_date(), 1) AS TIMESTAMP)";
         spark.sql("INSERT INTO " + bronze.fqn() + " VALUES "
@@ -88,7 +88,7 @@ class RetentionLineageTest {
         assertTrue(SparkSnapshots.LATEST_SNAPSHOT.contains("ORDER BY committed_at DESC"));
         assertFalse(SparkSnapshots.LATEST_SNAPSHOT.contains("max("));
 
-        LineageWriter.record(spark, cfg, "run-lineage", LakeJobs.TRANSFORM);
+        LineageWriter.record(spark, platformConfig, "run-lineage", LakeJobs.TRANSFORM);
         List<Row> rows = spark.sql("SELECT table_name, snapshot_id FROM " + lineage.fqn()
                 + " WHERE run_id = 'run-lineage'").collectAsList();
 
@@ -112,7 +112,7 @@ class RetentionLineageTest {
     void dryRun列出待删分区但不删数据() {
         Args args = Args.parse(new String[]{"--job", LakeJobs.RETENTION, "--run-id", "run-ret-dry",
                 "--retention-days", "3"});
-        new RetentionJob().run(spark, cfg, args);
+        new RetentionJob().run(spark, platformConfig, args);
 
         assertEquals(2L, spark.table(bronze.fqn()).count(), "dry-run 不应删数据");
         List<Row> events = spark.sql("SELECT event, dry_run, partitions, row_count FROM " + audit.fqn()
@@ -131,7 +131,7 @@ class RetentionLineageTest {
         List<String> before = Arrays.asList(spark.table(bronze.fqn()).columns());
         Args args = Args.parse(new String[]{"--job", LakeJobs.RETENTION, "--run-id", "run-ret-exec",
                 "--retention-days", "3", "--execute"});
-        new RetentionJob().run(spark, cfg, args);
+        new RetentionJob().run(spark, platformConfig, args);
 
         assertEquals(1L, spark.table(bronze.fqn()).count(), "10 天前的分区应被删掉");
         assertEquals(1L, spark.table(silver.fqn()).count());

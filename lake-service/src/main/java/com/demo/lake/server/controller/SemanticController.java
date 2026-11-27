@@ -9,7 +9,7 @@ import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.service.AuditService;
 import com.demo.lake.server.observability.store.AuditTextStore;
 import com.demo.lake.server.observability.service.LakeMetrics;
-import com.demo.lake.server.query.InvalidSemanticQueryException;
+import com.demo.lake.server.query.service.InvalidSemanticQueryException;
 import com.demo.lake.server.query.model.QueryResult;
 import com.demo.lake.server.query.service.QueryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,14 +45,14 @@ import java.util.Map;
 @Tag(name = "语义层", description = "调用方选指标 / 维度 / 过滤，服务端按统一口径生成 SQL；需要 QUERY 角色")
 public class SemanticController {
 
-    private final PlatformConfig cfg;
-    private final LakeProperties props;
-    private final QueryService queryServ;
-    private final AuditService auditServ;
+    private final PlatformConfig platformConfig;
+    private final LakeProperties properties;
+    private final QueryService queryService;
+    private final AuditService auditService;
     private final AuditTextStore auditTextStore;
     private final LakeMetrics metrics;
 
-    public record Filter(
+    public record FilterItem(
             @Schema(description = "过滤字段，必须在指标允许的字段白名单内", example = "status") String field,
             @Schema(description = "过滤操作符（由渲染器白名单校验）", example = "eq") String op,
             @Schema(description = "过滤值", example = "PAID") String value) {
@@ -61,7 +61,7 @@ public class SemanticController {
     public record SemanticRequest(
             @Schema(description = "指标名，见 GET /api/semantics", example = "gmv") String metric,
             @Schema(description = "维度列表，必须在指标允许的维度白名单内", example = "[\"dt\"]") List<String> dimensions,
-            @Schema(description = "过滤条件列表") List<Filter> filters,
+            @Schema(description = "过滤条件列表") List<FilterItem> filters,
             @Schema(description = "返回行数上限；不传用 lake.query.max-rows", example = "100") Integer limit,
             @Schema(description = "仅 render 生效：trino（默认）或 spark；query 固定用 trino", example = "trino") String engine) {
     }
@@ -103,10 +103,10 @@ public class SemanticController {
         String actor = principal == null || principal.getName() == null ? "anonymous" : principal.getName();
         String ip = http == null || http.getRemoteAddress() == null
                 ? null : http.getRemoteAddress().getAddress().getHostAddress();
-        return queryServ.queryWithQuota(actor, sql, request.limit())
+        return queryService.queryWithQuota(actor, sql, request.limit())
                 .doOnSuccess(result -> {
                     metrics.queryExecuted(true, result.elapsedMs(), result.rows().size());
-                    String eventId = auditServ.record("semantic.query", actor, Map.of(
+                    String eventId = auditService.record("semantic.query", actor, Map.of(
                             "metric", String.valueOf(request.metric()),
                             "sql_fp", AuditService.fingerprint(sql),
                             "rows", String.valueOf(result.rows().size())));
@@ -114,7 +114,7 @@ public class SemanticController {
                 })
                 .doOnError(e -> {
                     metrics.queryExecuted(false, 0, 0);
-                    auditServ.record("semantic.query", actor, Map.of(
+                    auditService.record("semantic.query", actor, Map.of(
                             "metric", String.valueOf(request.metric()), "outcome", "error"));
                 });
     }
@@ -142,8 +142,8 @@ public class SemanticController {
                         .map(f -> new SemanticFilter(f.field(), f.op(), f.value()))
                         .toList();
         int limit = request.limit() == null || request.limit() <= 0
-                ? props.getQuery().getMaxRows() : request.limit();
-        String table = cfg.catalogName() + "." + cfg.database() + "." + metric.getSource();
+                ? properties.getQuery().getMaxRows() : request.limit();
+        String table = platformConfig.catalogName() + "." + platformConfig.database() + "." + metric.getSource();
         try {
             return SemanticSqlRenderer.render(metric, table, request.dimensions(), filters, limit, dialect);
         } catch (IllegalArgumentException e) {

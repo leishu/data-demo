@@ -47,13 +47,13 @@ public class ApiAuthWebFilter implements WebFilter {
     public static final String HEADER_OAUTH_USER = "X-Auth-Request-User";
     public static final String HEADER_FORWARDED_ROLES = "X-Forwarded-Roles";
 
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final AuditService audit;
     private final LakeMetrics metrics;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        LakeProperties.Security conf = props.getSecurity();
+        LakeProperties.Security conf = properties.getSecurity();
         if (!conf.isEnabled() || isPublic(exchange.getRequest().getPath().value())) {
             return chain.filter(exchange);
         }
@@ -87,8 +87,8 @@ public class ApiAuthWebFilter implements WebFilter {
                         "用 viewer / operator 账号做 HTTP Basic 认证", "missing-credentials");
             }
             LakeProperties.Security.Account account = conf.getAccounts().stream()
-                    .filter(a -> constantEquals(a.getUsername(), credentials.username()))
-                    .filter(a -> passwordMatches(a.getPassword(), credentials.password()))
+                    .filter(candidate -> constantEquals(candidate.getUsername(), credentials.username()))
+                    .filter(candidate -> passwordMatches(candidate.getPassword(), credentials.password()))
                     .findFirst().orElse(null);
             if (account == null) {
                 log.debug("认证失败: path={} user={}", path, credentials.username());
@@ -231,11 +231,11 @@ public class ApiAuthWebFilter implements WebFilter {
     }
 
     /** 定长比较，避免用 equals 泄露前缀信息（demo 里也顺手做对） */
-    public static boolean constantEquals(String a, String b) {
-        if (a == null || b == null) {
+    public static boolean constantEquals(String account, String other) {
+        if (account == null || other == null) {
             return false;
         }
-        return MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+        return MessageDigest.isEqual(account.getBytes(StandardCharsets.UTF_8), other.getBytes(StandardCharsets.UTF_8));
     }
 
     private Mono<Void> deny(ServerWebExchange exchange, HttpStatus status, String message, String hint, String reason) {
@@ -250,7 +250,7 @@ public class ApiAuthWebFilter implements WebFilter {
             // 只在「根本没带凭据」时挑战：浏览器据此弹原生登录框并缓存凭据。
             // 已经带了 Basic 头但口令错/过期时再挑战只会反复弹框，控制台自己的登录页会接手。
             response.getHeaders().set(HttpHeaders.WWW_AUTHENTICATE,
-                    "Basic realm=\"" + props.getSecurity().getRealm() + "\", charset=\"UTF-8\"");
+                    "Basic realm=\"" + properties.getSecurity().getRealm() + "\", charset=\"UTF-8\"");
         }
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         // 本项目没引 Jackson（Boot 4 的 WebFlux starter 不带 databind），错误体字段固定，手写 JSON 即可
@@ -268,18 +268,18 @@ public class ApiAuthWebFilter implements WebFilter {
         }
         StringBuilder sb = new StringBuilder(value.length() + 2).append('"');
         for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
+            char ch = value.charAt(i);
+            switch (ch) {
                 case '"' -> sb.append("\\\"");
                 case '\\' -> sb.append("\\\\");
                 case '\n' -> sb.append("\\n");
                 case '\r' -> sb.append("\\r");
                 case '\t' -> sb.append("\\t");
                 default -> {
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
+                    if (ch < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) ch));
                     } else {
-                        sb.append(c);
+                        sb.append(ch);
                     }
                 }
             }

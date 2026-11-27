@@ -31,22 +31,22 @@ public class TransformJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
         int days = args.getInt("days", 7);
 
-        TableRef silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);
-        TableRef gold = TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE);
+        TableRef silver = TableRef.of(platformConfig, LakeTables.SILVER_ORDERS);
+        TableRef gold = TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE);
 
         long silverBefore = spark.table(silver.fqn()).count();
         System.out.println("[transform] MERGE bronze -> silver（去重 + upsert）");
-        spark.sql(TransformSql.mergeBronzeIntoSilver(cfg, days));
+        spark.sql(TransformSql.mergeBronzeIntoSilver(platformConfig, days));
 
         long silverAfter = spark.table(silver.fqn()).count();
         System.out.printf("[transform] silver: %d -> %d 行（新增 %d）%n",
                 silverBefore, silverAfter, silverAfter - silverBefore);
 
         System.out.println("[transform] INSERT OVERWRITE silver -> gold（按天/商户/品类聚合）");
-        spark.sql(TransformSql.rebuildGold(cfg));
+        spark.sql(TransformSql.rebuildGold(platformConfig));
 
         System.out.println("[transform] gold 明细 Top 10（按 GMV）：");
         spark.sql(String.format(GOLD_TOP_SQL, gold.fqn())).show(false);

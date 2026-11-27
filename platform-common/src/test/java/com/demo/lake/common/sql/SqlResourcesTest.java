@@ -21,27 +21,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** 外置 SQL 模板的守卫：模板拼错、占位符写错、表名与 Java 常量漂移都会在这里挂掉。 */
 class SqlResourcesTest {
 
-    private static PlatformConfig cfg() {
+    private static PlatformConfig platformConfig() {
         return PlatformConfig.load();
     }
 
     /** 覆盖所有模板可能用到的占位符；值本身不重要，这里只校验结构。 */
-    private static Map<String, String> allVars(PlatformConfig cfg) {
-        Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(cfg));
+    private static Map<String, String> allVars(PlatformConfig platformConfig) {
+        Map<String, String> vars = new LinkedHashMap<>(LakeTables.baseVars(platformConfig));
         vars.put("table_properties", "'format-version' = '2'");
         vars.put("days", "7");
         vars.put("columns", "started_ms BIGINT, finished_ms BIGINT");
-        vars.put("bronze_table", TableRef.of(cfg, LakeTables.BRONZE_ORDERS).fqn());
-        vars.put("silver_table", TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn());
-        vars.put("gold_table", TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn());
+        vars.put("bronze_table", TableRef.of(platformConfig, LakeTables.BRONZE_ORDERS).fqn());
+        vars.put("silver_table", TableRef.of(platformConfig, LakeTables.SILVER_ORDERS).fqn());
+        vars.put("gold_table", TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE).fqn());
         vars.put("batch_runs_table",
-                TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS).fqn());
+                TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS).fqn());
         return vars;
     }
 
     @Test
     void everyRegisteredTemplateLoadsWithoutUnresolvedPlaceholders() {
-        Map<String, String> vars = allVars(cfg());
+        Map<String, String> vars = allVars(platformConfig());
         for (String resource : SqlResources.all()) {
             String rendered = SqlTemplate.renderResource(resource, vars);
             assertFalse(rendered.trim().isEmpty(), resource + " 渲染结果为空");
@@ -55,8 +55,8 @@ class SqlResourcesTest {
 
     @Test
     void ddlRenderingKeepsTableNamesAndPropertyDifferences() {
-        PlatformConfig cfg = cfg();
-        List<String> ddl = LakeTables.all(cfg);
+        PlatformConfig platformConfig = platformConfig();
+        List<String> ddl = LakeTables.all(platformConfig);
         assertEquals(9, ddl.size()); // 2 建库 + 7 建表（业务 3 + ops 4）
         for (String stmt : ddl) {
             assertFalse(SqlTemplate.hasUnresolved(stmt), "DDL 残留占位符: " + stmt);
@@ -81,29 +81,29 @@ class SqlResourcesTest {
 
     @Test
     void transformRenderingSubstitutesDaysAndTableNames() {
-        PlatformConfig cfg = cfg();
-        String merge = TransformSql.mergeBronzeIntoSilver(cfg, 7);
+        PlatformConfig platformConfig = platformConfig();
+        String merge = TransformSql.mergeBronzeIntoSilver(platformConfig, 7);
         assertTrue(merge.contains("INTERVAL 7 DAYS"));
-        assertTrue(merge.contains(TableRef.of(cfg, LakeTables.SILVER_ORDERS).fqn()));
+        assertTrue(merge.contains(TableRef.of(platformConfig, LakeTables.SILVER_ORDERS).fqn()));
         assertFalse(SqlTemplate.hasUnresolved(merge));
         // 回归：target 会被加列，MERGE 必须显式列，不能用依赖完整 schema 的 *
         assertFalse(merge.contains("UPDATE SET *"), "MERGE 不能用 UPDATE SET *");
         assertFalse(merge.contains("INSERT *"), "MERGE 不能用 INSERT *");
         assertTrue(merge.contains("WHEN NOT MATCHED THEN INSERT ("));
 
-        String gold = TransformSql.rebuildGold(cfg);
-        assertTrue(gold.contains(TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn()));
+        String gold = TransformSql.rebuildGold(platformConfig);
+        assertTrue(gold.contains(TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE).fqn()));
         assertFalse(SqlTemplate.hasUnresolved(gold));
         // 回归：INSERT OVERWRITE 必须带列列表，不能靠位置匹配（gold 加列后会挂）
         assertTrue(gold.contains("INSERT OVERWRITE "
-                        + TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE).fqn() + " ("),
+                        + TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE).fqn() + " ("),
                 "INSERT OVERWRITE 必须显式列列表");
     }
 
     @Test
     void viewTemplatesRenderMaskedColumnsAndRoleScopedMerchant() {
-        PlatformConfig cfg = cfg();
-        List<String> views = LakeViews.all(cfg);
+        PlatformConfig platformConfig = platformConfig();
+        List<String> views = LakeViews.all(platformConfig);
         assertEquals(4, views.size(), "两张明细表 × 两档角色视图");
         for (String view : views) {
             assertTrue(view.startsWith("CREATE OR REPLACE VIEW"), view);
@@ -126,18 +126,18 @@ class SqlResourcesTest {
 
     @Test
     void migrationRenderingUsesRegisteredColumnFragments() {
-        PlatformConfig cfg = cfg();
-        String add = Migrations.addBatchRunsEpochColumns(cfg, Arrays.asList(
+        PlatformConfig platformConfig = platformConfig();
+        String add = Migrations.addBatchRunsEpochColumns(platformConfig, Arrays.asList(
                 Migrations.columnDefinition("started_ms"), Migrations.columnDefinition("finished_ms")));
         assertTrue(add.contains("started_ms BIGINT"));
         assertTrue(add.contains("finished_ms BIGINT"));
-        assertTrue(add.contains(TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA,
+        assertTrue(add.contains(TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA,
                 LakeTables.BATCH_RUNS).fqn()));
         assertFalse(SqlTemplate.hasUnresolved(add));
 
-        assertTrue(Migrations.backfillBatchRunsEpoch(cfg).contains("unix_millis(started_at)"));
-        assertTrue(Migrations.addSilverChannel(cfg).contains("ADD COLUMNS (channel STRING"));
-        assertTrue(Migrations.backfillSilverChannel(cfg).contains("PMOD(HASH(user_id), 3)"));
-        assertTrue(Migrations.addBronzeRunId(cfg).contains("ADD COLUMNS (run_id STRING"));
+        assertTrue(Migrations.backfillBatchRunsEpoch(platformConfig).contains("unix_millis(started_at)"));
+        assertTrue(Migrations.addSilverChannel(platformConfig).contains("ADD COLUMNS (channel STRING"));
+        assertTrue(Migrations.backfillSilverChannel(platformConfig).contains("PMOD(HASH(user_id), 3)"));
+        assertTrue(Migrations.addBronzeRunId(platformConfig).contains("ADD COLUMNS (run_id STRING"));
     }
 }

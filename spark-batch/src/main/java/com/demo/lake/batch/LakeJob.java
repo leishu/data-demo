@@ -9,5 +9,5 @@ public interface LakeJob {
 
     String name();
 
-    void run(SparkSession spark, PlatformConfig cfg, Args args) throws Exception;
+    void run(SparkSession spark, PlatformConfig platformConfig, Args args) throws Exception;
 }

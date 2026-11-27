@@ -20,8 +20,8 @@ class RetentionAuditServiceTest {
             List.of("run-ret", "retention.done", "bronze_orders", "false", "1", "12",
                     "1700000000000", "2026-11-15(12)")), 1, false, 0, null);
 
-    private RetentionAuditService service(FakeQueries queries) {
-        return new RetentionAuditService(queries, PlatformConfig.load(), Schedulers.immediate());
+    private RetentionAuditService service(FakeQueries fakeQueries) {
+        return new RetentionAuditService(fakeQueries, PlatformConfig.load(), Schedulers.immediate());
     }
 
     @Test
@@ -40,10 +40,10 @@ class RetentionAuditServiceTest {
 
     @Test
     void 查询的是保留审计表且失败时降级为空() {
-        FakeQueries queries = new FakeQueries(ROWS);
-        assertEquals(1, service(queries).recent(500).block().size());
-        assertTrue(queries.lastSql.contains("ops.retention_audit"), queries.lastSql);
-        assertTrue(queries.lastSql.contains("LIMIT 100"), queries.lastSql);
+        FakeQueries fakeQueries = new FakeQueries(ROWS);
+        assertEquals(1, service(fakeQueries).recent(500).block().size());
+        assertTrue(fakeQueries.lastSql.contains("ops.retention_audit"), fakeQueries.lastSql);
+        assertTrue(fakeQueries.lastSql.contains("LIMIT 100"), fakeQueries.lastSql);
 
         assertTrue(service(new FakeQueries(ROWS, true)).recent(50).block().isEmpty());
     }

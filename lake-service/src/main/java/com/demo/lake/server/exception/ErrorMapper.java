@@ -1,10 +1,10 @@
 package com.demo.lake.server.exception;
 
-import com.demo.lake.server.query.InvalidQueryException;
-import com.demo.lake.server.query.InvalidSemanticQueryException;
-import com.demo.lake.server.query.QueryFailedException;
-import com.demo.lake.server.query.QueryQuotaExceededException;
-import com.demo.lake.server.query.TrinoUnavailableException;
+import com.demo.lake.server.query.service.InvalidQueryException;
+import com.demo.lake.server.query.service.InvalidSemanticQueryException;
+import com.demo.lake.server.query.service.QueryFailedException;
+import com.demo.lake.server.query.service.QueryQuotaExceededException;
+import com.demo.lake.server.query.service.TrinoUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebInputException;
@@ -28,8 +28,8 @@ public final class ErrorMapper {
     }
 
     public static Mapped map(Throwable error) {
-        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
-            Mapped mapped = direct(t);
+        for (Throwable current = error; current != null; current = current.getCause() == current ? null : current.getCause()) {
+            Mapped mapped = direct(current);
             if (mapped != null) {
                 return mapped;
             }
@@ -39,36 +39,36 @@ public final class ErrorMapper {
                 error.getClass().getSimpleName() + ": " + msg, "看服务日志定位");
     }
 
-    private static Mapped direct(Throwable t) {
-        if (t instanceof InvalidQueryException) {
-            return new Mapped(HttpStatus.BAD_REQUEST, t.getMessage(),
+    private static Mapped direct(Throwable current) {
+        if (current instanceof InvalidQueryException) {
+            return new Mapped(HttpStatus.BAD_REQUEST, current.getMessage(),
                     "SQL 需为单条只读语句（select/with/show/describe/explain）");
         }
-        if (t instanceof InvalidSemanticQueryException) {
-            return new Mapped(HttpStatus.BAD_REQUEST, t.getMessage(),
+        if (current instanceof InvalidSemanticQueryException) {
+            return new Mapped(HttpStatus.BAD_REQUEST, current.getMessage(),
                     "检查 metric / dimensions / filters 是否在指标目录的白名单内");
         }
-        if (t instanceof QueryFailedException failed) {
+        if (current instanceof QueryFailedException failed) {
             String hint = failed.getSqlState() == null
                     ? null : "sqlState=" + failed.getSqlState() + ", errorCode=" + failed.getErrorCode();
             return new Mapped(HttpStatus.BAD_REQUEST, failed.getMessage(), hint);
         }
-        if (t instanceof TrinoUnavailableException) {
-            return new Mapped(HttpStatus.SERVICE_UNAVAILABLE, t.getMessage(),
+        if (current instanceof TrinoUnavailableException) {
+            return new Mapped(HttpStatus.SERVICE_UNAVAILABLE, current.getMessage(),
                     "先起 Trino：bin/infra.sh up trino；或改用 bin/trino-query.sh 的本地模式校验 SQL");
         }
         // 配额是「客户端发太多」，不是依赖挂了，必须 429 而不是 503
-        if (t instanceof QueryQuotaExceededException) {
-            return new Mapped(HttpStatus.TOO_MANY_REQUESTS, t.getMessage(),
+        if (current instanceof QueryQuotaExceededException) {
+            return new Mapped(HttpStatus.TOO_MANY_REQUESTS, current.getMessage(),
                     "调大 lake.query 下的 max-concurrent-queries / max-queries-per-minute，或稍后重试");
         }
         // ServerWebInputException 是 ResponseStatusException 的子类，必须排在它前面
-        if (t instanceof ServerWebInputException) {
+        if (current instanceof ServerWebInputException) {
             return new Mapped(HttpStatus.BAD_REQUEST, "请求体不是合法 JSON",
                     "期望 {\"sql\":\"select ...\",\"maxRows\":100}");
         }
         // 静态资源缺失 / 作业白名单 / 记录不存在都走这里；WebFlux 下 404 是 NoResourceFoundException(404)
-        if (t instanceof ResponseStatusException rse) {
+        if (current instanceof ResponseStatusException rse) {
             HttpStatus status = HttpStatus.resolve(rse.getStatusCode().value());
             return new Mapped(status == null ? HttpStatus.INTERNAL_SERVER_ERROR : status,
                     rse.getReason() == null ? rse.getStatusCode().toString() : rse.getReason(), null);

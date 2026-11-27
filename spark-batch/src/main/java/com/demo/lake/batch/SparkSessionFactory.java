@@ -11,12 +11,12 @@ public final class SparkSessionFactory {
     private SparkSessionFactory() {
     }
 
-    public static SparkSession create(PlatformConfig cfg, String appName) {
+    public static SparkSession create(PlatformConfig platformConfig, String appName) {
         SparkSession.Builder builder = SparkSession.builder()
                 .appName(appName)
-                .master(cfg.sparkMaster());
+                .master(platformConfig.sparkMaster());
 
-        boolean local = cfg.sparkMaster().startsWith("local");
+        boolean local = platformConfig.sparkMaster().startsWith("local");
         if (local) {
             // 本地模式没必要起 UI，也避免端口冲突；显式绑定回环地址防止反查主机名失败
             builder.config("spark.ui.enabled", "false")
@@ -24,7 +24,7 @@ public final class SparkSessionFactory {
                     .config("spark.driver.bindAddress", "127.0.0.1");
         }
 
-        for (Map.Entry<String, String> e : cfg.sparkConf().entrySet()) {
+        for (Map.Entry<String, String> e : platformConfig.sparkConf().entrySet()) {
             builder.config(e.getKey(), e.getValue());
         }
 

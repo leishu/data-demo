@@ -26,8 +26,8 @@ public final class TrinoViews {
 
     public static void main(String[] argv) {
         Args args = Args.parse(argv);
-        PlatformConfig cfg = PlatformConfig.load(args.has("conf") ? Paths.get(args.get("conf")) : null);
-        List<String> statements = LakeViews.all(cfg);
+        PlatformConfig platformConfig = PlatformConfig.load(args.has("conf") ? Paths.get(args.get("conf")) : null);
+        List<String> statements = LakeViews.all(platformConfig);
 
         if (args.flag("print-only")) {
             for (String sql : statements) {
@@ -44,15 +44,15 @@ public final class TrinoViews {
             return;
         }
 
-        String url = resolveUrl(args, cfg);
-        String user = args.get("user", cfg.trinoUser());
-        Properties props = new Properties();
-        props.setProperty("user", user);
-        props.setProperty("timezone", "UTC");
-        props.setProperty("source", cfg.trinoSource() + "-views");
+        String url = resolveUrl(args, platformConfig);
+        String user = args.get("user", platformConfig.trinoUser());
+        Properties properties = new Properties();
+        properties.setProperty("user", user);
+        properties.setProperty("timezone", "UTC");
+        properties.setProperty("source", platformConfig.trinoSource() + "-views");
 
         System.out.println("Trino: " + url + " (user=" + user + ", views=" + statements.size() + ")");
-        try (Connection conn = DriverManager.getConnection(url, props)) {
+        try (Connection conn = DriverManager.getConnection(url, properties)) {
             for (String sql : statements) {
                 try (Statement stmt = conn.createStatement()) {
                     stmt.execute(sql);
@@ -70,7 +70,7 @@ public final class TrinoViews {
         }
     }
 
-    private static String resolveUrl(Args args, PlatformConfig cfg) {
+    private static String resolveUrl(Args args, PlatformConfig platformConfig) {
         String explicit = args.get("url");
         if (explicit != null && !explicit.isBlank()) {
             return explicit;
@@ -78,9 +78,9 @@ public final class TrinoViews {
         String server = args.get("server");
         if (server != null && !server.isBlank()) {
             String base = server.replaceFirst("^https?://", "").replaceAll("/$", "");
-            return "jdbc:trino://" + base + "/" + cfg.catalogName() + "/" + cfg.database();
+            return "jdbc:trino://" + base + "/" + platformConfig.catalogName() + "/" + platformConfig.database();
         }
-        return cfg.trinoJdbcUrl();
+        return platformConfig.trinoJdbcUrl();
     }
 
     private TrinoViews() {

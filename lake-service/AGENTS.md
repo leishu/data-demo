@@ -16,16 +16,17 @@ lake-service/src/main/java/com/demo/lake/server/
 │   ├── GovernanceController.java        # /api/governance/{assets,dq,lineage,retention}
 │   ├── QueryController.java             # /api/query、/api/query/stream（SSE）、/api/tables、/api/config
 │   └── SemanticController.java          # /api/semantics/**（指标查询与 SQL 渲染）
-├── query/
-│   ├── SqlGuard.java                    # 只读守卫：默认白名单 select/with/show/describe/explain，看穿 EXPLAIN ANALYZE
-│   ├── QueryFailedException.java ...    # InvalidQueryException / TrinoUnavailableException / QueryQuotaExceededException 等
+├── query/                               # 领域包：根下不放类，只分 model / service / store
 │   ├── model/                           # Column / QueryResult / TableInfo / QueryEvent
 │   └── service/                         # QueryService（执行 + 配额编排）/ QueryQuotaService（包内可见，配额并发实现）
-├── batch/
-│   ├── model/                           # BatchRun / JobView / RunsView / BatchEvent
+│                                        # + SqlGuard（只读守卫：白名单 select/with/show/describe/explain，看穿 EXPLAIN ANALYZE）
+│                                        # + InvalidQueryException / QueryFailedException / TrinoUnavailableException 等 5 个领域异常
+├── batch/                               # 领域包：根下不放类，只分 model / service / store
+│   ├── model/                           # BatchRun / JobView / RunsView / BatchEvent / BatchIdentity
 │   ├── service/                         # JobDispatcher / JobExecutor（Local / Kubernetes）/ JobCompletionService
-│   │                                    # + BatchJobService / BatchHistoryService / BatchWatcher / RunningRunRegistry
+│   │                                    # + BatchJobService / BatchHistoryService / BatchWatcher / LogTailCursor
 │   └── store/                           # RunStateStore / JdbcRunStateStore / LogStore / JdbcLogStore（状态库访问）
+│                                        # + RunningRunRegistry（本实例活跃 run 的内存态存储）
 ├── governance/
 │   ├── model/                           # GovernanceAsset / DqResultView / LineageView / RetentionAuditView
 │   └── service/                         # GovernanceService / DqResultService / LineageService / RetentionAuditService
@@ -52,6 +53,7 @@ lake-service/src/main/resources/sql/state/   # H2/Postgres 双兼容 DDL：schem
 
 ## 3. 本模块约定（重点项）
 
+- **领域包分层**：`batch/governance/query/observability` 下只放 `model/service/store` 三层，根包不放类；领域异常和 `SqlGuard` 归 `query/service`。`controller/config/exception/filter/security/support/health` 是跨切面包，不套这套分层。`NamingArchitectureTest` 会拦违规放置。
 - **阻塞 IO offload**：WebFlux 请求线程就是 Netty 事件循环；Hikari 取连接、`rs.next()`、等子进程都要 `subscribeOn(blocking)` 到虚拟线程。改路径时别破坏这一点。
 - **SSE 流式**：查询结果与作业跟踪都是 `Flux` 推送（`meta` → `rows` → `done`）；客户端断开时服务端 `stmt.cancel()` / 停日志游标，别“白算”。
 - **批作业经子进程**：`JobExecutor`（`LocalProcessJobExecutor` / `KubernetesJobExecutor`）默认 `command-template = bin/dev-batch.sh --job {job}`（`java -cp` 跑 spark-batch）；**本模块不养 SparkSession**。
@@ -70,5 +72,5 @@ lake-service/src/main/resources/sql/state/   # H2/Postgres 双兼容 DDL：schem
 
 - Trino 没起：查询返回 503 并给出“先起 Trino”提示，健康检查如实报 DOWN。
 - `SqlGuard` 改语义：`EXPLAIN ANALYZE` 真执行内层语句；`setReadOnly` 只是驱动标记。
-- 配额/状态改动看 Postgres：`QuotaHelper`、`JobDispatcher`、`BatchHistoryService` 的并发/超时规则放在 `lake_batch.*` 表里。
+- 配额/状态改动看 Postgres：`QueryQuotaService`、`JobDispatcher`、`BatchHistoryService` 的并发/超时规则放在 `lake_batch.*` 表里。
 - `bin/smoke.sh` 失败最常见的是 401/429/公开接口不公开（security 关开状态不一致）。

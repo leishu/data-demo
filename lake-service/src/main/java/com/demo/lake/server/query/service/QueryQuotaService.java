@@ -2,7 +2,6 @@ package com.demo.lake.server.query.service;
 
 import com.demo.lake.server.config.LakeProperties;
 import com.demo.lake.server.observability.service.LakeMetrics;
-import com.demo.lake.server.query.QueryQuotaExceededException;
 import com.demo.lake.server.support.DbLocks;
 import com.demo.lake.server.support.StateDbDdl;
 import com.demo.lake.server.support.StateDbTables;
@@ -58,7 +57,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Service
 @Slf4j
-class QuotaHelper {
+class QueryQuotaService {
 
     private static final long WINDOW_MS = 60_000;
     /** 租约在查询超时之外再留的余量，覆盖结果集读取与调度延迟 */
@@ -86,7 +85,7 @@ class QuotaHelper {
     private static final long LISTEN_RECONNECT_MS = 1_000;
     private static final Object WAKE = new Object();
 
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final Scheduler blocking;
     private final LakeMetrics metrics;
     private final JdbcTemplate jdbc;
@@ -101,10 +100,10 @@ class QuotaHelper {
     private volatile Thread listenThread;
     private final AtomicBoolean listenerRunning = new AtomicBoolean();
 
-    QuotaHelper(LakeProperties props, Scheduler blocking, LakeMetrics metrics,
+    QueryQuotaService(LakeProperties properties, Scheduler blocking, LakeMetrics metrics,
                 @Qualifier("stateJdbc") JdbcTemplate jdbc,
                 @Qualifier("stateTx") TransactionTemplate tx) {
-        this.props = props;
+        this.properties = properties;
         this.blocking = blocking;
         this.metrics = metrics;
         this.jdbc = jdbc;
@@ -140,11 +139,11 @@ class QuotaHelper {
         postgres = product != null && product.toLowerCase(Locale.ROOT).contains("postgres");
         if (!postgres) {
             log.info("状态库 {} 无 LISTEN/NOTIFY，配额唤醒使用 {}ms 兜底轮询",
-                    product, props.getQuery().getQuotaFallbackPollMs());
+                    product, properties.getQuery().getQuotaFallbackPollMs());
             return;
         }
 
-        LakeProperties.Batch.State state = props.getBatch().getState();
+        LakeProperties.Batch.State state = properties.getBatch().getState();
         listenerRunning.set(true);
         listenThread = Thread.ofPlatform().daemon(true).name("query-slot-listener")
                 .unstarted(() -> listenLoop(state.getUrl(), state.getUser(), state.getPassword()));
@@ -154,14 +153,14 @@ class QuotaHelper {
     @PreDestroy
     void destroy() {
         listenerRunning.set(false);
-        Thread t = listenThread;
-        if (t != null) {
-            t.interrupt();
+        Thread listenerThread = listenThread;
+        if (listenerThread != null) {
+            listenerThread.interrupt();
         }
-        Connection c = listenConn;
-        if (c != null) {
+        Connection connection = listenConn;
+        if (connection != null) {
             try {
-                c.close();
+                connection.close();
             } catch (SQLException ignored) {
                 // 关闭阶段，异常无需外抛
             }
@@ -181,8 +180,8 @@ class QuotaHelper {
                     while (listenerRunning.get()) {
                         // pgjdbc 没有监听器 API，靠一次查询让驱动读取 socket 上的通知
                         st.execute("SELECT 1");
-                        for (PGNotification n : pg.getNotifications()) {
-                            if (NOTIFY_CHANNEL.equals(n.getName())) {
+                        for (PGNotification notification : pg.getNotifications()) {
+                            if (NOTIFY_CHANNEL.equals(notification.getName())) {
                                 wakeOne();
                             }
                         }
@@ -216,9 +215,9 @@ class QuotaHelper {
 
     /** 一次通知只放一个等待者，空队列时才丢弃；避免 N 个等待者同时重查打满状态库 */
     void wakeOne() {
-        Waiter w;
-        while ((w = waiters.poll()) != null) {
-            if (w.wake()) {
+        Waiter waiter;
+        while ((waiter = waiters.poll()) != null) {
+            if (waiter.wake()) {
                 return;
             }
         }
@@ -226,19 +225,19 @@ class QuotaHelper {
 
     /** 连接断开/重连成功时让所有本地等待者重查一次 */
     void wakeAll() {
-        Waiter w;
-        while ((w = waiters.poll()) != null) {
-            w.wake();
+        Waiter waiter;
+        while ((waiter = waiters.poll()) != null) {
+            waiter.wake();
         }
     }
 
     /** 登记一个等待者；Mono 被取消（客户端断开）时 doFinally 自动出队 */
     Mono<Object> registerWaiter() {
         return Mono.defer(() -> {
-            Waiter w = new Waiter();
-            waiters.add(w);
-            return w.signal.then(Mono.just(WAKE))
-                    .doFinally(sig -> waiters.remove(w));
+            Waiter waiter = new Waiter();
+            waiters.add(waiter);
+            return waiter.signal.then(Mono.just(WAKE))
+                    .doFinally(sig -> waiters.remove(waiter));
         });
     }
 
@@ -254,11 +253,11 @@ class QuotaHelper {
     /** 拿到名额才能执行查询；限流或超时都抛 {@link QueryQuotaExceededException} → 429 */
     Mono<Permit> acquire(String client) {
         String key = client == null || client.isBlank() ? "anonymous" : client;
-        int maxRate = Math.max(1, props.getQuery().getMaxQueriesPerMinute());
-        int maxConcurrent = Math.max(1, props.getQuery().getMaxConcurrentQueries());
-        long leaseMs = Math.max(1, props.getQuery().getTimeoutSeconds()) * 1000L + LEASE_SLACK_MS;
+        int maxRate = Math.max(1, properties.getQuery().getMaxQueriesPerMinute());
+        int maxConcurrent = Math.max(1, properties.getQuery().getMaxConcurrentQueries());
+        long leaseMs = Math.max(1, properties.getQuery().getTimeoutSeconds()) * 1000L + LEASE_SLACK_MS;
         String permitId = UUID.randomUUID().toString();
-        long deadline = System.currentTimeMillis() + Math.max(1, props.getQuery().getAcquireTimeoutMs());
+        long deadline = System.currentTimeMillis() + Math.max(1, properties.getQuery().getAcquireTimeoutMs());
 
         return Mono.defer(() -> Mono.fromCallable(
                         () -> new Attempt(tryOnce(key, maxRate, maxConcurrent, permitId, leaseMs)))
@@ -286,7 +285,7 @@ class QuotaHelper {
                     }
 
                     // 主路径：等通知；LISTEN 不可用时退化为低频轮询（只作兜底，不是主唤醒机制）
-                    long pollMs = Math.max(1, props.getQuery().getQuotaFallbackPollMs());
+                    long pollMs = Math.max(1, properties.getQuery().getQuotaFallbackPollMs());
                     Mono<Object> awakened = listening
                             ? registerWaiter()
                             : Mono.delay(Duration.ofMillis(Math.min(pollMs, remaining))).then(Mono.just(WAKE));
@@ -367,11 +366,11 @@ class QuotaHelper {
 
     /** 一次查询的名额，close 多次只会归还一次 */
     static final class Permit implements AutoCloseable {
-        private final QuotaHelper owner;
+        private final QueryQuotaService owner;
         private final String permitId;
         private final AtomicBoolean closed = new AtomicBoolean();
 
-        private Permit(QuotaHelper owner, String permitId) {
+        private Permit(QueryQuotaService owner, String permitId) {
             this.owner = owner;
             this.permitId = permitId;
         }

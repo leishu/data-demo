@@ -33,13 +33,13 @@ class IcebergTableMetricsTest {
     void 采集结果落到带table标签的gauge() {
         System.setProperty("platform.catalog.type", "hadoop");
         System.setProperty("platform.database", "lake_metrics_test");
-        PlatformConfig cfg = PlatformConfig.load();
+        PlatformConfig platformConfig = PlatformConfig.load();
 
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        LakeProperties props = new LakeProperties();
-        props.getMetrics().getIceberg().setTables(java.util.List.of("silver_orders"));
+        LakeProperties properties = new LakeProperties();
+        properties.getMetrics().getIceberg().setTables(java.util.List.of("silver_orders"));
         // 用无元数据表的 H2 占位：collect 会抛 DataAccessException 被吞掉，只验证 gauge 写入
-        IcebergTableMetrics collector = new IcebergTableMetrics(registry, cfg, props, new JdbcTemplate(new JdbcDataSource()));
+        IcebergTableMetrics collector = new IcebergTableMetrics(registry, platformConfig, properties, new JdbcTemplate(new JdbcDataSource()));
         collector.start();
         collector.stop();
 

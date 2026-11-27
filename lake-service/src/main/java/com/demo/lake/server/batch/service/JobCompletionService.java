@@ -1,5 +1,6 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.server.batch.store.RunningRunRegistry;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchRun;
 import com.demo.lake.server.batch.store.RunStateStore;

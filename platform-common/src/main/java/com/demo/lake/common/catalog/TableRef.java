@@ -23,8 +23,8 @@ public final class TableRef {
     }
 
     /** 使用平台默认 catalog/database */
-    public static TableRef of(PlatformConfig cfg, String table) {
-        return new TableRef(cfg.catalogName(), cfg.database(), table);
+    public static TableRef of(PlatformConfig platformConfig, String table) {
+        return new TableRef(platformConfig.catalogName(), platformConfig.database(), table);
     }
 
     /** iceberg.lake.bronze_orders */

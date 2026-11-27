@@ -28,19 +28,19 @@ public class AuditService {
 
     /** @return 事件 ID，用于把原文保险箱记录关联回这条审计事件 */
     public String record(String event, String actor, Map<String, Object> fields) {
-        Instant at = Instant.now();
+        Instant recordedAt = Instant.now();
         String eventId = java.util.UUID.randomUUID().toString();
         Map<String, String> clean = new LinkedHashMap<>();
         fields.forEach((key, value) -> clean.put(sanitize(key), sanitize(String.valueOf(value))));
         clean.put("event_id", eventId);
 
-        StringBuilder line = new StringBuilder("at=").append(at)
+        StringBuilder line = new StringBuilder("at=").append(recordedAt)
                 .append(" event=").append(sanitize(event))
                 .append(" actor=").append(sanitize(actor));
         clean.forEach((key, value) -> line.append(' ').append(key).append('=').append(value));
         AUDIT.info(line.toString());
 
-        buffer.add(new AuditEvent(at, sanitize(event), sanitize(actor), clean));
+        buffer.add(new AuditEvent(recordedAt, sanitize(event), sanitize(actor), clean));
         return eventId;
     }
 

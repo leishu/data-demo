@@ -95,6 +95,18 @@ mvn -pl lake-service package            # 必须 JDK 21（模块内已挂 enforc
 - **SQL**：SQL 文本全部外置——湖表侧在 `platform-common/src/main/resources/sql/{ddl,transform,migrate}/`（由 `LakeTables` / `TransformSql` / `Migrations` 装载），服务状态库侧在 `lake-service/src/main/resources/sql/state/`（由 `StateDbDdl` 装载、表名以 `StateDbTables` 为准）；不要在任何 Java 类里手写建表/迁移 DDL。新增模板要登记并补守卫单测（`SqlResourcesTest` / `StateDbDdlTest`）。spark-batch 不直接手写 MERGE，走 `TransformSql.mergeBronzeIntoSilver`；`@trino-only` 标记的语句只能跑在 Spark 上校验。
 - **测试**：JUnit 5；`platform-common` 是纯单测；`spark-batch` 集成测试真实建表/MERGE/加列（`IcebergLocalRoundTripTest`、`IcebergConcurrentWriteTest`）；修改共享逻辑时优先补平台级单测。
 
+### 4.1 命名硬规则（AI 写任何类/变量前先对照）
+
+完整决策树、后缀表、黑名单和正反例见 [docs/NAMING.md](docs/NAMING.md)；机器门禁在 `mvn validate`（Checkstyle）和 `mvn -pl lake-service test`（ArchUnit）里。以下 7 条是必须记住的部分：
+
+1. **新类型必须落到角色后缀表里的一个角色**（`Job/Service/Store/Catalog/Registry/View/Controller/Executor/Dispatcher/Watcher/Cursor/Writer/Metrics` 等）；表里没有 → 先在 PR 里提案，不许发明后缀（尤其禁用 `Manager/Helper/Util/Impl`）。
+2. **字段/参数/局部变量禁用缩写黑名单**：`cfg / props / queries / svc / serv / mgr / repo / tmp / res / req / resp / val / obj / str / num / rv / cp / at`。先照抄同类范本：`LineageService`、`JdbcLogStore`、`QueryController`、`TransformJob`、`JobView`。
+3. **单字母只留 `i/j`（下标循环）和 `e`（catch）**；数值带单位（`...Ms` / `...Nanos`），Map 变量名带键（`executorsByName`）。
+4. **一个概念只用一个词**：`Store` 不再叫 `Repository/DAO`，`View` 不再叫 `DTO/VO`，`Job` 不再叫 `Task`；缩写白名单只有 `Id/Sql/Ddl/Dq/Api/Jdbc/Http/Url/Db`。
+5. **改名和逻辑改动分开提交**；新增/改名的每个名字在交付说明里列出来并注明命中哪条规则。不要往 `config/checkstyle/naming-suppressions.xml` 里加新豁免。
+6. **Controller 的 DTO 按角色取后缀**：请求体 `*Request`、嵌套条目 `*Item`、响应 `*View`；`@RequestBody` 参数名一律 `request`（不要 `body` / `dto` / `payload`）。
+7. **lake-service 领域包只放 `model / service / store`**：`batch/governance/query/observability` 根包不放类，也不自造第四层；`controller/config/exception/filter/security/support/health` 是跨切面包，不套这套分层。
+
 ## 5. 常见踩坑（已记录在 README 但 AI 每人都会重掉）
 
 - **JDK 17+ 反射限制**：`.mvn/jvm.config` 已配 `--add-opens`，跑测试时由父 pom 的 surefire `argLine` 提供；若用 `spark-submit` 部署，写进 `spark.driver/executor.extraJavaOptions`。
@@ -116,11 +128,13 @@ mvn -pl lake-service package            # 必须 JDK 21（模块内已挂 enforc
 | spark-batch 作业逻辑 | `mvn -pl spark-batch -am test` + `bin/dev-batch.sh --job <job>` |
 | lake-service 行为 | `mvn -pl lake-service package`（JDK 21）+ `bin/smoke.sh` |
 | lake-ui 页面 | `npm --prefix lake-ui run build`；本地联调用 `npm --prefix lake-ui run dev`（5173，/api 代理 8088）或 `npm --prefix lake-ui run mock`（无后端时 4173） |
+| 新增/改名类或变量 | `mvn -B -ntp validate`（Checkstyle 命名门禁）+ `mvn -pl lake-service test`（ArchUnit）；规则见 [docs/NAMING.md](docs/NAMING.md) |
 
 ## 7. 相关文档指针（已存在）
 
 - [README.md](README.md)：操作手册（快速开始、集群接入、CI、排错）
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：数据流 + 设计决策（CoW、UTC、语义层、只读守卫）
+- [docs/NAMING.md](docs/NAMING.md)：类名后缀决策树 + 变量黑名单 + 命名门禁（AI 写类/变量前必读）
 - [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md)：命名/异常/SQL/测试规范
 - [docs/GLOSSARY.md](docs/GLOSSARY.md)：领域术语
 - [CONTRIBUTING.md](CONTRIBUTING.md)：变更校验与文档同步纪律

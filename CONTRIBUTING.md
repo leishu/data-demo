@@ -13,6 +13,7 @@
 | 语义层（口径/维度/渲染） | `mvn -pl platform-common test` + 重跑 `bin/dev-batch.sh --job all --evolve` |
 | lake-ui 控制台页面 | `npm --prefix lake-ui run build`（前端编译基线） |
 | bin/ 脚本本身 | 跑一遍对应脚本，见 [bin/README.md](bin/README.md) 的 AI 排查表 |
+| 新增/修改类名、变量名 | `mvn -B -ntp validate`（Checkstyle 命名门禁）+ `mvn -pl lake-service test`（ArchUnit）；规则见 [docs/NAMING.md](docs/NAMING.md) |
 
 完整引擎基线：`bin/build.sh`（全 reactor + 全测试，JDK 21）。
 
@@ -22,6 +23,7 @@
 |---|---|
 | 设计决策/数据流变化 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | 规范变化（编码风格、命令、调试流程） | [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) |
+| 类名后缀/变量命名变化 | [docs/NAMING.md](docs/NAMING.md) + `config/checkstyle/naming.xml` + `NamingArchitectureTest`（三处同步） |
 | 新词条/术语 | [docs/GLOSSARY.md](docs/GLOSSARY.md) |
 | bin 脚本新增/改用法 | [bin/README.md](bin/README.md) |
 | 项目事实更新 | [AGENTS.md](AGENTS.md) |
@@ -40,6 +42,7 @@ AI 助手参与时，**校验记录应在提交信息/PR body 里原样可见**�
 - `verify-sql` 不是通用方言转换器：`@trino-only` 语句无法在 Spark 上校验；`TrinoDialect` 只做最小适配（`date_add`、带引号的 `INTERVAL` 字面量等）。
 - `platform.write-mode=merge-on-read` 只在“Spark 写、Trino 读”且所有读端都验证过才开（参见 ARCHITECTURE 设计决策#1）。
 - `conf/platform.properties`、`platform.stack.properties` 是私有环境，**不提交**。
+- 命名门禁红掉时不要加豁免绕过：`config/checkstyle/naming-suppressions.xml` 当前只有 2 条测试专用豁免（中文方法名与 ArchUnit 常量）；若确需新例外，逐条写清文件/检查项/原因，并在 PR 里说明。改到被豁免的文件要顺手删掉对应条目。
 
 ## 5. 最务实的 AI 贡献准则
 

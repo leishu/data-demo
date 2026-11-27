@@ -29,9 +29,9 @@ class LineageCatalogTest {
     private static Set<String> columnsOf(String ddlResource) {
         Set<String> columns = new HashSet<>();
         for (String line : SqlScript.readResource(ddlResource).split("\\R")) {
-            Matcher m = COLUMN_DEF.matcher(line);
-            if (m.find()) {
-                columns.add(m.group(1));
+            Matcher matcher = COLUMN_DEF.matcher(line);
+            if (matcher.find()) {
+                columns.add(matcher.group(1));
             }
         }
         return columns;
@@ -102,9 +102,9 @@ class LineageCatalogTest {
 
     @Test
     void 声明是注释不会漏进执行的SQL() {
-        PlatformConfig cfg = PlatformConfig.load();
-        String merge = TransformSql.mergeBronzeIntoSilver(cfg, 7);
-        String gold = TransformSql.rebuildGold(cfg);
+        PlatformConfig platformConfig = PlatformConfig.load();
+        String merge = TransformSql.mergeBronzeIntoSilver(platformConfig, 7);
+        String gold = TransformSql.rebuildGold(platformConfig);
         assertFalse(merge.contains("@lineage"), merge);
         assertFalse(gold.contains("@lineage"), gold);
         assertTrue(merge.startsWith("MERGE INTO"), merge);

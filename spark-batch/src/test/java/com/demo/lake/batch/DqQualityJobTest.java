@@ -34,7 +34,7 @@ class DqQualityJobTest {
     static Path tempDir;
 
     private static SparkSession spark;
-    private static PlatformConfig cfg;
+    private static PlatformConfig platformConfig;
     private static TableRef results;
 
     @BeforeAll
@@ -43,12 +43,12 @@ class DqQualityJobTest {
         System.setProperty("platform.catalog.type", "hadoop");
         System.setProperty("platform.database", "lake_dq_test");
         System.setProperty("platform.spark.shuffle.partitions", "2");
-        cfg = PlatformConfig.load();
-        spark = SparkSessionFactory.create(cfg, "dq-quality-test");
-        results = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.DQ_RESULTS);
+        platformConfig = PlatformConfig.load();
+        spark = SparkSessionFactory.create(platformConfig, "dq-quality-test");
+        results = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.DQ_RESULTS);
 
-        LakeTables.all(cfg).forEach(ddl -> spark.sql(ddl));
-        TableRef bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
+        LakeTables.all(platformConfig).forEach(ddl -> spark.sql(ddl));
+        TableRef bronze = TableRef.of(platformConfig, LakeTables.BRONZE_ORDERS);
         String day = "date_sub(current_date(), 1)";
         spark.sql("INSERT INTO " + bronze.fqn() + " VALUES "
                 + "('Q1','U1','M1','3C', CAST(100.00 AS DECIMAL(12,2)), 'CNY','PAID',"
@@ -57,8 +57,8 @@ class DqQualityJobTest {
                 + "('Q2','U2','M1','3C', CAST(100.00 AS DECIMAL(12,2)), 'CNY','REFUNDED',"
                 + " to_timestamp(concat(cast(" + day + " AS string), ' 11:00:00')),"
                 + " current_timestamp(), 'f1', 'run-dq-fixture')");
-        spark.sql(TransformSql.mergeBronzeIntoSilver(cfg, 7));
-        spark.sql(TransformSql.rebuildGold(cfg));
+        spark.sql(TransformSql.mergeBronzeIntoSilver(platformConfig, 7));
+        spark.sql(TransformSql.rebuildGold(platformConfig));
     }
 
     @AfterAll
@@ -72,7 +72,7 @@ class DqQualityJobTest {
     @Order(1)
     void 干净数据下六项检查全部通过并落库() {
         Args args = Args.parse(new String[]{"--job", LakeJobs.QUALITY, "--run-id", "dq-clean-run"});
-        new QualityJob().run(spark, cfg, args);
+        new QualityJob().run(spark, platformConfig, args);
 
         List<Row> rows = spark.sql("SELECT `check`, severity, observed, threshold FROM " + results.fqn()
                 + " WHERE run_id = 'dq-clean-run'").collectAsList();
@@ -87,8 +87,8 @@ class DqQualityJobTest {
                 + " WHERE run_id = 'dq-clean-run'").collectAsList();
         for (Row row : snapshots) {
             TableRef source = row.getString(0).startsWith("silver_")
-                    ? TableRef.of(cfg, LakeTables.SILVER_ORDERS)
-                    : TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE);
+                    ? TableRef.of(platformConfig, LakeTables.SILVER_ORDERS)
+                    : TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE);
             assertEquals(SparkSnapshots.latestId(spark, source.fqn()), row.getString(1),
                     row.getString(0) + " 的快照应指向最近一次提交");
         }
@@ -100,7 +100,7 @@ class DqQualityJobTest {
         Args args = Args.parse(new String[]{"--job", LakeJobs.QUALITY, "--run-id", "dq-fault-run",
                 "--inject-faults"});
         IllegalStateException failure = assertThrows(IllegalStateException.class,
-                () -> new QualityJob().run(spark, cfg, args));
+                () -> new QualityJob().run(spark, platformConfig, args));
         assertTrue(failure.getMessage().contains("数据质量检查失败"), failure.getMessage());
 
         List<Row> failed = spark.sql("SELECT `check`, severity, observed, threshold, detail FROM "

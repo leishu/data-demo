@@ -18,9 +18,9 @@ class QueryControllerConfigTest {
 
     /** config() 只读配置，不碰 Trino：QueryService 传 null 即可 */
     private Map<String, Object> config(List<String> allowedJobs) {
-        LakeProperties props = new LakeProperties();
-        props.getBatch().setAllowedJobs(allowedJobs);
-        return new QueryController(null, null, null, null, PlatformConfig.load(), props).config();
+        LakeProperties properties = new LakeProperties();
+        properties.getBatch().setAllowedJobs(allowedJobs);
+        return new QueryController(null, null, null, null, PlatformConfig.load(), properties).config();
     }
 
     @Test

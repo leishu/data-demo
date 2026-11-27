@@ -1,4 +1,4 @@
-package com.demo.lake.server.query;
+package com.demo.lake.server.query.service;
 
 /** 语义层请求非法（指标/维度/过滤不在白名单里），映射成 400 */
 public class InvalidSemanticQueryException extends RuntimeException {

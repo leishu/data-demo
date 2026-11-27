@@ -34,9 +34,9 @@ final class SqlRedactor {
         StringBuilder out = new StringBuilder(normalized.length());
         int i = 0;
         while (i < normalized.length()) {
-            char c = normalized.charAt(i);
-            if (c != '\'') {
-                out.append(c);
+            char ch = normalized.charAt(i);
+            if (ch != '\'') {
+                out.append(ch);
                 i++;
                 continue;
             }

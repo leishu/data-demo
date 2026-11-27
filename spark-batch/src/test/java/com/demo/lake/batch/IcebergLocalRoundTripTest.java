@@ -41,7 +41,7 @@ class IcebergLocalRoundTripTest {
     static Path tempDir;
 
     private static SparkSession spark;
-    private static PlatformConfig cfg;
+    private static PlatformConfig platformConfig;
     private static TableRef bronze;
     private static TableRef silver;
     private static TableRef gold;
@@ -53,12 +53,12 @@ class IcebergLocalRoundTripTest {
         System.setProperty("platform.database", "lake_test");
         System.setProperty("platform.spark.shuffle.partitions", "2");
         System.setProperty("platform.raw.dir", tempDir.resolve("raw").toString());
-        cfg = PlatformConfig.load();
+        platformConfig = PlatformConfig.load();
 
-        spark = SparkSessionFactory.create(cfg, "iceberg-roundtrip-test");
-        bronze = TableRef.of(cfg, LakeTables.BRONZE_ORDERS);
-        silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);
-        gold = TableRef.of(cfg, LakeTables.GOLD_DAILY_REVENUE);
+        spark = SparkSessionFactory.create(platformConfig, "iceberg-roundtrip-test");
+        bronze = TableRef.of(platformConfig, LakeTables.BRONZE_ORDERS);
+        silver = TableRef.of(platformConfig, LakeTables.SILVER_ORDERS);
+        gold = TableRef.of(platformConfig, LakeTables.GOLD_DAILY_REVENUE);
     }
 
     @AfterAll
@@ -71,7 +71,7 @@ class IcebergLocalRoundTripTest {
     @Test
     @Order(1)
     void createsTablesAndIngestsDuplicateRows() {
-        LakeTables.all(cfg).forEach(ddl -> spark.sql(ddl));
+        LakeTables.all(platformConfig).forEach(ddl -> spark.sql(ddl));
 
         // O1 出现两次（先 PAID 后 REFUNDED），O3 是取消单
         // 时间固定到 10:00/12:00，避免测试在 UTC 深夜跨天导致分区漂移
@@ -100,14 +100,14 @@ class IcebergLocalRoundTripTest {
     @Test
     @Order(2)
     void mergeDedupesAndAggregates() {
-        spark.sql(TransformSql.mergeBronzeIntoSilver(cfg, 7));
+        spark.sql(TransformSql.mergeBronzeIntoSilver(platformConfig, 7));
 
         assertEquals(3L, spark.table(silver.fqn()).count(), "O1 的两条应合并为一条");
         Row o1 = spark.sql("SELECT status, is_refund FROM " + silver.fqn() + " WHERE order_id = 'O1'").head();
         assertEquals("REFUNDED", o1.getString(0), "应取 event_time 最新的那条");
         assertTrue(o1.getBoolean(1));
 
-        spark.sql(TransformSql.rebuildGold(cfg));
+        spark.sql(TransformSql.rebuildGold(platformConfig));
         // 汇总一次，避免按单行断言依赖分区边界
         Row m1 = spark.sql("SELECT sum(order_cnt), sum(gmv), sum(refund_amount), sum(net_revenue) "
                 + "FROM " + gold.fqn() + " WHERE merchant_id = 'M1' AND category = '3C'").head();
@@ -132,7 +132,7 @@ class IcebergLocalRoundTripTest {
 
         // 回归：加列后再跑一次 MERGE。原来用 UPDATE SET * / INSERT * 时，
         // source 的 11 列对不上 target 的 12 列，会报 channel 无法解析而失败。
-        spark.sql(TransformSql.mergeBronzeIntoSilver(cfg, 7));
+        spark.sql(TransformSql.mergeBronzeIntoSilver(platformConfig, 7));
         assertEquals(3L, spark.table(silver.fqn()).count(), "加列后重跑 MERGE 仍是去重后的 3 行");
         assertEquals(3L, spark.table(silver.fqn()).filter("channel IS NOT NULL").count(),
                 "MERGE 不应把已有行的 channel 清空");
@@ -141,15 +141,15 @@ class IcebergLocalRoundTripTest {
     @Test
     @Order(4)
     void maintenanceProceduresWork() {
-        spark.sql("CALL " + cfg.catalogName() + ".system.rewrite_data_files("
+        spark.sql("CALL " + platformConfig.catalogName() + ".system.rewrite_data_files("
                 + "table => '" + silver.fqn() + "', "
                 + "options => map('min-input-files', '2', 'target-file-size-bytes', '1048576'))");
 
-        spark.sql("CALL " + cfg.catalogName() + ".system.rewrite_manifests("
+        spark.sql("CALL " + platformConfig.catalogName() + ".system.rewrite_manifests("
                 + "table => '" + silver.fqn() + "')");
 
         String olderThan = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(1).format(TS);
-        spark.sql("CALL " + cfg.catalogName() + ".system.expire_snapshots("
+        spark.sql("CALL " + platformConfig.catalogName() + ".system.expire_snapshots("
                 + "table => '" + silver.fqn() + "', "
                 + "older_than => TIMESTAMP '" + olderThan + "', retain_last => 1)");
 
@@ -161,10 +161,10 @@ class IcebergLocalRoundTripTest {
     @Order(5)
     void runRecordLandsInOpsTable() {
         Args args = Args.parse(new String[]{"--job", "client-test"});
-        RunRecordWriter.record(spark, cfg, args, "run-unit-1", "--job client-test",
+        RunRecordWriter.record(spark, platformConfig, args, "run-unit-1", "--job client-test",
                 BatchRunStatus.SUCCEEDED, 0, Instant.now().minusSeconds(1), "完成");
 
-        TableRef ops = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
+        TableRef ops = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
         Row row = spark.sql("SELECT run_id, job, status, exit_code, log_file FROM " + ops.fqn()
                 + " WHERE run_id = 'run-unit-1'").head();
         assertEquals("run-unit-1", row.getString(0));
@@ -189,7 +189,7 @@ class IcebergLocalRoundTripTest {
 
         Args args = Args.parse(new String[]{"--days", "1", "--orders-per-day", "20",
                 "--run-id", "run-legacy-upgrade"});
-        new IngestJob().run(spark, cfg, args);
+        new IngestJob().run(spark, platformConfig, args);
 
         assertTrue(List.of(spark.table(bronze.fqn()).columns()).contains("run_id"), "旧表应被补上 run_id 列");
         assertEquals(0L, spark.sql("SELECT count(*) FROM " + bronze.fqn()

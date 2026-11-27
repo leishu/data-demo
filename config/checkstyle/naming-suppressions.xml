@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+
+<!--
+  豁免清单。原则：只豁免具体检查项，不整文件豁免；改到被豁免的文件要顺手删掉对应条目。
+
+  当前仅两条测试专用豁免：
+  1) 测试方法名用中文描述场景（项目惯例），不能套 MethodName 的 ASCII 规则；
+  2) ArchUnit 的 @ArchTest 字段用小驼峰常量名，不能套 ConstantName 的大写规则；
+  3) 中文测试方法名含 SQL 等领域缩写时会撞上 AbbreviationAsWordInName。
+  除此之外没有任何豁免；新文件不许加进来，例外必须在 PR 里说明原因。
+-->
+<suppressions>
+  <suppress files=".*[/\\]src[/\\]test[/\\]java[/\\].*" checks="MethodName|ConstantName|AbbreviationAsWordInName"/>
+</suppressions>

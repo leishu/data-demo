@@ -24,22 +24,22 @@ public final class Args {
     private final List<String> positional = new ArrayList<>();
 
     public static Args parse(String[] argv) {
-        Args a = new Args();
+        Args args = new Args();
         for (int i = 0; i < argv.length; i++) {
             String token = argv[i];
             if (!token.startsWith("--")) {
-                a.positional.add(token);
+                args.positional.add(token);
                 continue;
             }
             String key = token.substring(2);
             boolean hasValue = i + 1 < argv.length && !argv[i + 1].startsWith("--");
             if (hasValue) {
-                a.values.put(key, argv[++i]);
+                args.values.put(key, argv[++i]);
             } else {
-                a.flags.add(key);
+                args.flags.add(key);
             }
         }
-        return a;
+        return args;
     }
 
     public boolean has(String key) {
@@ -60,8 +60,8 @@ public final class Args {
     }
 
     public int getInt(String key, int def) {
-        String v = values.get(key);
-        return v == null ? def : Integer.parseInt(v);
+        String value = values.get(key);
+        return value == null ? def : Integer.parseInt(value);
     }
 
     public boolean flag(String key) {

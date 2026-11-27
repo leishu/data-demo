@@ -50,10 +50,10 @@ class KubernetesJobExecutorTest {
         });
         server.start();
         try {
-            LakeProperties props = new LakeProperties();
-            props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
-            props.getBatch().getKubernetes().setTimeoutSeconds(30);
-            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, new RecordingLogStore());
+            LakeProperties properties = new LakeProperties();
+            properties.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            properties.getBatch().getKubernetes().setTimeoutSeconds(30);
+            KubernetesJobExecutor executor = new KubernetesJobExecutor(properties, new RecordingLogStore());
 
             BatchRun run = new BatchRun("run-k8s1", "init", "--job init", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, "/tmp/run-k8s1.log", "已排队");
@@ -107,11 +107,11 @@ class KubernetesJobExecutorTest {
         });
         server.start();
         try {
-            LakeProperties props = new LakeProperties();
-            props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
-            props.getBatch().getKubernetes().setTimeoutSeconds(30);
+            LakeProperties properties = new LakeProperties();
+            properties.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            properties.getBatch().getKubernetes().setTimeoutSeconds(30);
             RecordingLogStore store = new RecordingLogStore();
-            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, store);
+            KubernetesJobExecutor executor = new KubernetesJobExecutor(properties, store);
 
             BatchRun run = new BatchRun("run-k8s2", "show", "--job show", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, null, "已排队");
@@ -165,11 +165,11 @@ class KubernetesJobExecutorTest {
         });
         server.start();
         try {
-            LakeProperties props = new LakeProperties();
-            props.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
-            props.getBatch().getKubernetes().setTimeoutSeconds(10);
+            LakeProperties properties = new LakeProperties();
+            properties.getBatch().getKubernetes().setApiUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            properties.getBatch().getKubernetes().setTimeoutSeconds(10);
             RecordingLogStore store = new RecordingLogStore();
-            KubernetesJobExecutor executor = new KubernetesJobExecutor(props, store);
+            KubernetesJobExecutor executor = new KubernetesJobExecutor(properties, store);
             BatchRun run = new BatchRun("run-k8s3", "show", "--job show", BatchRunStatus.QUEUED, null,
                     Instant.now(), null, null, null, "已排队");
             CompletableFuture<String> result = new CompletableFuture<>();

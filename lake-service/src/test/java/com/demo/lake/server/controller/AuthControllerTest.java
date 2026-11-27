@@ -24,9 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** 控制台登录入口：登录校验与登录态回显（不触发浏览器原生 Basic 弹框） */
 class AuthControllerTest {
 
-    private final LakeProperties props = new LakeProperties();
+    private final LakeProperties properties = new LakeProperties();
     private final AuditBuffer buffer = new AuditBuffer();
-    private final AuthController controller = new AuthController(props, new AuditService(buffer));
+    private final AuthController controller = new AuthController(properties, new AuditService(buffer));
 
     @Test
     void 本地登录返回账号角色() {
@@ -72,7 +72,7 @@ class AuthControllerTest {
 
     @Test
     void 关闭认证时直接放行() {
-        props.getSecurity().setEnabled(false);
+        properties.getSecurity().setEnabled(false);
         AuthController.SessionView session = controller.session(Map.of());
         assertFalse(session.enabled());
         assertTrue(session.authenticated());
@@ -85,7 +85,7 @@ class AuthControllerTest {
 
     @Test
     void external模式校验共享密钥与身份头() {
-        LakeProperties.Security conf = props.getSecurity();
+        LakeProperties.Security conf = properties.getSecurity();
         conf.setMode("external");
         conf.setSharedSecret("shared-secret");
 

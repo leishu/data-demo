@@ -27,8 +27,8 @@ class DqResultServiceTest {
         return new FakeQueries(result(), fail);
     }
 
-    private DqResultService service(FakeQueries queries) {
-        return new DqResultService(queries, PlatformConfig.load(), Schedulers.immediate());
+    private DqResultService service(FakeQueries fakeQueries) {
+        return new DqResultService(fakeQueries, PlatformConfig.load(), Schedulers.immediate());
     }
 
     @Test
@@ -50,12 +50,12 @@ class DqResultServiceTest {
 
     @Test
     void 查询读到的是ops表且check列被双引号包住() {
-        FakeQueries queries = fake(false);
-        service(queries).recent(500).block();
+        FakeQueries fakeQueries = fake(false);
+        service(fakeQueries).recent(500).block();
 
-        assertTrue(queries.lastSql.contains("ops.dq_results"), queries.lastSql);
-        assertTrue(queries.lastSql.contains("\"check\""), queries.lastSql);
-        assertTrue(queries.lastSql.contains("LIMIT 100"), queries.lastSql);
+        assertTrue(fakeQueries.lastSql.contains("ops.dq_results"), fakeQueries.lastSql);
+        assertTrue(fakeQueries.lastSql.contains("\"check\""), fakeQueries.lastSql);
+        assertTrue(fakeQueries.lastSql.contains("LIMIT 100"), fakeQueries.lastSql);
     }
 
     @Test

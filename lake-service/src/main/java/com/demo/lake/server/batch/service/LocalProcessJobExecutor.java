@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class LocalProcessJobExecutor implements JobExecutor {
 
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final LogStore logStore;
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
 
@@ -38,7 +38,7 @@ public class LocalProcessJobExecutor implements JobExecutor {
         Process process;
         try {
             ProcessBuilder pb = new ProcessBuilder(BatchJobService.tokenize(run.command()))
-                    .directory(new File(props.getBatch().getWorkDir()).getAbsoluteFile())
+                    .directory(new File(properties.getBatch().getWorkDir()).getAbsoluteFile())
                     .redirectErrorStream(true);
             if (run.logFile() != null && !run.logFile().isBlank()) {
                 pb.redirectOutput(ProcessBuilder.Redirect.to(new File(run.logFile())));
@@ -62,7 +62,7 @@ public class LocalProcessJobExecutor implements JobExecutor {
             LogTailCursor cursor = new LogTailCursor();
             Path logFile = run.logFile() == null || run.logFile().isBlank()
                     ? null : Path.of(run.logFile());
-            int timeout = props.getBatch().getTimeoutSeconds();
+            int timeout = properties.getBatch().getTimeoutSeconds();
             try {
                 for (;;) {
                     // 边等边搬运日志：500ms 一次，SSE 和 tail 从状态库读，不再依赖本机磁盘

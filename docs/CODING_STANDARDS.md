@@ -4,6 +4,7 @@
 
 ## 1. 命名与包结构
 
+- **命名细则（类名后缀、变量黑名单、门禁）以 [docs/NAMING.md](NAMING.md) 为准**，本节只列包结构与少量补充；两者冲突时以 NAMING.md 为准。
 - 包根 `com.demo.lake`；子包（各模块按领域分）：
   - `common.config` — 配置（PlatformConfig）
   - `common.catalog` — 三层 DDL / SQL 生成（LakeTables / TransformSql / TableRef）

@@ -28,19 +28,19 @@ public class EvolveJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
-        TableRef silver = TableRef.of(cfg, LakeTables.SILVER_ORDERS);
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
+        TableRef silver = TableRef.of(platformConfig, LakeTables.SILVER_ORDERS);
 
         List<String> columns = Arrays.asList(spark.table(silver.fqn()).columns());
         if (!columns.contains("channel")) {
             System.out.println("[evolve] ALTER TABLE ADD COLUMNS channel（仅元数据变更）");
-            spark.sql(Migrations.addSilverChannel(cfg));
+            spark.sql(Migrations.addSilverChannel(platformConfig));
         } else {
             System.out.println("[evolve] channel 列已存在，跳过加列");
         }
 
         System.out.println("[evolve] 回填 channel（CoW 会重写受影响的数据文件）");
-        spark.sql(Migrations.backfillSilverChannel(cfg));
+        spark.sql(Migrations.backfillSilverChannel(platformConfig));
 
         spark.sql(String.format(CHANNEL_STATS_SQL, silver.fqn())).show(false);
         System.out.println("[evolve] 当前 schema：");

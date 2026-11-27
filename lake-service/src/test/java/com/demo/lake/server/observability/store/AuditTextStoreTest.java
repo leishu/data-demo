@@ -23,13 +23,13 @@ class AuditTextStoreTest {
             Base64.getEncoder().encodeToString("0123456789abcdef0123456789abcdef".getBytes());
 
     private AuditTextStore store(boolean enabled, String key) {
-        LakeProperties props = new LakeProperties();
-        props.getAudit().setSqlCaptureEnabled(enabled);
-        props.getAudit().setKey(key);
-        props.getAudit().setRetentionDays(1);
+        LakeProperties properties = new LakeProperties();
+        properties.getAudit().setSqlCaptureEnabled(enabled);
+        properties.getAudit().setKey(key);
+        properties.getAudit().setRetentionDays(1);
         JdbcDataSource ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:vault-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
-        AuditTextStore store = new AuditTextStore(props, new JdbcTemplate(ds), new SimpleMeterRegistry());
+        AuditTextStore store = new AuditTextStore(properties, new JdbcTemplate(ds), new SimpleMeterRegistry());
         store.init();
         return store;
     }

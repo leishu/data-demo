@@ -38,7 +38,7 @@ final class RunRecordWriter {
     private RunRecordWriter() {
     }
 
-    static void record(SparkSession spark, PlatformConfig cfg, Args args, String runId, String command,
+    static void record(SparkSession spark, PlatformConfig platformConfig, Args args, String runId, String command,
                        BatchRunStatus status, int exitCode, Instant startedAt, String message) {
         if (args.flag("no-record")) {
             System.out.println("[run-record] 已跳过（--no-record）");
@@ -46,7 +46,7 @@ final class RunRecordWriter {
         }
         Instant finishedAt = Instant.now();
         long durationMs = finishedAt.toEpochMilli() - startedAt.toEpochMilli();
-        TableRef table = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
+        TableRef table = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
         try {
             StructType schema = new StructType()
                     .add("run_id", DataTypes.StringType, false)
@@ -88,8 +88,8 @@ final class RunRecordWriter {
     }
 
     static String env() {
-        String v = System.getenv("BATCH_RUN_LOG");
-        return v == null || v.isBlank() ? null : v.trim();
+        String logFile = System.getenv("BATCH_RUN_LOG");
+        return logFile == null || logFile.isBlank() ? null : logFile.trim();
     }
 
     private static String truncate(String text, int max) {

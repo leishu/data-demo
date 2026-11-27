@@ -32,31 +32,31 @@ public final class TrinoDialect {
     }
 
     private static String rewriteDateAdd(String sql) {
-        Matcher m = DATE_ADD.matcher(sql);
+        Matcher matcher = DATE_ADD.matcher(sql);
         StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            int days = Integer.parseInt(m.group(1));
-            String expr = m.group(2);
+        while (matcher.find()) {
+            int days = Integer.parseInt(matcher.group(1));
+            String expr = matcher.group(2);
             String replacement = days < 0
                     ? "date_sub(" + expr + ", " + (-days) + ")"
                     : "date_add(" + expr + ", " + days + ")";
-            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
-        m.appendTail(sb);
+        matcher.appendTail(sb);
         return sb.toString();
     }
 
     private static String rewriteInterval(String sql) {
-        Matcher m = QUOTED_INTERVAL.matcher(sql);
+        Matcher matcher = QUOTED_INTERVAL.matcher(sql);
         StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String unit = m.group(2).toUpperCase();
+        while (matcher.find()) {
+            String unit = matcher.group(2).toUpperCase();
             if (!unit.endsWith("S")) {
                 unit = unit + "S";
             }
-            m.appendReplacement(sb, Matcher.quoteReplacement("INTERVAL " + m.group(1) + " " + unit));
+            matcher.appendReplacement(sb, Matcher.quoteReplacement("INTERVAL " + matcher.group(1) + " " + unit));
         }
-        m.appendTail(sb);
+        matcher.appendTail(sb);
         return sb.toString();
     }
 }

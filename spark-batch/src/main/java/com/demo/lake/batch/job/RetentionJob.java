@@ -39,10 +39,10 @@ public class RetentionJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
         boolean dryRun = !args.flag("execute");
         String runId = RunIds.resolve(args);
-        TableRef target = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.RETENTION_AUDIT);
+        TableRef target = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.RETENTION_AUDIT);
         if (!spark.catalog().tableExists(target.fqn())) {
             throw new IllegalStateException("保留审计表不存在，先跑一次 init: " + target.fqn());
         }
@@ -53,11 +53,11 @@ public class RetentionJob implements LakeJob {
         for (AssetDefinition asset : GovernanceCatalog.ASSETS) {
             String table = asset.getTable();
             String partition = PARTITION.get(table);
-            if (partition == null || !spark.catalog().tableExists(TableRef.of(cfg, table).fqn())) {
+            if (partition == null || !spark.catalog().tableExists(TableRef.of(platformConfig, table).fqn())) {
                 continue;
             }
             int days = args.getInt("retention-days", asset.getRetentionDays());
-            String fqn = TableRef.of(cfg, table).fqn();
+            String fqn = TableRef.of(platformConfig, table).fqn();
             String predicate = partition + " < date_sub(current_date(), " + days + ")";
 
             audit.add(auditRow(runId, "retention.start", table, dryRun, 0, 0,
@@ -96,8 +96,8 @@ public class RetentionJob implements LakeJob {
     }
 
     private static Row auditRow(String runId, String event, String table, boolean dryRun,
-                                int partitions, long rows, String detail, long at) {
-        return RowFactory.create(runId, event, table, dryRun, partitions, rows, at, detail);
+                                int partitions, long rows, String detail, long recordedAt) {
+        return RowFactory.create(runId, event, table, dryRun, partitions, rows, recordedAt, detail);
     }
 
     /** 结构化审计行：和 lake-service 的 AuditService 同款 key=value，便于被日志采集系统解析 */

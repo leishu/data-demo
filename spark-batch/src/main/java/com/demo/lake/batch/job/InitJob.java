@@ -25,19 +25,19 @@ public class InitJob implements LakeJob {
     }
 
     @Override
-    public void run(SparkSession spark, PlatformConfig cfg, Args args) {
-        System.out.println("[init] catalog=" + cfg.catalogName() + " database=" + cfg.database()
-                + " warehouse=" + cfg.warehouse());
+    public void run(SparkSession spark, PlatformConfig platformConfig, Args args) {
+        System.out.println("[init] catalog=" + platformConfig.catalogName() + " database=" + platformConfig.database()
+                + " warehouse=" + platformConfig.warehouse());
 
-        for (String ddl : LakeTables.all(cfg)) {
+        for (String ddl : LakeTables.all(platformConfig)) {
             System.out.println("  DDL> " + SqlScript.oneLine(ddl, 110));
             spark.sql(ddl);
         }
         // CREATE TABLE IF NOT EXISTS 不会改老表结构：epoch 时间列单独补
-        prepareBatchRuns(spark, cfg);
+        prepareBatchRuns(spark, platformConfig);
 
         System.out.println("[init] 当前库表：");
-        spark.sql(String.format(SHOW_TABLES, cfg.catalogName(), cfg.database())).show(false);
+        spark.sql(String.format(SHOW_TABLES, platformConfig.catalogName(), platformConfig.database())).show(false);
     }
 
     /**
@@ -45,8 +45,8 @@ public class InitJob implements LakeJob {
      * 先 ADD COLUMNS（纯元数据），再把旧行的 epoch 按 UTC 墙钟回填——
      * 会话时区在 PlatformConfig 里钉死为 UTC，所以 unix_millis 的解释是无歧义的。
      */
-    private void prepareBatchRuns(SparkSession spark, PlatformConfig cfg) {
-        TableRef table = TableRef.of(cfg.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
+    private void prepareBatchRuns(SparkSession spark, PlatformConfig platformConfig) {
+        TableRef table = TableRef.of(platformConfig.catalogName(), LakeTables.OPS_SCHEMA, LakeTables.BATCH_RUNS);
         if (!spark.catalog().tableExists(table.fqn())) {
             return; // 表还没建：上面的 CREATE TABLE 已经是最新结构
         }
@@ -60,12 +60,12 @@ public class InitJob implements LakeJob {
         }
         if (!missing.isEmpty()) {
             System.out.println("[init] ops.batch_runs 缺少 epoch 时间列，ADD COLUMNS: " + missing);
-            spark.sql(Migrations.addBatchRunsEpochColumns(cfg, missing));
+            spark.sql(Migrations.addBatchRunsEpochColumns(platformConfig, missing));
         }
         long legacy = spark.table(table.fqn()).filter("started_ms IS NULL OR finished_ms IS NULL").count();
         if (legacy > 0) {
             System.out.println("[init] 回填旧运行记录的时间列 " + legacy + " 行（按 UTC 墙钟解释旧 timestamp）");
-            spark.sql(Migrations.backfillBatchRunsEpoch(cfg));
+            spark.sql(Migrations.backfillBatchRunsEpoch(platformConfig));
         }
     }
 }

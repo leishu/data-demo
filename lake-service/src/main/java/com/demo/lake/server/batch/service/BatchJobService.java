@@ -1,5 +1,7 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.server.batch.store.RunningRunRegistry;
+import com.demo.lake.server.batch.model.BatchIdentity;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.common.batch.RunIds;
 import com.demo.lake.server.batch.model.BatchRun;
@@ -58,7 +60,7 @@ public class BatchJobService {
     static final String ENV_RUN_ID = "BATCH_RUN_ID";
     static final String ENV_RUN_LOG = "BATCH_RUN_LOG";
 
-    private final LakeProperties props;
+    private final LakeProperties properties;
     private final BatchHistoryService history;
     private final RunStateStore state;
     private final LogStore logStore;
@@ -72,7 +74,7 @@ public class BatchJobService {
 
     @PostConstruct
     void startMaintenance() {
-        LakeProperties.Batch.State conf = props.getBatch().getState();
+        LakeProperties.Batch.State conf = properties.getBatch().getState();
         maintenance.add(Flux.interval(Duration.ofSeconds(Math.max(1, conf.getHeartbeatSeconds())))
                 .flatMap(tick -> Mono.fromCallable(() -> {
                     // 只给「执行器还活着」的 run 续心跳；写终态失败时心跳也会停，交给对账收尸
@@ -105,11 +107,11 @@ public class BatchJobService {
     private void reconcile() {
         auditText.purge(Instant.now());
         int removed = logStore.purge(Instant.now().minus(
-                Math.max(1, props.getBatch().getState().getLogRetentionDays()), java.time.temporal.ChronoUnit.DAYS));
+                Math.max(1, properties.getBatch().getState().getLogRetentionDays()), java.time.temporal.ChronoUnit.DAYS));
         if (removed > 0) {
             log.debug("清理过期作业日志 {} 行", removed);
         }
-        Instant cutoff = Instant.now().minusSeconds(Math.max(30, props.getBatch().getState().getStaleAfterSeconds()));
+        Instant cutoff = Instant.now().minusSeconds(Math.max(30, properties.getBatch().getState().getStaleAfterSeconds()));
         for (BatchRun stale : state.staleRunning(cutoff)) {
             BatchRun archived = history.find(stale.id());
             if (isArchivedTerminal(archived)) {
@@ -139,7 +141,7 @@ public class BatchJobService {
      * 不会重复起作业。
      */
     public BatchRun submit(String job, String idempotencyKey) {
-        LakeProperties.Batch conf = props.getBatch();
+        LakeProperties.Batch conf = properties.getBatch();
         if (!conf.isEnabled()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "批作业编排已关闭（lake.batch.enabled=false）");
         }
@@ -198,15 +200,15 @@ public class BatchJobService {
 
     /** 运行状态库 ∪ 湖表历史，按 id 去重（终态优先），再按开始时间倒序截断 */
     public RunsView list(int limit) {
-        int n = Math.clamp(limit, 1, 100);
+        int cappedLimit = Math.clamp(limit, 1, 100);
         Map<String, BatchRun> merged = new LinkedHashMap<>();
         try {
-            state.recent(n).forEach(run -> merged.put(run.id(), run));
+            state.recent(cappedLimit).forEach(run -> merged.put(run.id(), run));
         } catch (RuntimeException e) {
             log.warn("读运行状态失败（只显示湖表历史）: {}", e.getMessage());
         }
 
-        BatchHistoryService.Result persisted = history.recent(n);
+        BatchHistoryService.Result persisted = history.recent(cappedLimit);
         for (BatchRun run : persisted.runs()) {
             BatchRun current = merged.get(run.id());
             if (current == null || (isTerminal(run.status()) && !isTerminal(current.status()))) {
@@ -216,7 +218,7 @@ public class BatchJobService {
 
         List<BatchRun> ordered = merged.values().stream()
                 .sorted(NEWEST_FIRST)
-                .limit(n)
+                .limit(cappedLimit)
                 .toList();
         return new RunsView(ordered, persisted.history());
     }
@@ -252,9 +254,9 @@ public class BatchJobService {
     /** 读日志尾部，够定位失败原因就行，别把整个 spark 日志甩给调用方 */
     public List<String> tail(String id, int lines) {
         BatchRun run = get(id);
-        int n = Math.clamp(lines, 1, MAX_TAIL_LINES);
+        int cappedLimit = Math.clamp(lines, 1, MAX_TAIL_LINES);
         // 优先读共享日志（跨实例可用）；老记录/命令行直跑的作业没写库，再退回本地文件
-        List<LogStore.LogLine> shared = logStore.tail(id, n);
+        List<LogStore.LogLine> shared = logStore.tail(id, cappedLimit);
         if (!shared.isEmpty()) {
             return shared.stream().map(LogStore.LogLine::text).toList();
         }
@@ -265,7 +267,7 @@ public class BatchJobService {
         }
         try {
             // 只从文件尾部读一块（最多 256KB），别把整个 spark 日志读进内存
-            return LogTailCursor.readTail(file, n);
+            return LogTailCursor.readTail(file, cappedLimit);
         } catch (IOException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "读日志失败: " + e.getMessage(), e);
         }
@@ -291,22 +293,22 @@ public class BatchJobService {
         StringBuilder current = new StringBuilder();
         char quote = 0;
         for (int i = 0; i < command.length(); i++) {
-            char c = command.charAt(i);
+            char ch = command.charAt(i);
             if (quote != 0) {
-                if (c == quote) {
+                if (ch == quote) {
                     quote = 0;
                 } else {
-                    current.append(c);
+                    current.append(ch);
                 }
-            } else if (c == '\'' || c == '"') {
-                quote = c;
-            } else if (Character.isWhitespace(c)) {
+            } else if (ch == '\'' || ch == '"') {
+                quote = ch;
+            } else if (Character.isWhitespace(ch)) {
                 if (!current.isEmpty()) {
                     tokens.add(current.toString());
                     current.setLength(0);
                 }
             } else {
-                current.append(c);
+                current.append(ch);
             }
         }
         if (!current.isEmpty()) {

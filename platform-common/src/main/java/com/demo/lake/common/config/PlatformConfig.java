@@ -35,54 +35,54 @@ public final class PlatformConfig {
     private static final String DEFAULTS_RESOURCE = "platform-defaults.properties";
     private static final String DEFAULT_FILE = "conf/platform.properties";
 
-    private final Properties props;
+    private final Properties properties;
 
     public static PlatformConfig load() {
         return load(null);
     }
 
     public static PlatformConfig load(Path overrideFile) {
-        Properties p = new Properties();
-        loadClasspath(p, DEFAULTS_RESOURCE);
+        Properties loadedProperties = new Properties();
+        loadClasspath(loadedProperties, DEFAULTS_RESOURCE);
 
         Path defaultFile = Paths.get(DEFAULT_FILE);
         if (Files.isReadable(defaultFile)) {
-            loadFile(p, defaultFile);
+            loadFile(loadedProperties, defaultFile);
         }
         if (overrideFile != null) {
             if (!Files.isReadable(overrideFile)) {
                 throw new IllegalArgumentException("配置文件不存在或不可读: " + overrideFile.toAbsolutePath());
             }
-            loadFile(p, overrideFile);
+            loadFile(loadedProperties, overrideFile);
         }
-        applyEnvOverrides(p);
-        applySystemOverrides(p);
-        return new PlatformConfig(p);
+        applyEnvOverrides(loadedProperties);
+        applySystemOverrides(loadedProperties);
+        return new PlatformConfig(loadedProperties);
     }
 
     // ------------------------------------------------------------------ 基础读取
 
     public String get(String key, String defaultValue) {
-        String v = props.getProperty(key);
-        return (v == null || v.trim().isEmpty()) ? defaultValue : v.trim();
+        String rawValue = properties.getProperty(key);
+        return (rawValue == null || rawValue.trim().isEmpty()) ? defaultValue : rawValue.trim();
     }
 
     public String getRequired(String key) {
-        String v = props.getProperty(key);
-        if (v == null || v.trim().isEmpty()) {
+        String rawValue = properties.getProperty(key);
+        if (rawValue == null || rawValue.trim().isEmpty()) {
             throw new IllegalStateException("缺少必填配置: " + key);
         }
-        return v.trim();
+        return rawValue.trim();
     }
 
     public int getInt(String key, int defaultValue) {
-        String v = props.getProperty(key);
-        return (v == null || v.trim().isEmpty()) ? defaultValue : Integer.parseInt(v.trim());
+        String rawValue = properties.getProperty(key);
+        return (rawValue == null || rawValue.trim().isEmpty()) ? defaultValue : Integer.parseInt(rawValue.trim());
     }
 
     public boolean getBoolean(String key, boolean defaultValue) {
-        String v = props.getProperty(key);
-        return (v == null || v.trim().isEmpty()) ? defaultValue : Boolean.parseBoolean(v.trim());
+        String rawValue = properties.getProperty(key);
+        return (rawValue == null || rawValue.trim().isEmpty()) ? defaultValue : Boolean.parseBoolean(rawValue.trim());
     }
 
     // ------------------------------------------------------------------ Iceberg 目录
@@ -106,11 +106,11 @@ public final class PlatformConfig {
 
     /** 归一化后的仓库地址：本地相对路径 -&gt; file:///abs/path */
     public String warehouse() {
-        String w = get("platform.warehouse", "warehouse");
-        if (w.contains("://")) {
-            return w.endsWith("/") ? w : w + "/";
+        String warehouseValue = get("platform.warehouse", "warehouse");
+        if (warehouseValue.contains("://")) {
+            return warehouseValue.endsWith("/") ? warehouseValue : warehouseValue + "/";
         }
-        String uri = Paths.get(w).toAbsolutePath().normalize().toUri().toString();
+        String uri = Paths.get(warehouseValue).toAbsolutePath().normalize().toUri().toString();
         return uri.endsWith("/") ? uri : uri + "/";
     }
 
@@ -119,8 +119,8 @@ public final class PlatformConfig {
     }
 
     public boolean isObjectStorage() {
-        String w = warehouse().toLowerCase(Locale.ROOT);
-        return w.startsWith("s3a://") || w.startsWith("s3://");
+        String warehouseValue = warehouse().toLowerCase(Locale.ROOT);
+        return warehouseValue.startsWith("s3a://") || warehouseValue.startsWith("s3://");
     }
 
     public int formatVersion() {
@@ -140,53 +140,53 @@ public final class PlatformConfig {
 
     /** 组装 SparkSession 需要的全部配置（catalog + 存储 + 执行参数） */
     public Map<String, String> sparkConf() {
-        String c = catalogName();
-        String prefix = "spark.sql.catalog." + c;
-        Map<String, String> m = new LinkedHashMap<>();
+        String catalog = catalogName();
+        String prefix = "spark.sql.catalog." + catalog;
+        Map<String, String> sparkConf = new LinkedHashMap<>();
 
         // Spark 4.x 默认开 ANSI（非法 cast / 除零直接抛异常）；保持 3.5 的宽容语义，
         // 避免既有 SQL 脚本和上游脏数据的行为漂移
-        m.put("spark.sql.ansi.enabled", "false");
+        sparkConf.put("spark.sql.ansi.enabled", "false");
         // Spark 4.1 的 SPARK-59672：Iceberg SQL 扩展注入的 parser 会丢掉 ? 参数上下文，
         // 导致 spark.sql(sql, args) 报 UNBOUND_SQL_PARAMETER；打开 analyzer 侧的旧式替换兜底。
         // Iceberg 1.12 才从扩展侧修复，1.11 需要这个配置。
-        m.put("spark.sql.legacy.parameterSubstitution.constantsOnly", "true");
-        m.put("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions");
-        m.put(prefix, "org.apache.iceberg.spark.SparkCatalog");
-        m.put(prefix + ".type", catalogType());
-        m.put(prefix + ".warehouse", warehouse());
+        sparkConf.put("spark.sql.legacy.parameterSubstitution.constantsOnly", "true");
+        sparkConf.put("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions");
+        sparkConf.put(prefix, "org.apache.iceberg.spark.SparkCatalog");
+        sparkConf.put(prefix + ".type", catalogType());
+        sparkConf.put(prefix + ".warehouse", warehouse());
         if (isHiveCatalog()) {
-            m.put(prefix + ".uri", hiveUri());
+            sparkConf.put(prefix + ".uri", hiveUri());
         }
         if (isObjectStorage()) {
-            m.put(prefix + ".io-impl", "org.apache.iceberg.aws.s3.S3FileIO");
-            m.put(prefix + ".s3.endpoint", get("platform.s3.endpoint", ""));
-            m.put(prefix + ".s3.path-style-access", String.valueOf(s3PathStyle()));
-            m.put(prefix + ".s3.access-key-id", get("platform.s3.access-key", ""));
-            m.put(prefix + ".s3.secret-access-key", get("platform.s3.secret-key", ""));
+            sparkConf.put(prefix + ".io-impl", "org.apache.iceberg.aws.s3.S3FileIO");
+            sparkConf.put(prefix + ".s3.endpoint", get("platform.s3.endpoint", ""));
+            sparkConf.put(prefix + ".s3.path-style-access", String.valueOf(s3PathStyle()));
+            sparkConf.put(prefix + ".s3.access-key-id", get("platform.s3.access-key", ""));
+            sparkConf.put(prefix + ".s3.secret-access-key", get("platform.s3.secret-key", ""));
             // S3FileIO 的 region 走共享的 client.region；
             // 少了它，AWS SDK v2 会抛 "Unable to load region from any of the providers"
-            m.put(prefix + ".client.region", get("platform.s3.region", "us-east-1"));
+            sparkConf.put(prefix + ".client.region", get("platform.s3.region", "us-east-1"));
 
-            m.put("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
-            m.put("spark.hadoop.fs.s3a.endpoint", get("platform.s3.endpoint", ""));
-            m.put("spark.hadoop.fs.s3a.path.style.access", String.valueOf(s3PathStyle()));
-            m.put("spark.hadoop.fs.s3a.access.key", get("platform.s3.access-key", ""));
-            m.put("spark.hadoop.fs.s3a.secret.key", get("platform.s3.secret-key", ""));
-            m.put("spark.hadoop.fs.s3a.aws.credentials.provider",
+            sparkConf.put("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+            sparkConf.put("spark.hadoop.fs.s3a.endpoint", get("platform.s3.endpoint", ""));
+            sparkConf.put("spark.hadoop.fs.s3a.path.style.access", String.valueOf(s3PathStyle()));
+            sparkConf.put("spark.hadoop.fs.s3a.access.key", get("platform.s3.access-key", ""));
+            sparkConf.put("spark.hadoop.fs.s3a.secret.key", get("platform.s3.secret-key", ""));
+            sparkConf.put("spark.hadoop.fs.s3a.aws.credentials.provider",
                     "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider");
             // Spark 4.1 起 s3a 默认启用 Magic Committer；数据文件走 Iceberg S3FileIO，
             // 显式关掉以免 s3a 路径上的写入语义相对 3.5 发生变化
-            m.put("spark.hadoop.fs.s3a.committer.magic.enabled", "false");
+            sparkConf.put("spark.hadoop.fs.s3a.committer.magic.enabled", "false");
         }
 
-        m.put("spark.sql.session.timeZone", get("platform.spark.timezone", "UTC"));
-        m.put("spark.sql.sources.partitionOverwriteMode", "dynamic");
-        m.put("spark.sql.shuffle.partitions", get("platform.spark.shuffle.partitions", "8"));
-        m.put("spark.sql.adaptive.enabled", "true");
-        m.put("spark.sql.adaptive.coalescePartitions.enabled", "true");
-        m.put("spark.sql.adaptive.skewJoin.enabled", "true");
-        return m;
+        sparkConf.put("spark.sql.session.timeZone", get("platform.spark.timezone", "UTC"));
+        sparkConf.put("spark.sql.sources.partitionOverwriteMode", "dynamic");
+        sparkConf.put("spark.sql.shuffle.partitions", get("platform.spark.shuffle.partitions", "8"));
+        sparkConf.put("spark.sql.adaptive.enabled", "true");
+        sparkConf.put("spark.sql.adaptive.coalescePartitions.enabled", "true");
+        sparkConf.put("spark.sql.adaptive.skewJoin.enabled", "true");
+        return sparkConf;
     }
 
     private boolean s3PathStyle() {
@@ -235,22 +235,22 @@ public final class PlatformConfig {
 
     // ------------------------------------------------------------------ 加载实现
 
-    private static void loadClasspath(Properties p, String resource) {
+    private static void loadClasspath(Properties properties, String resource) {
         try (InputStream in = PlatformConfig.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
                 throw new IllegalStateException("classpath 中找不到 " + resource);
             }
             try (Reader r = new InputStreamReader(in, StandardCharsets.UTF_8)) {
-                p.load(r);
+                properties.load(r);
             }
         } catch (IOException e) {
             throw new IllegalStateException("读取 " + resource + " 失败", e);
         }
     }
 
-    private static void loadFile(Properties p, Path file) {
+    private static void loadFile(Properties properties, Path file) {
         try (Reader r = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            p.load(r);
+            properties.load(r);
         } catch (IOException e) {
             throw new IllegalStateException("读取配置文件失败: " + file.toAbsolutePath(), e);
         }
@@ -272,19 +272,19 @@ public final class PlatformConfig {
         return "platform." + suffix;
     }
 
-    private static void applyEnvOverrides(Properties p) {
-        System.getenv().forEach((k, v) -> {
+    private static void applyEnvOverrides(Properties properties) {
+        System.getenv().forEach((k, rawValue) -> {
             String key = envKeyToProperty(k);
             if (key != null) {
-                p.setProperty(key, v);
+                properties.setProperty(key, rawValue);
             }
         });
     }
 
-    private static void applySystemOverrides(Properties p) {
+    private static void applySystemOverrides(Properties properties) {
         for (String key : System.getProperties().stringPropertyNames()) {
             if (key.startsWith("platform.")) {
-                p.setProperty(key, System.getProperty(key));
+                properties.setProperty(key, System.getProperty(key));
             }
         }
     }

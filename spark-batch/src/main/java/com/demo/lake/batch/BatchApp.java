@@ -78,7 +78,7 @@ public final class BatchApp {
         }
 
         Path conf = args.has("conf") ? Paths.get(args.get("conf")) : null;
-        PlatformConfig cfg = PlatformConfig.load(conf);
+        PlatformConfig platformConfig = PlatformConfig.load(conf);
 
         List<String> plan = resolvePlan(args);
         String runId = RunIds.resolve(args);
@@ -87,10 +87,10 @@ public final class BatchApp {
         Instant startedAt = Instant.now();
         System.out.println("======================================================");
         System.out.println(" lakehouse batch | run=" + runId + " job=" + plan);
-        System.out.println(" " + cfg.describe());
+        System.out.println(" " + platformConfig.describe());
         System.out.println("======================================================");
 
-        SparkSession spark = SparkSessionFactory.create(cfg, "lakehouse-batch");
+        SparkSession spark = SparkSessionFactory.create(platformConfig, "lakehouse-batch");
         BatchRunStatus status = BatchRunStatus.SUCCEEDED;
         int exitCode = 0;
         String message = "完成";
@@ -99,8 +99,8 @@ public final class BatchApp {
                 LakeJob job = JOBS.get(name);
                 long start = System.currentTimeMillis();
                 System.out.printf("%n>>> [%s] 开始%n", name);
-                job.run(spark, cfg, args);
-                LineageWriter.record(spark, cfg, runId, name);
+                job.run(spark, platformConfig, args);
+                LineageWriter.record(spark, platformConfig, runId, name);
                 System.out.printf("<<< [%s] 完成，耗时 %.1fs%n", name, (System.currentTimeMillis() - start) / 1000.0);
             }
         } catch (Exception e) {
@@ -112,7 +112,7 @@ public final class BatchApp {
             throw new RuntimeException("批处理作业失败: " + plan, e);
         } finally {
             // 必须在 spark.stop() 之前写：记账要复用同一个 session
-            RunRecordWriter.record(spark, cfg, args, runId, String.join(" ", argv),
+            RunRecordWriter.record(spark, platformConfig, args, runId, String.join(" ", argv),
                     status, exitCode, startedAt, message);
             if (!args.flag("keep-session")) {
                 spark.stop();

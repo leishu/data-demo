@@ -1,4 +1,4 @@
-package com.demo.lake.server.query;
+package com.demo.lake.server.query.service;
 
 import java.util.Locale;
 import java.util.Set;
@@ -133,10 +133,10 @@ public final class SqlGuard {
     private static int matchingParen(String sql, int open) {
         int depth = 0;
         for (int i = open; i < sql.length(); i++) {
-            char c = sql.charAt(i);
-            if (c == '(') {
+            char ch = sql.charAt(i);
+            if (ch == '(') {
                 depth++;
-            } else if (c == ')') {
+            } else if (ch == ')') {
                 depth--;
                 if (depth == 0) {
                     return i;
@@ -164,10 +164,10 @@ public final class SqlGuard {
         char quote = 0;
         int i = 0;
         while (i < sql.length()) {
-            char c = sql.charAt(i);
+            char ch = sql.charAt(i);
             if (quote != 0) {
-                out.append(c);
-                if (c == quote) {
+                out.append(ch);
+                if (ch == quote) {
                     // SQL 里用两个连续引号转义（'a''b' / "a""b" / `a``b`）
                     if (i + 1 < sql.length() && sql.charAt(i + 1) == quote) {
                         out.append(quote);
@@ -179,20 +179,20 @@ public final class SqlGuard {
                 i++;
                 continue;
             }
-            if (c == '\'' || c == '"' || c == '`') {
-                quote = c;
-                out.append(c);
+            if (ch == '\'' || ch == '"' || ch == '`') {
+                quote = ch;
+                out.append(ch);
                 i++;
                 continue;
             }
-            if (c == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
+            if (ch == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-') {
                 while (i < sql.length() && sql.charAt(i) != '\n') {
                     i++;
                 }
                 out.append(' ');
                 continue;
             }
-            if (c == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
+            if (ch == '/' && i + 1 < sql.length() && sql.charAt(i + 1) == '*') {
                 i += 2;
                 while (i + 1 < sql.length() && !(sql.charAt(i) == '*' && sql.charAt(i + 1) == '/')) {
                     i++;
@@ -201,7 +201,7 @@ public final class SqlGuard {
                 out.append(' ');
                 continue;
             }
-            out.append(c);
+            out.append(ch);
             i++;
         }
         return out.toString();

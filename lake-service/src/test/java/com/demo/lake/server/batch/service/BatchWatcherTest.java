@@ -1,5 +1,7 @@
 package com.demo.lake.server.batch.service;
 
+import com.demo.lake.server.batch.store.RunningRunRegistry;
+import com.demo.lake.server.batch.model.BatchIdentity;
 import com.demo.lake.common.batch.BatchRunStatus;
 import com.demo.lake.server.batch.model.BatchEvent;
 import com.demo.lake.server.batch.model.BatchRun;
@@ -28,7 +30,7 @@ class BatchWatcherTest {
 
     @Test
     void 首帧无共享日志后续出现时切换过去() throws Exception {
-        LakeProperties props = new LakeProperties();
+        LakeProperties properties = new LakeProperties();
         BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
         // 前两次 tail 都当空：一次是建立流时的首帧，一次是第一次轮询；之后才「出现」日志
         AtomicInteger tails = new AtomicInteger();
@@ -44,7 +46,7 @@ class BatchWatcherTest {
                 Instant.now(), null, null, null, "执行中"); // logFile=null：模拟请求落到非执行实例
         store.insert(run, "svc-a");
 
-        BatchJobService jobs = new BatchJobService(props, null, store, lateStore, new BatchIdentity(),
+        BatchJobService jobs = new BatchJobService(properties, null, store, lateStore, new BatchIdentity(),
                 new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
         BatchWatcher watcher = new BatchWatcher(jobs, lateStore, Schedulers.boundedElastic());
 
@@ -67,10 +69,10 @@ class BatchWatcherTest {
 
     @Test
     void 运行不存在时以404错误结束流() {
-        LakeProperties props = new LakeProperties();
+        LakeProperties properties = new LakeProperties();
         BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
         BatchJobServiceTest.InMemoryLogStore logStore = new BatchJobServiceTest.InMemoryLogStore();
-        BatchJobService jobs = new BatchJobService(props, null, store, logStore, new BatchIdentity(),
+        BatchJobService jobs = new BatchJobService(properties, null, store, logStore, new BatchIdentity(),
                 new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
         BatchWatcher watcher = new BatchWatcher(jobs, logStore, Schedulers.boundedElastic());
 
@@ -80,7 +82,7 @@ class BatchWatcherTest {
 
     @Test
     void 终态运行时发出End并结束流() {
-        LakeProperties props = new LakeProperties();
+        LakeProperties properties = new LakeProperties();
         BatchJobServiceTest.InMemoryRunStateStore store = new BatchJobServiceTest.InMemoryRunStateStore();
         BatchJobServiceTest.InMemoryLogStore logStore = new BatchJobServiceTest.InMemoryLogStore();
         logStore.append("watch-2", List.of("last-line"));
@@ -88,7 +90,7 @@ class BatchWatcherTest {
                 Instant.now(), Instant.now(), 100L, null, "完成");
         store.insert(run, "svc-a");
 
-        BatchJobService jobs = new BatchJobService(props, null, store, logStore, new BatchIdentity(),
+        BatchJobService jobs = new BatchJobService(properties, null, store, logStore, new BatchIdentity(),
                 new RunningRunRegistry(), null, null, null, Schedulers.boundedElastic());
         BatchWatcher watcher = new BatchWatcher(jobs, logStore, Schedulers.boundedElastic());
 

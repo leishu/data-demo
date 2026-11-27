@@ -120,18 +120,18 @@ class JdbcRunStateStoreTest {
     @Test
     void 并发幂等提交只有一个胜出() throws Exception {
         Instant now = Instant.now();
-        BatchRun a = queued("qa", now);
-        BatchRun b = queued("qb", now.plusMillis(1));
+        BatchRun firstRun = queued("qa", now);
+        BatchRun secondRun = queued("qb", now.plusMillis(1));
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
         try {
             Future<String> fa = pool.submit(() -> {
                 start.await();
-                return store.insertWithIdempotency(a, "svc-a", "same-key");
+                return store.insertWithIdempotency(firstRun, "svc-a", "same-key");
             });
             Future<String> fb = pool.submit(() -> {
                 start.await();
-                return store.insertWithIdempotency(b, "svc-b", "same-key");
+                return store.insertWithIdempotency(secondRun, "svc-b", "same-key");
             });
             start.countDown();
             String winnerA = fa.get(5, TimeUnit.SECONDS);

@@ -2,7 +2,7 @@ package com.demo.lake.server.query.service;
 
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.config.LakeProperties;
-import com.demo.lake.server.query.TrinoUnavailableException;
+import com.demo.lake.server.query.service.TrinoUnavailableException;
 import com.demo.lake.server.query.model.QueryResult;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;

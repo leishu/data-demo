@@ -2,7 +2,7 @@ package com.demo.lake.server.controller;
 
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.server.config.LakeProperties;
-import com.demo.lake.server.query.InvalidSemanticQueryException;
+import com.demo.lake.server.query.service.InvalidSemanticQueryException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -19,9 +19,9 @@ class SemanticControllerTest {
 
     @Test
     void 非法维度映射成语义请求异常() {
-        SemanticController.SemanticRequest req = new SemanticController.SemanticRequest(
+        SemanticController.SemanticRequest request = new SemanticController.SemanticRequest(
                 "gmv", List.of("secret_col"), List.of(), 10, "trino");
-        assertThrows(InvalidSemanticQueryException.class, () -> controller().render(req));
+        assertThrows(InvalidSemanticQueryException.class, () -> controller().render(request));
     }
 
     @Test

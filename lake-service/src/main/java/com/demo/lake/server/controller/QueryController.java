@@ -50,8 +50,8 @@ public class QueryController {
     private final AuditService audit;
     private final AuditTextStore auditText;
     private final LakeMetrics metrics;
-    private final PlatformConfig cfg;
-    private final LakeProperties props;
+    private final PlatformConfig platformConfig;
+    private final LakeProperties properties;
 
     public record QueryRequest(
             @Schema(description = "SQL 文本；只读白名单：select / with / show / describe / explain，必须单条语句",
@@ -178,23 +178,23 @@ public class QueryController {
     @GetMapping("/config")
     public Map<String, Object> config() {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("platform", cfg.describe());
-        out.put("catalog", cfg.catalogName());
-        out.put("database", cfg.database());
-        out.put("warehouse", cfg.warehouse());
-        out.put("writeMode", cfg.writeMode());
-        out.put("trinoUrl", cfg.trinoJdbcUrl());
+        out.put("platform", platformConfig.describe());
+        out.put("catalog", platformConfig.catalogName());
+        out.put("database", platformConfig.database());
+        out.put("warehouse", platformConfig.warehouse());
+        out.put("writeMode", platformConfig.writeMode());
+        out.put("trinoUrl", platformConfig.trinoJdbcUrl());
         out.put("query", Map.of(
-                "maxRows", props.getQuery().getMaxRows(),
-                "timeoutSeconds", props.getQuery().getTimeoutSeconds(),
-                "poolSize", props.getQuery().getPoolSize(),
-                "allowWrites", props.getQuery().isAllowWrites()));
+                "maxRows", properties.getQuery().getMaxRows(),
+                "timeoutSeconds", properties.getQuery().getTimeoutSeconds(),
+                "poolSize", properties.getQuery().getPoolSize(),
+                "allowWrites", properties.getQuery().isAllowWrites()));
         Map<String, Object> batch = new LinkedHashMap<>();
-        batch.put("enabled", props.getBatch().isEnabled());
-        batch.put("commandTemplate", props.getBatch().getCommandTemplate());
-        batch.put("allowedJobs", props.getBatch().getAllowedJobs());
+        batch.put("enabled", properties.getBatch().isEnabled());
+        batch.put("commandTemplate", properties.getBatch().getCommandTemplate());
+        batch.put("allowedJobs", properties.getBatch().getAllowedJobs());
         // 页面卡片：白名单 ∩ LakeJobs.METAS。标题/描述只在 common 维护一份，前端纯渲染
-        batch.put("jobs", JobView.of(LakeJobs.visible(props.getBatch().getAllowedJobs())));
+        batch.put("jobs", JobView.of(LakeJobs.visible(properties.getBatch().getAllowedJobs())));
         out.put("batch", batch);
         return out;
     }

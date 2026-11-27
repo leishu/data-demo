@@ -23,11 +23,11 @@ public class AuditBuffer {
         }
     }
 
-    /** 取最近 n 条，按时间倒序（最新在前）返回 */
+    /** 取最近 limit 条，按时间倒序（最新在前）返回 */
     public synchronized List<AuditEvent> recent(int limit) {
-        int n = Math.clamp(limit, 1, MAX);
-        List<AuditEvent> result = new ArrayList<>(n);
-        for (Iterator<AuditEvent> it = events.descendingIterator(); it.hasNext() && result.size() < n; ) {
+        int cappedLimit = Math.clamp(limit, 1, MAX);
+        List<AuditEvent> result = new ArrayList<>(cappedLimit);
+        for (Iterator<AuditEvent> it = events.descendingIterator(); it.hasNext() && result.size() < cappedLimit; ) {
             result.add(it.next());
         }
         return List.copyOf(result);

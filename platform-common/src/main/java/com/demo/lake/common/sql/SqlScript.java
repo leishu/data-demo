@@ -153,7 +153,7 @@ public final class SqlScript {
 
     /** 折叠空白，方便打一行日志 */
     public static String oneLine(String sql, int maxLen) {
-        String s = stripComments(sql).replaceAll("\\s+", " ").trim();
-        return s.length() <= maxLen ? s : s.substring(0, maxLen) + " ...";
+        String oneLine = stripComments(sql).replaceAll("\\s+", " ").trim();
+        return oneLine.length() <= maxLen ? oneLine : oneLine.substring(0, maxLen) + " ...";
     }
 }

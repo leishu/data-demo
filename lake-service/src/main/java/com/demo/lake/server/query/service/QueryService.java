@@ -3,7 +3,6 @@ package com.demo.lake.server.query.service;
 import com.demo.lake.common.config.PlatformConfig;
 import com.demo.lake.common.governance.MaskingCatalog;
 import com.demo.lake.server.config.LakeProperties;
-import com.demo.lake.server.query.*;
 import com.demo.lake.server.query.model.Column;
 import com.demo.lake.server.query.model.QueryEvent;
 import com.demo.lake.server.query.model.QueryResult;
@@ -67,10 +66,10 @@ public class QueryService {
 
     @Qualifier("trinoJdbc")
     private final JdbcTemplate jdbc;
-    private final LakeProperties props;
-    private final PlatformConfig cfg;
+    private final LakeProperties properties;
+    private final PlatformConfig platformConfig;
     private final Scheduler blocking;
-    private final QuotaHelper quotas;
+    private final QueryQuotaService quotas;
 
     /**
      * 用户发起的查询：先占配额再执行，HTTP 入口统一走这条。
@@ -119,8 +118,8 @@ public class QueryService {
     }
 
     private QueryResult executeInternal(String sql, Integer maxRows, boolean quiet, Object[] params) {
-        String safeSql = SqlGuard.requireReadOnly(sql, props.getQuery().isAllowWrites());
-        int cap = props.getQuery().getMaxRows();
+        String safeSql = SqlGuard.requireReadOnly(sql, properties.getQuery().isAllowWrites());
+        int cap = properties.getQuery().getMaxRows();
         int limit = (maxRows == null || maxRows <= 0) ? cap : Math.min(maxRows, cap);
 
         long start = System.nanoTime();
@@ -130,14 +129,14 @@ public class QueryService {
                 // 这类语句塞不进 Trino 的 PREPARE / EXECUTE IMMEDIATE。
                 if (params.length == 0) {
                     try (Statement stmt = conn.createStatement()) {
-                        stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
+                        stmt.setQueryTimeout(properties.getQuery().getTimeoutSeconds());
                         try (ResultSet rs = stmt.executeQuery(safeSql)) {
                             return read(rs, limit, start, safeSql, quiet);
                         }
                     }
                 }
                 try (PreparedStatement stmt = conn.prepareStatement(safeSql)) {
-                    stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
+                    stmt.setQueryTimeout(properties.getQuery().getTimeoutSeconds());
                     for (int i = 0; i < params.length; i++) {
                         stmt.setObject(i + 1, params[i]);
                     }
@@ -206,8 +205,8 @@ public class QueryService {
             String safeSql;
             int limit;
             try {
-                safeSql = SqlGuard.requireReadOnly(sql, props.getQuery().isAllowWrites());
-                int cap = props.getQuery().getMaxRows();
+                safeSql = SqlGuard.requireReadOnly(sql, properties.getQuery().isAllowWrites());
+                int cap = properties.getQuery().getMaxRows();
                 limit = (maxRows == null || maxRows <= 0) ? cap : Math.min(maxRows, cap);
             } catch (RuntimeException e) {
                 sink.error(e);
@@ -215,7 +214,7 @@ public class QueryService {
             }
             try (Connection conn = jdbc.getDataSource().getConnection();
                  Statement stmt = conn.createStatement()) {
-                stmt.setQueryTimeout(props.getQuery().getTimeoutSeconds());
+                stmt.setQueryTimeout(properties.getQuery().getTimeoutSeconds());
                 try (ResultSet rs = stmt.executeQuery(safeSql)) {
                     List<Column> columns = readColumns(rs);
                     int columnCount = columns.size();
@@ -299,9 +298,9 @@ public class QueryService {
     /** 按调用方角色选目标：分析角色读 *_masked，审计角色读基础表，其余读 *_restricted。 */
     Mono<QueryResult> sample(String table, int limit, MaskingCatalog.Access access) {
         return Mono.fromCallable(() -> {
-            int n = Math.max(1, Math.min(limit, props.getQuery().getMaxRows()));
-            String sql = sampleSql(catalog(), database(), table, n, access);
-            return execute(sql, n);
+            int cappedLimit = Math.max(1, Math.min(limit, properties.getQuery().getMaxRows()));
+            String sql = sampleSql(catalog(), database(), table, cappedLimit, access);
+            return execute(sql, cappedLimit);
         }).subscribeOn(blocking);
     }
 
@@ -321,11 +320,11 @@ public class QueryService {
     }
 
     private String catalog() {
-        return identifier(cfg.catalogName());
+        return identifier(platformConfig.catalogName());
     }
 
     private String database() {
-        return identifier(cfg.database());
+        return identifier(platformConfig.database());
     }
 
     private static String identifier(String raw) {
@@ -348,17 +347,17 @@ public class QueryService {
 
     /** jdbcTemplate 把 SQLException 翻译成 DataAccessException 后，原 SQLException 在 cause 链里 */
     private static SQLException findSqlException(Throwable e) {
-        for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof SQLException s) {
-                return s;
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sqlException) {
+                return sqlException;
             }
         }
         return null;
     }
 
     private static String messageOf(Throwable e) {
-        String m = e.getMessage();
-        return m != null ? m : e.toString();
+        String message = e.getMessage();
+        return message != null ? message : e.toString();
     }
 
     /**
@@ -369,16 +368,16 @@ public class QueryService {
         if (e.getSQLState() != null && e.getSQLState().startsWith("08")) {
             return true;
         }
-        for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof SQLTransientConnectionException || t instanceof SQLNonTransientConnectionException) {
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLTransientConnectionException || cause instanceof SQLNonTransientConnectionException) {
                 return true;
             }
-            if (t instanceof java.net.ConnectException
-                    || t instanceof java.net.UnknownHostException
-                    || t instanceof java.net.SocketTimeoutException) {
+            if (cause instanceof java.net.ConnectException
+                    || cause instanceof java.net.UnknownHostException
+                    || cause instanceof java.net.SocketTimeoutException) {
                 return true;
             }
-            if (t == t.getCause()) {
+            if (cause == cause.getCause()) {
                 break;
             }
         }
@@ -389,8 +388,8 @@ public class QueryService {
     private static String stats(ResultSet rs) {
         try {
             if (rs instanceof TrinoResultSet trinoResult) {
-                Object s = trinoResult.getStats();
-                return s == null ? null : s.toString();
+                Object stats = trinoResult.getStats();
+                return stats == null ? null : stats.toString();
             }
         } catch (RuntimeException ignore) {
             // 统计信息拿不到不影响结果
