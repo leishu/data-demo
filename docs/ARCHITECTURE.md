@@ -174,7 +174,7 @@ retention 作业（默认 dry-run）
 
 ```
 敏感列口径（MaskingCatalog 单一事实源）
-   ├─ Trino 视图：sql/view/*_masked（analyst）/ *_restricted（viewer）
+   ├─ Trino 视图：platform-common/src/main/resources/sql/view/*_masked（analyst）/ *_restricted（viewer）
    │       └─ 服务采样按角色选目标；AUDITOR 走单独授权读基础表明文
    └─ rules.json 的 columns[].mask：误给基础表 SELECT 时仍兜底（masked_reader 演示）
 

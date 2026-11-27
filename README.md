@@ -429,7 +429,7 @@ bin/stack.sh down        # 停服务与 infra，保留数据卷
 | `06_refund_by_category.sql` | 品类退款率（经方言适配可用 Spark 校验） |
 | `07_channel_mix.sql` | 渠道结构（需先跑过 `--job evolve`） |
 
-### 脱敏视图（`sql/view/`）
+### 脱敏视图（`platform-common/src/main/resources/sql/view/`）
 
 明细表另有按角色授权的 Trino 视图：`*_masked`（analyst，merchant_id 明文）与
 `*_restricted`（viewer，merchant_id 也哈希）。服务启动时自动创建；纯 Trino 环境用
