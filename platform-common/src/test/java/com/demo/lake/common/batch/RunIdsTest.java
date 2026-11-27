@@ -21,7 +21,7 @@ class RunIdsTest {
     @Test
     void generate生成符合格式且时间接近当前本地时间() {
         String id = RunIds.generate();
-        assertTrue(id.matches("run-\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-[0-9a-f]{6}"),
+        assertTrue(id.matches("run-\\d{4}-\\d{2}-\\d{2}-\\d{2}-\\d{2}-[0-9a-f]{12}"),
                 "ID 形状不对: " + id);
         // 用 JVM 本地时区解析 ID 里的分钟级时间戳：回归到 UTC 会离当前本地时间差几小时，这里抓住
         Instant idTime = LocalDateTime.parse(id.substring(4, 20), TIME)
